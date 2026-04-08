@@ -330,14 +330,14 @@ class Preprocessor:
         explore_reward = 0.001 * float(self.new_explored_cells)
 
         battery_ratio = self.battery / max(self.battery_max, 1)
-        # 充电压力: 电量<30%时逐渐增大
-        low_battery_pressure = float(np.clip((0.30 - battery_ratio) / 0.30, 0.0, 1.0))
+        # 充电压力: 电量<50%时逐渐增大，更早引导agent走向充电桩
+        low_battery_pressure = float(np.clip((0.50 - battery_ratio) / 0.50, 0.0, 1.0))
         charger_progress = float(np.clip(self.last_nearest_charger_dist - self.nearest_charger_dist, -6.0, 6.0))
         slack_improve = float(np.clip(self.charger_slack - self.last_charger_slack, -12.0, 12.0))
-        # 充电方向引导: 适度权重，仅在低电量时激活
-        charger_reward = low_battery_pressure * (0.05 * charger_progress + 0.03 * slack_improve)
-        # 充电完成奖励: 1.0 (=8.3格清扫), 足以激励充电但不会exploit
-        charge_event_reward = 1.0 * self.just_charged
+        # 充电方向引导: 稍提高权重配合更早的阈值
+        charger_reward = low_battery_pressure * (0.08 * charger_progress + 0.05 * slack_improve)
+        # 充电完成奖励: 1.5 (=12.5格清扫)
+        charge_event_reward = 1.5 * self.just_charged
 
         npc_penalty = -0.06 * float(np.clip((3.0 - self.nearest_npc_dist) / 3.0, 0.0, 1.0))
         revisit_penalty = -0.01 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
