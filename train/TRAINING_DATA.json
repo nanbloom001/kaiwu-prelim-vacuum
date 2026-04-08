@@ -1,0 +1,1544 @@
+{
+  "timestamp": "2026-04-09 03:21:00",
+  "runtime_minutes": 95.4,
+  "episodes": 919,
+  "plan": "A+ (super_aggressive_charging)",
+  "containers": [
+    "kaiwu-train-aisrv-1 Up 2 hours",
+    "kaiwu-train-aisrv-2 Up 2 hours",
+    "kaiwu-train-learner-1 Up 2 hours",
+    "kaiwu-train-fe-monitor-service-1 Up 2 hours",
+    "kaiwu-train-monitor-service-1 Up 2 hours",
+    "kaiwu-train-gamecore-4 Up 2 hours",
+    "kaiwu-train-gamecore-8 Up 2 hours",
+    "kaiwu-train-gamecore-6 Up 2 hours",
+    "kaiwu-train-gamecore-3 Up 2 hours",
+    "kaiwu-train-gamecore-7 Up 2 hours",
+    "kaiwu-train-vector-1 Up 2 hours",
+    "kaiwu-train-gamecore-5 Up 2 hours",
+    "kaiwu-train-gamecore-1 Up 2 hours",
+    "kaiwu-train-gamecore-2 Up 2 hours",
+    "kaiwu-train-backup_model-1 Up 2 hours",
+    "kaiwu-train-greptimedb-1 Up 2 hours (healthy)",
+    "kaiwu-train-pushgateway-1 Up 2 hours"
+  ],
+  "stats": {
+    "total": 919,
+    "avg": 179.98,
+    "max": 649.0,
+    "min": 3.0,
+    "median": 181.0,
+    "std": 73.04,
+    "win_count": 48,
+    "avg_steps": 262.9
+  },
+  "time_series": [
+    {
+      "ep_range": "0-49",
+      "count": 19,
+      "avg_score": 75.47,
+      "max_score": 111.0,
+      "min_score": 19.0,
+      "avg_steps": 182.5
+    },
+    {
+      "ep_range": "50-99",
+      "count": 18,
+      "avg_score": 88.56,
+      "max_score": 116.0,
+      "min_score": 45.0,
+      "avg_steps": 194.3
+    },
+    {
+      "ep_range": "100-149",
+      "count": 18,
+      "avg_score": 96.83,
+      "max_score": 130.0,
+      "min_score": 3.0,
+      "avg_steps": 189.1
+    },
+    {
+      "ep_range": "150-199",
+      "count": 18,
+      "avg_score": 121.0,
+      "max_score": 164.0,
+      "min_score": 19.0,
+      "avg_steps": 188.8
+    },
+    {
+      "ep_range": "200-249",
+      "count": 20,
+      "avg_score": 135.6,
+      "max_score": 177.0,
+      "min_score": 108.0,
+      "avg_steps": 209.2
+    },
+    {
+      "ep_range": "250-299",
+      "count": 20,
+      "avg_score": 138.35,
+      "max_score": 272.0,
+      "min_score": 28.0,
+      "avg_steps": 201.1
+    },
+    {
+      "ep_range": "300-349",
+      "count": 29,
+      "avg_score": 144.59,
+      "max_score": 254.0,
+      "min_score": 66.0,
+      "avg_steps": 200.8
+    },
+    {
+      "ep_range": "350-399",
+      "count": 21,
+      "avg_score": 139.62,
+      "max_score": 174.0,
+      "min_score": 13.0,
+      "avg_steps": 190.7
+    },
+    {
+      "ep_range": "400-449",
+      "count": 20,
+      "avg_score": 147.7,
+      "max_score": 284.0,
+      "min_score": 66.0,
+      "avg_steps": 204.9
+    },
+    {
+      "ep_range": "450-499",
+      "count": 25,
+      "avg_score": 163.8,
+      "max_score": 217.0,
+      "min_score": 105.0,
+      "avg_steps": 204.1
+    },
+    {
+      "ep_range": "500-549",
+      "count": 24,
+      "avg_score": 167.92,
+      "max_score": 249.0,
+      "min_score": 98.0,
+      "avg_steps": 204.7
+    },
+    {
+      "ep_range": "550-599",
+      "count": 26,
+      "avg_score": 177.0,
+      "max_score": 301.0,
+      "min_score": 126.0,
+      "avg_steps": 209.5
+    },
+    {
+      "ep_range": "600-649",
+      "count": 24,
+      "avg_score": 159.92,
+      "max_score": 213.0,
+      "min_score": 29.0,
+      "avg_steps": 221.9
+    },
+    {
+      "ep_range": "650-699",
+      "count": 24,
+      "avg_score": 167.71,
+      "max_score": 194.0,
+      "min_score": 18.0,
+      "avg_steps": 195.1
+    },
+    {
+      "ep_range": "700-749",
+      "count": 26,
+      "avg_score": 169.88,
+      "max_score": 190.0,
+      "min_score": 102.0,
+      "avg_steps": 196.5
+    },
+    {
+      "ep_range": "750-799",
+      "count": 20,
+      "avg_score": 182.15,
+      "max_score": 195.0,
+      "min_score": 154.0,
+      "avg_steps": 200.0
+    },
+    {
+      "ep_range": "800-849",
+      "count": 25,
+      "avg_score": 186.08,
+      "max_score": 345.0,
+      "min_score": 149.0,
+      "avg_steps": 230.4
+    },
+    {
+      "ep_range": "850-899",
+      "count": 25,
+      "avg_score": 183.36,
+      "max_score": 248.0,
+      "min_score": 143.0,
+      "avg_steps": 235.7
+    },
+    {
+      "ep_range": "900-949",
+      "count": 20,
+      "avg_score": 182.05,
+      "max_score": 338.0,
+      "min_score": 31.0,
+      "avg_steps": 270.9
+    },
+    {
+      "ep_range": "950-999",
+      "count": 30,
+      "avg_score": 186.5,
+      "max_score": 333.0,
+      "min_score": 11.0,
+      "avg_steps": 241.2
+    },
+    {
+      "ep_range": "1000-1049",
+      "count": 20,
+      "avg_score": 187.45,
+      "max_score": 319.0,
+      "min_score": 35.0,
+      "avg_steps": 206.2
+    },
+    {
+      "ep_range": "1050-1099",
+      "count": 25,
+      "avg_score": 186.32,
+      "max_score": 268.0,
+      "min_score": 106.0,
+      "avg_steps": 212.5
+    },
+    {
+      "ep_range": "1100-1149",
+      "count": 25,
+      "avg_score": 188.12,
+      "max_score": 298.0,
+      "min_score": 79.0,
+      "avg_steps": 236.6
+    },
+    {
+      "ep_range": "1150-1199",
+      "count": 24,
+      "avg_score": 202.5,
+      "max_score": 381.0,
+      "min_score": 164.0,
+      "avg_steps": 220.0
+    },
+    {
+      "ep_range": "1200-1249",
+      "count": 26,
+      "avg_score": 197.81,
+      "max_score": 347.0,
+      "min_score": 30.0,
+      "avg_steps": 217.9
+    },
+    {
+      "ep_range": "1250-1299",
+      "count": 26,
+      "avg_score": 185.08,
+      "max_score": 339.0,
+      "min_score": 7.0,
+      "avg_steps": 202.7
+    },
+    {
+      "ep_range": "1300-1349",
+      "count": 24,
+      "avg_score": 214.04,
+      "max_score": 382.0,
+      "min_score": 96.0,
+      "avg_steps": 236.8
+    },
+    {
+      "ep_range": "1350-1399",
+      "count": 25,
+      "avg_score": 204.6,
+      "max_score": 359.0,
+      "min_score": 57.0,
+      "avg_steps": 261.5
+    },
+    {
+      "ep_range": "1400-1449",
+      "count": 25,
+      "avg_score": 172.56,
+      "max_score": 341.0,
+      "min_score": 3.0,
+      "avg_steps": 221.1
+    },
+    {
+      "ep_range": "1450-1499",
+      "count": 31,
+      "avg_score": 226.71,
+      "max_score": 486.0,
+      "min_score": 5.0,
+      "avg_steps": 275.7
+    },
+    {
+      "ep_range": "1500-1549",
+      "count": 23,
+      "avg_score": 225.43,
+      "max_score": 427.0,
+      "min_score": 16.0,
+      "avg_steps": 250.4
+    },
+    {
+      "ep_range": "1550-1599",
+      "count": 29,
+      "avg_score": 214.38,
+      "max_score": 503.0,
+      "min_score": 65.0,
+      "avg_steps": 331.6
+    },
+    {
+      "ep_range": "1600-1649",
+      "count": 40,
+      "avg_score": 237.57,
+      "max_score": 649.0,
+      "min_score": 41.0,
+      "avg_steps": 339.1
+    },
+    {
+      "ep_range": "1650-1699",
+      "count": 34,
+      "avg_score": 239.91,
+      "max_score": 497.0,
+      "min_score": 66.0,
+      "avg_steps": 363.5
+    },
+    {
+      "ep_range": "1700-1749",
+      "count": 44,
+      "avg_score": 211.61,
+      "max_score": 525.0,
+      "min_score": 25.0,
+      "avg_steps": 483.0
+    },
+    {
+      "ep_range": "1750-1799",
+      "count": 41,
+      "avg_score": 171.88,
+      "max_score": 369.0,
+      "min_score": 19.0,
+      "avg_steps": 576.2
+    },
+    {
+      "ep_range": "1800-1849",
+      "count": 5,
+      "avg_score": 167.0,
+      "max_score": 289.0,
+      "min_score": 85.0,
+      "avg_steps": 548.4
+    }
+  ],
+  "distribution": {
+    "0-50": 27,
+    "50-100": 67,
+    "100-150": 138,
+    "150-200": 550,
+    "200-300": 67,
+    "300+": 70
+  },
+  "distribution_pct": {
+    "0-50": 2.9,
+    "50-100": 7.3,
+    "100-150": 15.0,
+    "150-200": 59.8,
+    "200-300": 7.3,
+    "300+": 7.6
+  },
+  "recent_scores": [
+    106.0,
+    341.0,
+    296.0,
+    198.0,
+    149.0,
+    217.0,
+    77.0,
+    67.0,
+    243.0,
+    224.0,
+    72.0,
+    187.0,
+    146.0,
+    181.0,
+    192.0,
+    19.0,
+    219.0,
+    86.0,
+    140.0,
+    192.0,
+    69.0,
+    167.0,
+    289.0,
+    167.0,
+    103.0,
+    156.0,
+    148.0,
+    150.0,
+    191.0,
+    85.0
+  ],
+  "recent_episodes": [
+    {
+      "ep": 1767,
+      "score": 106.0,
+      "steps": 110,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1768,
+      "score": 341.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1777,
+      "score": 296.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1778,
+      "score": 198.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1779,
+      "score": 149.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1780,
+      "score": 217.0,
+      "steps": 288,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1769,
+      "score": 77.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1781,
+      "score": 67.0,
+      "steps": 68,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1770,
+      "score": 243.0,
+      "steps": 284,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1771,
+      "score": 224.0,
+      "steps": 278,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1778,
+      "score": 72.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1791,
+      "score": 187.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1779,
+      "score": 146.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1780,
+      "score": 181.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1781,
+      "score": 192.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1792,
+      "score": 19.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1782,
+      "score": 219.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1793,
+      "score": 86.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1794,
+      "score": 140.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1795,
+      "score": 192.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1788,
+      "score": 69.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1789,
+      "score": 167.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1801,
+      "score": 289.0,
+      "steps": 296,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1802,
+      "score": 167.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1803,
+      "score": 103.0,
+      "steps": 246,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1790,
+      "score": 156.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1791,
+      "score": 148.0,
+      "steps": 200,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1792,
+      "score": 150.0,
+      "steps": 262,
+      "result": "FAIL"
+    },
+    {
+      "ep": 1804,
+      "score": 191.0,
+      "steps": 1000,
+      "result": "WIN"
+    },
+    {
+      "ep": 1805,
+      "score": 85.0,
+      "steps": 1000,
+      "result": "WIN"
+    }
+  ],
+  "convergence": {
+    "recent_10_avg": 152.5,
+    "recent_20_avg": 147.95,
+    "recent_30_avg": 162.57,
+    "recent_50_avg": 172.86,
+    "first_30_avg": 80.03,
+    "growth_first_vs_recent_pct": 103.14,
+    "growth_10_vs_30_pct": -6.19
+  },
+  "top_scores": [
+    {
+      "ep": 1603,
+      "score": 649.0,
+      "steps": 939,
+      "time": "2026-04-09 03:04:15"
+    },
+    {
+      "ep": 1730,
+      "score": 525.0,
+      "steps": 641,
+      "time": "2026-04-09 03:13:53"
+    },
+    {
+      "ep": 1624,
+      "score": 507.0,
+      "steps": 606,
+      "time": "2026-04-09 03:05:43"
+    },
+    {
+      "ep": 1617,
+      "score": 506.0,
+      "steps": 561,
+      "time": "2026-04-09 03:03:55"
+    },
+    {
+      "ep": 1555,
+      "score": 503.0,
+      "steps": 624,
+      "time": "2026-04-09 03:01:21"
+    }
+  ],
+  "anomalies": [
+    {
+      "ep": 24,
+      "score": 19.0,
+      "steps": 35,
+      "type": "low_drop"
+    },
+    {
+      "ep": 124,
+      "score": 3.0,
+      "steps": 4,
+      "type": "low_drop"
+    },
+    {
+      "ep": 177,
+      "score": 19.0,
+      "steps": 25,
+      "type": "low_drop"
+    },
+    {
+      "ep": 279,
+      "score": 28.0,
+      "steps": 39,
+      "type": "low_drop"
+    },
+    {
+      "ep": 368,
+      "score": 13.0,
+      "steps": 13,
+      "type": "low_drop"
+    },
+    {
+      "ep": 618,
+      "score": 29.0,
+      "steps": 34,
+      "type": "low_drop"
+    },
+    {
+      "ep": 657,
+      "score": 18.0,
+      "steps": 20,
+      "type": "low_drop"
+    },
+    {
+      "ep": 821,
+      "score": 345.0,
+      "steps": 987,
+      "type": "high_spike"
+    },
+    {
+      "ep": 932,
+      "score": 338.0,
+      "steps": 986,
+      "type": "high_spike"
+    },
+    {
+      "ep": 930,
+      "score": 31.0,
+      "steps": 31,
+      "type": "low_drop"
+    },
+    {
+      "ep": 956,
+      "score": 15.0,
+      "steps": 16,
+      "type": "low_drop"
+    },
+    {
+      "ep": 953,
+      "score": 333.0,
+      "steps": 399,
+      "type": "high_spike"
+    },
+    {
+      "ep": 970,
+      "score": 11.0,
+      "steps": 12,
+      "type": "low_drop"
+    },
+    {
+      "ep": 995,
+      "score": 331.0,
+      "steps": 664,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1163,
+      "score": 339.0,
+      "steps": 397,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1207,
+      "score": 30.0,
+      "steps": 30,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1196,
+      "score": 381.0,
+      "steps": 433,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1213,
+      "score": 335.0,
+      "steps": 383,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1244,
+      "score": 347.0,
+      "steps": 391,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1267,
+      "score": 339.0,
+      "steps": 396,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1287,
+      "score": 333.0,
+      "steps": 389,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1294,
+      "score": 7.0,
+      "steps": 7,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1318,
+      "score": 382.0,
+      "steps": 436,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1343,
+      "score": 328.0,
+      "steps": 372,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1343,
+      "score": 350.0,
+      "steps": 385,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1376,
+      "score": 343.0,
+      "steps": 386,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1399,
+      "score": 359.0,
+      "steps": 392,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1418,
+      "score": 26.0,
+      "steps": 31,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1419,
+      "score": 341.0,
+      "steps": 381,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1438,
+      "score": 3.0,
+      "steps": 3,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1460,
+      "score": 371.0,
+      "steps": 452,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1476,
+      "score": 18.0,
+      "steps": 19,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1477,
+      "score": 486.0,
+      "steps": 544,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1470,
+      "score": 5.0,
+      "steps": 5,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1473,
+      "score": 339.0,
+      "steps": 357,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1484,
+      "score": 358.0,
+      "steps": 395,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1485,
+      "score": 353.0,
+      "steps": 393,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1511,
+      "score": 353.0,
+      "steps": 423,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1500,
+      "score": 16.0,
+      "steps": 16,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1532,
+      "score": 333.0,
+      "steps": 351,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1514,
+      "score": 343.0,
+      "steps": 391,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1531,
+      "score": 427.0,
+      "steps": 511,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1555,
+      "score": 503.0,
+      "steps": 624,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1588,
+      "score": 330.0,
+      "steps": 353,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1588,
+      "score": 381.0,
+      "steps": 417,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1617,
+      "score": 506.0,
+      "steps": 561,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1603,
+      "score": 649.0,
+      "steps": 939,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1607,
+      "score": 395.0,
+      "steps": 454,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1637,
+      "score": 349.0,
+      "steps": 445,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1621,
+      "score": 378.0,
+      "steps": 1000,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1624,
+      "score": 507.0,
+      "steps": 606,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1645,
+      "score": 334.0,
+      "steps": 361,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1647,
+      "score": 433.0,
+      "steps": 976,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1647,
+      "score": 330.0,
+      "steps": 368,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1671,
+      "score": 391.0,
+      "steps": 661,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1663,
+      "score": 497.0,
+      "steps": 759,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1683,
+      "score": 425.0,
+      "steps": 581,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1679,
+      "score": 377.0,
+      "steps": 544,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1687,
+      "score": 351.0,
+      "steps": 380,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1680,
+      "score": 493.0,
+      "steps": 779,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1705,
+      "score": 400.0,
+      "steps": 1000,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1709,
+      "score": 25.0,
+      "steps": 27,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1717,
+      "score": 339.0,
+      "steps": 637,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1721,
+      "score": 383.0,
+      "steps": 959,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1720,
+      "score": 407.0,
+      "steps": 443,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1729,
+      "score": 358.0,
+      "steps": 507,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1730,
+      "score": 525.0,
+      "steps": 641,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1737,
+      "score": 349.0,
+      "steps": 533,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1755,
+      "score": 369.0,
+      "steps": 487,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1757,
+      "score": 26.0,
+      "steps": 1000,
+      "type": "low_drop"
+    },
+    {
+      "ep": 1768,
+      "score": 341.0,
+      "steps": 1000,
+      "type": "high_spike"
+    },
+    {
+      "ep": 1792,
+      "score": 19.0,
+      "steps": 1000,
+      "type": "low_drop"
+    }
+  ],
+  "training_metrics_series": [
+    {
+      "time": "2026-04-09 01:46:14",
+      "global_step": 25,
+      "episode_cnt": 8,
+      "reward": 0.47,
+      "clean_score_avg": 73.62,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 01:46:25",
+      "global_step": 25,
+      "episode_cnt": 106,
+      "reward": 2.16,
+      "clean_score_avg": 99.62,
+      "charge_count": 1.5
+    },
+    {
+      "time": "2026-04-09 01:47:14",
+      "global_step": 80,
+      "episode_cnt": 200,
+      "reward": 3.81,
+      "clean_score_avg": 104.5,
+      "charge_count": 1.5
+    },
+    {
+      "time": "2026-04-09 01:47:27",
+      "global_step": 80,
+      "episode_cnt": 303,
+      "reward": 2.91,
+      "clean_score_avg": 93.75,
+      "charge_count": 0.75
+    },
+    {
+      "time": "2026-04-09 01:48:16",
+      "global_step": 130,
+      "episode_cnt": 405,
+      "reward": 0.78,
+      "clean_score_avg": 83.0,
+      "charge_count": 0.75
+    },
+    {
+      "time": "2026-04-09 01:49:18",
+      "global_step": 184,
+      "episode_cnt": 637,
+      "reward": 4.32,
+      "clean_score_avg": 115.75,
+      "charge_count": 0.5
+    },
+    {
+      "time": "2026-04-09 01:50:19",
+      "global_step": 238,
+      "episode_cnt": 843,
+      "reward": 4.05,
+      "clean_score_avg": 120.75,
+      "charge_count": 0.5
+    },
+    {
+      "time": "2026-04-09 01:51:21",
+      "global_step": 292,
+      "episode_cnt": 1050,
+      "reward": 3.19,
+      "clean_score_avg": 111.38,
+      "charge_count": 0.25
+    },
+    {
+      "time": "2026-04-09 01:52:22",
+      "global_step": 344,
+      "episode_cnt": 1223,
+      "reward": 5.7,
+      "clean_score_avg": 140.88,
+      "charge_count": 1.0
+    },
+    {
+      "time": "2026-04-09 01:53:24",
+      "global_step": 397,
+      "episode_cnt": 1434,
+      "reward": 5.98,
+      "clean_score_avg": 129.38,
+      "charge_count": 0.12
+    },
+    {
+      "time": "2026-04-09 01:54:26",
+      "global_step": 460,
+      "episode_cnt": 1665,
+      "reward": 5.08,
+      "clean_score_avg": 117.5,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 01:55:28",
+      "global_step": 511,
+      "episode_cnt": 1886,
+      "reward": 6.97,
+      "clean_score_avg": 143.0,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 01:56:29",
+      "global_step": 565,
+      "episode_cnt": 2075,
+      "reward": 8.37,
+      "clean_score_avg": 145.25,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 01:57:30",
+      "global_step": 613,
+      "episode_cnt": 2279,
+      "reward": 5.49,
+      "clean_score_avg": 136.12,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 01:58:31",
+      "global_step": 655,
+      "episode_cnt": 2430,
+      "reward": 7.86,
+      "clean_score_avg": 143.0,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 01:59:31",
+      "global_step": 700,
+      "episode_cnt": 2603,
+      "reward": 7.45,
+      "clean_score_avg": 146.5,
+      "charge_count": 0.25
+    },
+    {
+      "time": "2026-04-09 02:00:33",
+      "global_step": 745,
+      "episode_cnt": 2806,
+      "reward": 7.23,
+      "clean_score_avg": 139.25,
+      "charge_count": 0.38
+    },
+    {
+      "time": "2026-04-09 02:01:36",
+      "global_step": 790,
+      "episode_cnt": 3003,
+      "reward": 8.97,
+      "clean_score_avg": 157.12,
+      "charge_count": 0.25
+    },
+    {
+      "time": "2026-04-09 02:02:36",
+      "global_step": 835,
+      "episode_cnt": 3181,
+      "reward": 7.14,
+      "clean_score_avg": 164.12,
+      "charge_count": 0.25
+    },
+    {
+      "time": "2026-04-09 02:03:40",
+      "global_step": 877,
+      "episode_cnt": 3376,
+      "reward": 9.54,
+      "clean_score_avg": 174.25,
+      "charge_count": 0.12
+    },
+    {
+      "time": "2026-04-09 02:04:41",
+      "global_step": 918,
+      "episode_cnt": 3530,
+      "reward": 11.26,
+      "clean_score_avg": 168.5,
+      "charge_count": 0.88
+    },
+    {
+      "time": "2026-04-09 02:05:43",
+      "global_step": 958,
+      "episode_cnt": 3725,
+      "reward": 13.25,
+      "clean_score_avg": 185.12,
+      "charge_count": 0.5
+    },
+    {
+      "time": "2026-04-09 02:06:44",
+      "global_step": 958,
+      "episode_cnt": 3901,
+      "reward": 8.45,
+      "clean_score_avg": 160.25,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 02:07:45",
+      "global_step": 1000,
+      "episode_cnt": 4004,
+      "reward": 10.28,
+      "clean_score_avg": 156.88,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 02:08:48",
+      "global_step": 1039,
+      "episode_cnt": 4210,
+      "reward": 7.14,
+      "clean_score_avg": 154.25,
+      "charge_count": 0.0
+    },
+    {
+      "time": "2026-04-09 02:09:49",
+      "global_step": 1078,
+      "episode_cnt": 4353,
+      "reward": 11.57,
+      "clean_score_avg": 185.5,
+      "charge_count": 0.12
+    },
+    {
+      "time": "2026-04-09 02:10:52",
+      "global_step": 1117,
+      "episode_cnt": 4536,
+      "reward": 11.47,
+      "clean_score_avg": 179.5,
+      "charge_count": 0.12
+    },
+    {
+      "time": "2026-04-09 02:13:02",
+      "global_step": 1234,
+      "episode_cnt": 4939,
+      "reward": 9.62,
+      "clean_score_avg": 177.38,
+      "charge_count": 2.0
+    },
+    {
+      "time": "2026-04-09 02:55:41",
+      "global_step": 2992,
+      "episode_cnt": 11679,
+      "reward": 176.46,
+      "clean_score_avg": 248.75,
+      "charge_count": 124.0
+    },
+    {
+      "time": "2026-04-09 02:56:44",
+      "global_step": 3031,
+      "episode_cnt": 11816,
+      "reward": 65.83,
+      "clean_score_avg": 223.38,
+      "charge_count": 38.75
+    },
+    {
+      "time": "2026-04-09 02:57:48",
+      "global_step": 3076,
+      "episode_cnt": 11947,
+      "reward": 14.41,
+      "clean_score_avg": 204.62,
+      "charge_count": 1.12
+    },
+    {
+      "time": "2026-04-09 02:58:50",
+      "global_step": 3121,
+      "episode_cnt": 12088,
+      "reward": 18.24,
+      "clean_score_avg": 243.62,
+      "charge_count": 0.88
+    },
+    {
+      "time": "2026-04-09 02:59:52",
+      "global_step": 3175,
+      "episode_cnt": 12237,
+      "reward": 119.16,
+      "clean_score_avg": 201.12,
+      "charge_count": 82.12
+    },
+    {
+      "time": "2026-04-09 03:00:52",
+      "global_step": 3224,
+      "episode_cnt": 12378,
+      "reward": 133.99,
+      "clean_score_avg": 176.75,
+      "charge_count": 93.88
+    },
+    {
+      "time": "2026-04-09 03:01:54",
+      "global_step": 3271,
+      "episode_cnt": 12521,
+      "reward": 14.14,
+      "clean_score_avg": 202.5,
+      "charge_count": 0.88
+    },
+    {
+      "time": "2026-04-09 03:02:56",
+      "global_step": 3322,
+      "episode_cnt": 12649,
+      "reward": 208.02,
+      "clean_score_avg": 201.88,
+      "charge_count": 148.12
+    },
+    {
+      "time": "2026-04-09 03:03:30",
+      "global_step": 3373,
+      "episode_cnt": 12697,
+      "reward": 152.16,
+      "clean_score_avg": 257.75,
+      "charge_count": 102.75
+    },
+    {
+      "time": "2026-04-09 03:03:58",
+      "global_step": 3373,
+      "episode_cnt": 12785,
+      "reward": 85.62,
+      "clean_score_avg": 277.38,
+      "charge_count": 50.25
+    },
+    {
+      "time": "2026-04-09 03:05:02",
+      "global_step": 3427,
+      "episode_cnt": 12924,
+      "reward": 184.85,
+      "clean_score_avg": 234.62,
+      "charge_count": 129.0
+    },
+    {
+      "time": "2026-04-09 03:05:33",
+      "global_step": 3475,
+      "episode_cnt": 12952,
+      "reward": 188.37,
+      "clean_score_avg": 241.25,
+      "charge_count": 131.62
+    },
+    {
+      "time": "2026-04-09 03:06:05",
+      "global_step": 3475,
+      "episode_cnt": 13027,
+      "reward": 55.54,
+      "clean_score_avg": 259.75,
+      "charge_count": 28.75
+    },
+    {
+      "time": "2026-04-09 03:07:15",
+      "global_step": 3523,
+      "episode_cnt": 13134,
+      "reward": 149.06,
+      "clean_score_avg": 249.75,
+      "charge_count": 99.0
+    },
+    {
+      "time": "2026-04-09 03:07:34",
+      "global_step": 3571,
+      "episode_cnt": 13152,
+      "reward": 152.19,
+      "clean_score_avg": 268.0,
+      "charge_count": 99.88
+    },
+    {
+      "time": "2026-04-09 03:08:17",
+      "global_step": 3571,
+      "episode_cnt": 13238,
+      "reward": 219.21,
+      "clean_score_avg": 166.12,
+      "charge_count": 161.38
+    },
+    {
+      "time": "2026-04-09 03:08:37",
+      "global_step": 3622,
+      "episode_cnt": 13265,
+      "reward": 246.9,
+      "clean_score_avg": 186.0,
+      "charge_count": 183.5
+    },
+    {
+      "time": "2026-04-09 03:09:19",
+      "global_step": 3622,
+      "episode_cnt": 13369,
+      "reward": 129.03,
+      "clean_score_avg": 312.88,
+      "charge_count": 84.0
+    },
+    {
+      "time": "2026-04-09 03:09:45",
+      "global_step": 3673,
+      "episode_cnt": 13396,
+      "reward": 168.83,
+      "clean_score_avg": 316.62,
+      "charge_count": 112.62
+    },
+    {
+      "time": "2026-04-09 03:10:21",
+      "global_step": 3673,
+      "episode_cnt": 13481,
+      "reward": 245.79,
+      "clean_score_avg": 246.5,
+      "charge_count": 176.62
+    },
+    {
+      "time": "2026-04-09 03:10:52",
+      "global_step": 3724,
+      "episode_cnt": 13524,
+      "reward": 171.42,
+      "clean_score_avg": 243.75,
+      "charge_count": 120.25
+    },
+    {
+      "time": "2026-04-09 03:11:28",
+      "global_step": 3772,
+      "episode_cnt": 13581,
+      "reward": 181.92,
+      "clean_score_avg": 301.75,
+      "charge_count": 124.75
+    },
+    {
+      "time": "2026-04-09 03:12:32",
+      "global_step": 3823,
+      "episode_cnt": 13678,
+      "reward": 294.75,
+      "clean_score_avg": 267.38,
+      "charge_count": 212.12
+    },
+    {
+      "time": "2026-04-09 03:13:34",
+      "global_step": 3872,
+      "episode_cnt": 13774,
+      "reward": 245.32,
+      "clean_score_avg": 232.0,
+      "charge_count": 175.25
+    },
+    {
+      "time": "2026-04-09 03:14:13",
+      "global_step": 3872,
+      "episode_cnt": 13818,
+      "reward": 204.82,
+      "clean_score_avg": 182.75,
+      "charge_count": 149.0
+    },
+    {
+      "time": "2026-04-09 03:14:41",
+      "global_step": 3922,
+      "episode_cnt": 13865,
+      "reward": 289.09,
+      "clean_score_avg": 146.88,
+      "charge_count": 214.12
+    },
+    {
+      "time": "2026-04-09 03:15:43",
+      "global_step": 3970,
+      "episode_cnt": 13952,
+      "reward": 77.49,
+      "clean_score_avg": 256.62,
+      "charge_count": 46.12
+    },
+    {
+      "time": "2026-04-09 03:16:14",
+      "global_step": 3970,
+      "episode_cnt": 13972,
+      "reward": 25.61,
+      "clean_score_avg": 272.25,
+      "charge_count": 5.38
+    },
+    {
+      "time": "2026-04-09 03:16:46",
+      "global_step": 4018,
+      "episode_cnt": 14027,
+      "reward": 311.34,
+      "clean_score_avg": 197.25,
+      "charge_count": 227.38
+    },
+    {
+      "time": "2026-04-09 03:17:18",
+      "global_step": 4018,
+      "episode_cnt": 14051,
+      "reward": 385.13,
+      "clean_score_avg": 191.25,
+      "charge_count": 284.0
+    },
+    {
+      "time": "2026-04-09 03:17:47",
+      "global_step": 4063,
+      "episode_cnt": 14097,
+      "reward": 384.11,
+      "clean_score_avg": 150.5,
+      "charge_count": 286.25
+    },
+    {
+      "time": "2026-04-09 03:18:58",
+      "global_step": 4114,
+      "episode_cnt": 14203,
+      "reward": 481.19,
+      "clean_score_avg": 105.0,
+      "charge_count": 363.25
+    },
+    {
+      "time": "2026-04-09 03:19:32",
+      "global_step": 4114,
+      "episode_cnt": 14230,
+      "reward": 351.73,
+      "clean_score_avg": 121.88,
+      "charge_count": 263.62
+    },
+    {
+      "time": "2026-04-09 03:20:08",
+      "global_step": 4165,
+      "episode_cnt": 14280,
+      "reward": 379.69,
+      "clean_score_avg": 151.0,
+      "charge_count": 283.25
+    },
+    {
+      "time": "2026-04-09 03:20:41",
+      "global_step": 4216,
+      "episode_cnt": 14311,
+      "reward": 450.55,
+      "clean_score_avg": 133.0,
+      "charge_count": 338.25
+    }
+  ]
+}
