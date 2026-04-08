@@ -12,7 +12,7 @@ map_random = true
 # Number of official robots. Range: 1~4 (integer). 
 # In each round, official robots will be randomly generated on the road according to the configured.
 # 官方机器人数量。可配置范围为1～4（整数）。每局将按照配置数量在道路上随机生成官方机器人。
-robot_count = 0
+robot_count = 1
 
 # Number of chargers. Range: 1~4 (integer). When less than 4, spawn points are randomly chosen.
 # 充电桩数量。可配置范围为1～4（整数）。当配置小于4时，将从每张地图可生成充电桩的点位随机选择对应数量的点位生成。
