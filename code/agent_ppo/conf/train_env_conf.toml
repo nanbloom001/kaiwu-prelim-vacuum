@@ -24,5 +24,5 @@ max_step = 1000
 
 # Maximum battery. The battery level when fully charged. Range: 100~999.
 # 最大电量。满电状态下的电量。可配置范围100～999。
-# 从400降到300: agent不再能仅靠初始电量获得高分，必须学会充电
-battery_max = 300
+# 从400降到150: agent不充电只能得~120分, 充电一次可得~240分
+battery_max = 150
