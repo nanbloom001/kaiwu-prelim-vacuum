@@ -330,20 +330,22 @@ class Preprocessor:
         explore_reward = 0.001 * float(self.new_explored_cells)
 
         battery_ratio = self.battery / max(self.battery_max, 1)
-        # 仅在电量极低(<20%)时施加充电压力
-        low_battery_pressure = float(np.clip((0.20 - battery_ratio) / 0.20, 0.0, 1.0))
+        # 充电压力: 电量<30%时逐渐增大
+        low_battery_pressure = float(np.clip((0.30 - battery_ratio) / 0.30, 0.0, 1.0))
         charger_progress = float(np.clip(self.last_nearest_charger_dist - self.nearest_charger_dist, -6.0, 6.0))
         slack_improve = float(np.clip(self.charger_slack - self.last_charger_slack, -12.0, 12.0))
-        # 充电奖励降到极低水平，仅作方向引导
-        charger_reward = low_battery_pressure * (0.03 * charger_progress + 0.015 * slack_improve)
-        # 充电完成奖励大幅降低: 3.0 → 0.3 (相当于2.5格清扫)
-        charge_event_reward = 0.3 * self.just_charged
+        # 充电方向引导: 适度权重，仅在低电量时激活
+        charger_reward = low_battery_pressure * (0.05 * charger_progress + 0.03 * slack_improve)
+        # 充电完成奖励: 1.0 (=8.3格清扫), 足以激励充电但不会exploit
+        charge_event_reward = 1.0 * self.just_charged
 
         npc_penalty = -0.06 * float(np.clip((3.0 - self.nearest_npc_dist) / 3.0, 0.0, 1.0))
         revisit_penalty = -0.01 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
         stuck_penalty = -0.01 * float(np.clip(self.stuck_steps / 4.0, 0.0, 1.0))
         idle_penalty = -0.012 * float(np.clip(self.no_progress_steps / 30.0, 0.0, 1.0))
         step_penalty = -0.0015
+        # 低电量惩罚: 电量<15%时每步扣分，迫使agent学会提前充电
+        low_battery_penalty = -0.03 * float(np.clip((0.15 - battery_ratio) / 0.15, 0.0, 1.0))
 
         reward = (
             cleaning_reward
@@ -355,5 +357,6 @@ class Preprocessor:
             + stuck_penalty
             + idle_penalty
             + step_penalty
+            + low_battery_penalty
         )
         return float(np.clip(reward, -1.5, 1.5))
