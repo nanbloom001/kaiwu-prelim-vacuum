@@ -329,14 +329,14 @@ class Preprocessor:
         explore_reward = 0.0008 * float(self.new_explored_cells)
 
         battery_ratio = self.battery / max(self.battery_max, 1)
-        # 降低充电阈值从45%到30%，更早开始关注充电
-        low_battery_pressure = float(np.clip((0.30 - battery_ratio) / 0.30, 0.0, 1.0))
+        # 方案A+: 充电阈值进一步降低到25%，更激进
+        low_battery_pressure = float(np.clip((0.25 - battery_ratio) / 0.25, 0.0, 1.0))
         charger_progress = float(np.clip(self.last_nearest_charger_dist - self.nearest_charger_dist, -6.0, 6.0))
         slack_improve = float(np.clip(self.charger_slack - self.last_charger_slack, -12.0, 12.0))
-        # 大幅增加充电奖励权重：0.025->0.15, 0.015->0.08
-        charger_reward = low_battery_pressure * (0.15 * charger_progress + 0.08 * slack_improve)
-        # 增加充电完成奖励：0.5->2.0
-        charge_event_reward = 2.0 * self.just_charged
+        # 方案A+: 充电奖励权重进一步提升
+        charger_reward = low_battery_pressure * (0.25 * charger_progress + 0.12 * slack_improve)
+        # 方案A+: 充电完成奖励进一步提升
+        charge_event_reward = 3.0 * self.just_charged
 
         npc_penalty = -0.06 * float(np.clip((3.0 - self.nearest_npc_dist) / 3.0, 0.0, 1.0))
         revisit_penalty = -0.01 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
