@@ -1,0 +1,34 @@
+# 训练日志和临时文件
+train/log/
+train/archive/
+train/backup_model/
+train/checkpoint/
+
+# 环境变量（可能包含敏感信息）
+.env
+
+# Python缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude文件
+.claude/
+MEMORY.md
+TASK_CHECKLIST.md
+TRAINING_LOG.md
+MONITOR_RECORD.md
+auto_monitor.sh
+.monitor_state
+
+# 系统文件
+.DS_Store
+Thumbs.db
