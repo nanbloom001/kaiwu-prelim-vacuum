@@ -325,18 +325,19 @@ class Preprocessor:
         return feature, legal_action, reward
 
     def reward_process(self):
-        cleaning_reward = 0.08 * float(self.cleaned_this_step)
-        explore_reward = 0.0008 * float(self.new_explored_cells)
+        # 清扫是核心奖励，权重最高
+        cleaning_reward = 0.12 * float(self.cleaned_this_step)
+        explore_reward = 0.001 * float(self.new_explored_cells)
 
         battery_ratio = self.battery / max(self.battery_max, 1)
-        # 方案A+: 充电阈值进一步降低到25%，更激进
-        low_battery_pressure = float(np.clip((0.25 - battery_ratio) / 0.25, 0.0, 1.0))
+        # 仅在电量极低(<20%)时施加充电压力
+        low_battery_pressure = float(np.clip((0.20 - battery_ratio) / 0.20, 0.0, 1.0))
         charger_progress = float(np.clip(self.last_nearest_charger_dist - self.nearest_charger_dist, -6.0, 6.0))
         slack_improve = float(np.clip(self.charger_slack - self.last_charger_slack, -12.0, 12.0))
-        # 方案A+: 充电奖励权重进一步提升
-        charger_reward = low_battery_pressure * (0.25 * charger_progress + 0.12 * slack_improve)
-        # 方案A+: 充电完成奖励进一步提升
-        charge_event_reward = 3.0 * self.just_charged
+        # 充电奖励降到极低水平，仅作方向引导
+        charger_reward = low_battery_pressure * (0.03 * charger_progress + 0.015 * slack_improve)
+        # 充电完成奖励大幅降低: 3.0 → 0.3 (相当于2.5格清扫)
+        charge_event_reward = 0.3 * self.just_charged
 
         npc_penalty = -0.06 * float(np.clip((3.0 - self.nearest_npc_dist) / 3.0, 0.0, 1.0))
         revisit_penalty = -0.01 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
