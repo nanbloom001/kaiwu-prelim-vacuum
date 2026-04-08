@@ -1,7 +1,8 @@
 [env_conf]
 # Maps used for training. Customize by keeping only desired map IDs, e.g. [1, 2] for maps 1 and 2.
 # 训练使用的地图。可自定义选择期望用来训练的地图，如只期望使用1、2号地图训练数组内仅保留[1,2]即可。
-map = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+# 方案B Phase1: Curriculum Learning - 先学清扫(无NPC, 高电量)
+map = [1, 2, 3]
 
 # Whether to randomly select maps. Boolean. 
 # true = randomly pick one from configured maps per episode, false = used sequentially.
@@ -11,7 +12,7 @@ map_random = true
 # Number of official robots. Range: 1~4 (integer). 
 # In each round, official robots will be randomly generated on the road according to the configured.
 # 官方机器人数量。可配置范围为1～4（整数）。每局将按照配置数量在道路上随机生成官方机器人。
-robot_count = 4
+robot_count = 0
 
 # Number of chargers. Range: 1~4 (integer). When less than 4, spawn points are randomly chosen.
 # 充电桩数量。可配置范围为1～4（整数）。当配置小于4时，将从每张地图可生成充电桩的点位随机选择对应数量的点位生成。
@@ -23,4 +24,4 @@ max_step = 1000
 
 # Maximum battery. The battery level when fully charged. Range: 100~999.
 # 最大电量。满电状态下的电量。可配置范围100～999。
-battery_max = 200
+battery_max = 400

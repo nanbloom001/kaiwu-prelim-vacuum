@@ -186,7 +186,7 @@ def main():
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'runtime_minutes': runtime,
         'episodes': len(records),
-        'plan': 'A+ (super_aggressive_charging)',
+        'plan': 'B Phase1 (curriculum + reward_rebalance)',
         'containers': containers,
         'stats': stats,
         'time_series': ts,

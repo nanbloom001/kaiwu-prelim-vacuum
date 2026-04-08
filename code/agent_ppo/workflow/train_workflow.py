@@ -213,12 +213,13 @@ class EpisodeRunner:
         )
 
         cleaning_ratio = fm.dirt_cleaned / max(fm.total_dirt, 1)
+        # Plan B+C: 强化clean_score权重，防止"存活但不清扫"
         if truncated:
-            final_reward = 4.0 + 0.015 * clean_score + 4.0 * cleaning_ratio
+            final_reward = 6.0 + 0.04 * clean_score + 6.0 * cleaning_ratio
             result_str = "WIN"
         else:
-            fail_penalty = -3.0 if fail_reason == "collision" else -2.0
-            final_reward = fail_penalty + 0.01 * clean_score + 2.0 * cleaning_ratio
+            fail_penalty = -4.0 if fail_reason == "collision" else -2.5
+            final_reward = fail_penalty + 0.02 * clean_score + 3.0 * cleaning_ratio
             result_str = "FAIL"
 
         self.failure_counts.setdefault(fail_reason, 0)
