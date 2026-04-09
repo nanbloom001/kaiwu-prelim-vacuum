@@ -3,6 +3,20 @@ train/log/
 train/archive/
 train/backup_model/
 train/checkpoint/
+train/TRAINING_DATA.json
+train/*.tar
+train/*.tar.zst
+train/*.zip
+train/*.gz
+code-robot_vacuum-public-*.zip
+
+code/*.pkl
+code/*.meta.json
+code/resume_snapshots/
+code/manual_checkpoints/
+
+license.dat
+dev/
 
 # 环境变量（可能包含敏感信息）
 .env

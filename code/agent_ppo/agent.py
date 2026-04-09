@@ -95,6 +95,7 @@ class Agent(BaseAgent):
         legal_action = obs_data.legal_action
 
         logits, value = self._run_model(feature)
+        logits = self._blend_policy_logits(logits)
 
         legal_arr = np.array(legal_action, dtype=np.float32)
         prob = self._legal_soft_max(logits, legal_arr)
@@ -195,6 +196,26 @@ class Agent(BaseAgent):
         logits = rst[0].cpu().numpy()[0]
         value = rst[1].cpu().numpy()[0]
         return logits, value
+
+    def _blend_policy_logits(self, logits):
+        biases = self.preprocessor.get_action_biases()
+        if biases is None:
+            return logits
+
+        mode = getattr(self.preprocessor, "current_mode", Config.MODE_NUM)
+        if mode == self.preprocessor.MODE_CHARGE:
+            bias_scale = 1.15
+        elif mode == self.preprocessor.MODE_EVADE:
+            bias_scale = 1.35
+        else:
+            bias_scale = 0.75
+
+        invalid_pressure = float(np.clip(getattr(self.preprocessor, "invalid_move_ema", 0.0), 0.0, 1.0))
+        revisit_pressure = float(
+            np.clip((getattr(self.preprocessor, "cur_visit_count", 1) - 1) / 6.0, 0.0, 1.0)
+        )
+        adaptive_scale = bias_scale + 0.4 * invalid_pressure + 0.2 * revisit_pressure
+        return logits + adaptive_scale * biases
 
     def _legal_soft_max(self, logits, legal_action):
         """Softmax with legal action masking.

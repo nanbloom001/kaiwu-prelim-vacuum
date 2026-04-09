@@ -13,11 +13,19 @@ import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 
 def checkpoint_key(raw_checkpoint_id):
     return str(raw_checkpoint_id or "bootstrap")
+
+
+def config_key(row):
+    return "r{robot_count}-c{charger_count}-b{battery_max}-s{max_step}".format(
+        robot_count=int(row.get("robot_count", 0)),
+        charger_count=int(row.get("charger_count", 0)),
+        battery_max=int(row.get("battery_max", 0)),
+        max_step=int(row.get("max_step", 0)),
+    )
 
 
 def _mean(values):
@@ -55,24 +63,42 @@ def build_checkpoint_analysis(episodes):
         charge_counts = [float(row.get("charge_count", 0)) for row in rows]
         finished_steps = [float(row.get("finished_steps", 0)) for row in rows]
         remaining_charge = [float(row.get("remaining_charge", 0)) for row in rows]
+        invalid_move_rates = [float(row.get("invalid_move_rate", 0)) for row in rows]
+        charge_efficiency = [float(row.get("charge_efficiency", 0)) for row in rows]
+        clean_per_step = [float(row.get("clean_per_step", 0)) for row in rows]
 
         battery_fail_rate = _mean([1.0 if row.get("fail_reason") == "battery" else 0.0 for row in rows])
         collision_fail_rate = _mean([1.0 if row.get("fail_reason") == "collision" else 0.0 for row in rows])
         completed_rate = _mean([1.0 if row.get("fail_reason") == "completed" else 0.0 for row in rows])
 
         map_scores = defaultdict(list)
+        config_scores = defaultdict(list)
         for row in rows:
             map_id = str(row.get("map_id", "unknown"))
-            map_scores[map_id].append(float(row.get("clean_score", row.get("total_score", 0))))
+            score = float(row.get("clean_score", row.get("total_score", 0)))
+            map_scores[map_id].append(score)
+            config_scores[config_key(row)].append(score)
 
         avg_clean_score = _mean(clean_scores)
+        score_p10 = _percentile(clean_scores, 0.10)
         score_p90 = _percentile(clean_scores, 0.90)
+        worst_map_avg = min((_mean(scores) for scores in map_scores.values()), default=0.0)
+        worst_config_avg = min((_mean(scores) for scores in config_scores.values()), default=0.0)
+        avg_invalid_move_rate = _mean(invalid_move_rates)
+        avg_charge_efficiency = _mean(charge_efficiency)
+        avg_clean_per_step = _mean(clean_per_step)
+
         ranking_score = (
             avg_clean_score
-            + 0.15 * score_p90
-            + 20.0 * completed_rate
-            - 35.0 * battery_fail_rate
-            - 20.0 * collision_fail_rate
+            + 1.4 * score_p10
+            + 0.8 * worst_config_avg
+            + 0.4 * worst_map_avg
+            + 8.0 * avg_clean_per_step
+            + 0.2 * avg_charge_efficiency
+            + 10.0 * completed_rate
+            - 50.0 * battery_fail_rate
+            - 32.0 * collision_fail_rate
+            - 12.0 * avg_invalid_move_rate
         )
 
         leaderboard.append(
@@ -80,15 +106,24 @@ def build_checkpoint_analysis(episodes):
                 "checkpoint_id": checkpoint_id,
                 "episode_count": len(rows),
                 "avg_clean_score": round(avg_clean_score, 4),
+                "score_p10": round(score_p10, 4),
                 "score_p90": round(score_p90, 4),
+                "worst_map_avg": round(worst_map_avg, 4),
+                "worst_config_avg": round(worst_config_avg, 4),
                 "avg_charge_count": round(_mean(charge_counts), 4),
                 "avg_finished_steps": round(_mean(finished_steps), 4),
                 "avg_remaining_charge": round(_mean(remaining_charge), 4),
+                "avg_invalid_move_rate": round(avg_invalid_move_rate, 4),
+                "avg_charge_efficiency": round(avg_charge_efficiency, 4),
+                "avg_clean_per_step": round(avg_clean_per_step, 4),
                 "battery_fail_rate": round(battery_fail_rate, 4),
                 "collision_fail_rate": round(collision_fail_rate, 4),
                 "completed_rate": round(completed_rate, 4),
                 "ranking_score": round(ranking_score, 4),
                 "per_map_avg_score": {map_id: round(_mean(scores), 4) for map_id, scores in sorted(map_scores.items())},
+                "per_config_avg_score": {
+                    cfg_id: round(_mean(scores), 4) for cfg_id, scores in sorted(config_scores.items())
+                },
             }
         )
 
@@ -117,14 +152,14 @@ def write_checkpoint_reports(run_dir, analysis):
         f"- Best checkpoint: `{analysis.get('best_checkpoint_id')}`",
         f"- Checkpoint count: `{analysis.get('checkpoint_count', 0)}`",
         "",
-        "| Rank | Checkpoint | Avg Clean Score | P90 | Battery Fail | Collision Fail | Completed | Avg Charge | Score |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Rank | Checkpoint | Avg | P10 | WorstCfg | WorstMap | Invalid | Battery | Collision | Score |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for idx, row in enumerate(leaderboard[:20], start=1):
         lines.append(
-            "| {rank} | {checkpoint_id} | {avg_clean_score:.2f} | {score_p90:.2f} | "
-            "{battery_fail_rate:.2%} | {collision_fail_rate:.2%} | {completed_rate:.2%} | "
-            "{avg_charge_count:.2f} | {ranking_score:.2f} |".format(
+            "| {rank} | {checkpoint_id} | {avg_clean_score:.2f} | {score_p10:.2f} | "
+            "{worst_config_avg:.2f} | {worst_map_avg:.2f} | {avg_invalid_move_rate:.2%} | "
+            "{battery_fail_rate:.2%} | {collision_fail_rate:.2%} | {ranking_score:.2f} |".format(
                 rank=idx,
                 **row,
             )

@@ -186,7 +186,7 @@ def main():
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'runtime_minutes': runtime,
         'episodes': len(records),
-        'plan': 'B Phase1++ (bat150, battery_fail=-8, 50% threshold)',
+        'plan': 'B Phase2 (bat=300, v3 rewards: charge=0.5, charger_x15/10, bat_pressure=60%)',
         'containers': containers,
         'stats': stats,
         'time_series': ts,

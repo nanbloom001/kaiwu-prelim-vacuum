@@ -14,7 +14,7 @@ class Config:
     LOCAL_VIEW_CHANNELS = 3
     GLOBAL_MEMORY_SIZE = 8
     GLOBAL_MEMORY_CHANNELS = 3
-    SCALAR_DIM = 37
+    SCALAR_DIM = 48
 
     FEATURES = [
         LOCAL_VIEW_CHANNELS * LOCAL_VIEW_SIZE * LOCAL_VIEW_SIZE,
@@ -28,6 +28,7 @@ class Config:
 
     # Action space: 8 directional moves
     ACTION_NUM = 8
+    MODE_NUM = 3
 
     # Single-head value
     VALUE_NUM = 1
@@ -46,3 +47,12 @@ class Config:
 
     USE_GRAD_CLIP = True
     GRAD_CLIP_RANGE = 0.5
+
+    # Training snapshot / resume strategy
+    SAVE_MODEL_INTERVAL_EPISODES = 100
+    RESUME_LATEST_SYNC_INTERVAL_EPISODES = 20
+    RESUME_EPISODE_SNAPSHOT_INTERVAL = 50
+    RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS = 15 * 60
+    KEEP_EPISODE_RESUME_SNAPSHOTS = 8
+    KEEP_TIME_RESUME_SNAPSHOTS = 6
+    KEEP_BEST_RESUME_SNAPSHOTS = 5

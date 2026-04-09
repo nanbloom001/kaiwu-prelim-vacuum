@@ -1,7 +1,7 @@
 [env_conf]
 # Maps used for training. Customize by keeping only desired map IDs, e.g. [1, 2] for maps 1 and 2.
 # 训练使用的地图。可自定义选择期望用来训练的地图，如只期望使用1、2号地图训练数组内仅保留[1,2]即可。
-# 方案B Phase1+: 降低电量迫使学习充电
+# 方案B Phase2: 提高电量到300, 让agent有足够步数探索并学会使用充电桩
 map = [1, 2, 3]
 
 # Whether to randomly select maps. Boolean.
@@ -24,5 +24,5 @@ max_step = 1000
 
 # Maximum battery. The battery level when fully charged. Range: 100~999.
 # 最大电量。满电状态下的电量。可配置范围100～999。
-# 从400降到150: agent不充电只能得~120分, 充电一次可得~240分
-battery_max = 150
+# Phase2: 提高到300, 给agent足够步数探索充电桩并学会充电
+battery_max = 300
