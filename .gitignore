@@ -12,6 +12,10 @@ code-robot_vacuum-public-*.zip
 
 code/*.pkl
 code/*.meta.json
+!code/best_model.pkl
+!code/latest_model.pkl
+!code/model.ckpt-resume.pkl
+!code/model.ckpt-resume.meta.json
 code/resume_snapshots/
 code/manual_checkpoints/
 
