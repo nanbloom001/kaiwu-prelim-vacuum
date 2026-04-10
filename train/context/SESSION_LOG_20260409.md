@@ -239,3 +239,183 @@ Success criteria (any one met = stop optimizing):
 - 20 consecutive episodes WIN rate > 10% and avg_score > 400
 - Max clean_score > 1000
 - Avg clean_score > 500
+
+---
+
+## Appendix E: 18080 Dashboard NA Incident (2026-04-09 20:18 ~ 20:27 CST)
+
+### Symptom
+- Custom dashboard at `http://127.0.0.1:18080/` showed `n/a` for almost all summary cards.
+- Recent episode table still had data from AISRV logs, which meant training was running but the metrics query path was failing.
+
+### Environment Constraints Confirmed
+- Host has a Clash proxy, so local HTTP checks must bypass proxy settings.
+- Host port `4000` is occupied by NoMachine; GreptimeDB is intentionally exposed on host port `14000`.
+- The dashboard process was already configured correctly with:
+  - `--prom-base http://127.0.0.1:14000/v1/prometheus`
+
+### Root Cause
+- `pushgateway` contained live `kaiwu_*` metrics, so the training side was still publishing metrics.
+- `vector` was repeatedly waiting on `http://greptimedb:4000` and not ingesting metrics into GreptimeDB.
+- The healthy GreptimeDB container existed as `train-greptimedb-1`, but it was only attached to Docker network `train_default`.
+- The training stack containers (`vector`, `monitor-service`, learner, aisrv, gamecore) were attached to `kaiwu-train_default`.
+- Result: inside the `kaiwu-train` network, hostname `greptimedb` was not reachable, so metrics never flowed from `pushgateway -> vector -> greptimedb`.
+
+### Runtime Fix Applied
+- Connected `train-greptimedb-1` to Docker network `kaiwu-train_default` with alias `greptimedb`.
+- Restarted `kaiwu-train-vector-1`.
+
+### Verification After Fix
+- `vector` changed from `Restarting` to `Up`.
+- GreptimeDB query endpoint on host `14000` began returning live values for metrics such as:
+  - `kaiwu_episode_cnt`
+  - `kaiwu_clean_score`
+  - `kaiwu_charge_count`
+  - `kaiwu_remaining_charge`
+  - `kaiwu_finished_steps`
+- Dashboard cards and charts for the above metrics recovered.
+
+### Remaining n/a Fields After Recovery
+- `Train Global Step`
+- `Prod/Cons Ratio`
+- `Learner Global Step`
+- `AISRV Loaded CKPT`
+
+These were not caused by the ingestion outage. At time of inspection:
+- `pushgateway` did not expose `kaiwu_train_global_step`
+- `pushgateway` did not expose `kaiwu_sample_production_and_consumption_ratio`
+- AISRV logs reported `train_global_step: 0`
+- learner log did not contain rolling `global step is ...` lines
+- AISRV logs did not show checkpoint load success records, and `load_model_succ_cnt` remained `0.0`
+
+### Operational Takeaway
+- Host `14000` is the correct GreptimeDB port for browser or host-side queries.
+- Container-side `greptimedb:4000` remains correct, because it is an internal container-network address and does not conflict with NoMachine.
+- If 18080 shows widespread `n/a` again, first verify:
+  1. `pushgateway` has `kaiwu_*` metrics
+  2. `vector` is `Up`
+  3. `train-greptimedb-1` is attached to `kaiwu-train_default`
+  4. host query `http://127.0.0.1:14000/v1/prometheus/...` returns non-empty results
+
+### Follow-up Full-Chain Check (2026-04-09 20:31 ~ 20:34 CST)
+
+#### What is healthy
+- All main containers were `Up`: learner, 2 aisrv, 8 gamecore, pushgateway, vector, monitor-service.
+- Metrics ingestion recovered:
+  - `sum(kaiwu_episode_cnt{})` returned `5314`
+  - `avg(kaiwu_clean_score{})` returned `105.625`
+  - `avg(kaiwu_reward{})` returned `83.656...`
+- AISRV logs still showed fresh episode starts and gameovers around `20:33`, so environment interaction was continuing.
+- GPU was in use:
+  - host `nvidia-smi` showed GPU 0 at about `19% ~ 21%` utilization and ~`3407 MiB` memory used
+  - learner container reported `torch.cuda.is_available() == True`
+  - learner container saw `device_name NVIDIA A10`
+
+#### What is not healthy
+- This did **not** look like normal learner-driven training.
+- learner checkpoint directory `/data/ckpt/robot_vacuum_ppo/` still only contained:
+  - `model.ckpt-0.pkl`
+  - `id_list`
+- No later learner checkpoints were created after startup.
+- learner training log still only contained startup lines plus the initial `model.ckpt-0.pkl` save.
+- AISRV kept logging:
+  - `policy.send_train_data failed, please check`
+- AISRV also kept logging:
+  - `model_file_sync current_available_model_files is empty`
+- learner-side auxiliary processes were unhealthy:
+  - `model_file_save` repeatedly threw `FileNotFoundError`
+  - learner `monitor_proxy` repeatedly logged `Broken pipe`
+
+#### Interpretation
+- Current state is best described as:
+  - rollout / environment interaction is running
+  - dashboard metrics ingestion is running
+  - GPU is being used
+  - **but the learner / sample send / model sync chain is not functioning normally**
+- Therefore this stack should **not** be treated as “normal training started successfully”.
+
+### Standalone Linux Re-evaluation (2026-04-09 22:03 ~ 22:08 CST)
+
+#### Context Shift
+- This repository was migrated directly from Windows 11 and originally depended on Kaiwu/Open Platform runtime assumptions.
+- Current target is a standalone Linux Docker training stack, so framework code paths that assume platform-managed directories or Windows-style process behavior must be re-evaluated.
+
+#### Findings Confirmed
+- Forcing learner/aisrv to `multiprocessing.spawn` is not a viable standalone fix:
+  - learner failed with `_pickle.PicklingError: Can't pickle <class 'common_python.logging.kaiwu_logger.KaiwuLogger'>`
+- `monitor_manager.py` using `multiprocessing.Manager().Queue()` on Linux is part of the instability:
+  - startup injection was updated to switch Linux to `multiprocessing.Queue(CONFIG.queue_size)`
+- learner still stopped immediately after the first framework checkpoint save:
+  - latest learner log ended at `learner save model /data/ckpt/robot_vacuum_ppo/model.ckpt-0.pkl successfully`
+  - debug milestones inserted after that line never appeared
+
+#### Root Cause Narrowed
+- Manual reproduction inside `kaiwu-train-learner-1` showed `clear_user_ckpt_dir()` fails deterministically:
+  - `OSError: [Errno 16] Device or resource busy: '/data/user_ckpt_dir'`
+- Root cause is the standalone mount layout:
+  - compose maps `${KAIWU_TRAIN_LOG}/framework_ckpt` to `/data/user_ckpt_dir`
+  - framework function `clear_user_ckpt_dir()` called `shutil.rmtree(CONFIG.user_ckpt_dir)`
+  - on Linux this attempts to remove the mount root itself, which is invalid and blocks learner startup progression
+
+#### Runtime Remediation Applied In Repo
+- `train/.docker-compose.yaml` startup patch now rewrites `clear_user_ckpt_dir()` so it only removes children under `/data/user_ckpt_dir` instead of deleting the mount root.
+- Both learner and aisrv startup commands now begin with `set -euo pipefail` so patch injection failures stop container startup instead of silently continuing with a broken runtime.
+
+#### Expected Verification Targets After Restart
+- learner log should continue past:
+  - `train debug milestone after_monitor_state_reset`
+  - `train debug milestone after_strategy_before_run`
+  - `train process start success`
+- `/data/ckpt/robot_vacuum_ppo/` should gain checkpoints beyond `model.ckpt-0.pkl`
+- AISRV should stop repeating:
+  - `model_file_sync current_available_model_files is empty`
+  - `policy.send_train_data failed, please check`
+
+### Final Verification After Standalone Fixes (2026-04-09 22:16 ~ 22:25 CST)
+
+#### What Was Fixed
+- `train/.docker-compose.yaml`
+  - Linux startup injection now rewrites `clear_user_ckpt_dir()` so it clears mounted directory contents instead of deleting the mount root.
+  - Linux monitor queue uses native `multiprocessing.Queue(CONFIG.queue_size)` instead of `Manager().Queue()`.
+  - learner skips `model_file_saver` when `push_to_cos = 0`.
+  - off-policy model sync runs in-process for standalone Linux and pushes checkpoints directly to modelpool.
+  - learner/aisrv startup commands use `set -euo pipefail` so failed runtime patching no longer hides behind apparently healthy containers.
+- `code/agent_ppo/conf/monitor_builder.py`
+  - user monitor panel names `Avg Invalid Move Rate` and `Avg Charge Efficiency` were renamed to legal labels:
+    - `平均无效移动率`
+    - `平均充电效率`
+  - this removed the last learner init `ERROR` from monitor config validation.
+
+#### Verified Healthy
+- learner now starts successfully and passes the previous hard stop:
+  - `train debug milestone after_monitor_state_reset`
+  - `train debug milestone after_strategy_before_run`
+  - `train process start success`
+- learner is training normally:
+  - `global step` progressed from startup to `89`, `229`, `507`, then after final restart to `91+`
+  - periodic learner loss logs continue printing
+- replay buffer is being consumed normally:
+  - `sample_completed` reached `206860`, then `1216031`, and after final restart quickly recovered to `441532`
+- checkpoints are now generated continuously:
+  - learner produced `model.ckpt-0.pkl`, `model.ckpt-100.pkl`, `model.ckpt-200.pkl`, `model.ckpt-300.pkl`, `model.ckpt-400.pkl`, `model.ckpt-500.pkl`
+  - after final restart, checkpoint generation restarted cleanly from `0/100/200`
+- learner -> modelpool -> AISRV model sync recovered:
+  - learner logged `train first model file push to modelpool success`
+  - AISRV pulled model archives from modelpool and logged repeated `load model ... success`
+  - `load_model_succ_cnt` rose from `0.0` to `84.0`, `172.0`, `262.0`, `443.0`
+- AISRV sample send recovered:
+  - `sample_receive_cnt` rose from `0` to `32430`, `65410`, `97841`, `131515`, `197024`, `228299`
+- GPU is in use:
+  - host `nvidia-smi` showed GPU 0 (`NVIDIA A10`) at roughly `22% ~ 36%` utilization with about `4050 MiB` memory used
+
+#### Error Status
+- In the latest post-fix learner and AISRV logs, no matches remained for:
+  - `policy.send_train_data failed`
+  - `Broken pipe`
+  - `FileNotFoundError`
+  - log level `ERROR`
+- `model_file_sync current_available_model_files is empty` still appears as an early startup `INFO` before the first model pull completes, but in inspected tails it becomes non-blocking and is followed by successful model loads.
+
+#### Conclusion
+- The training stack is now operating as a valid standalone Linux Docker training chain.
+- The original severe blocker was not the dashboard or GPU path; it was a runtime mismatch between framework assumptions and standalone mounted filesystem/process behavior after migration away from Kaiwu/Open Platform.

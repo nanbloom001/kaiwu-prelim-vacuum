@@ -91,14 +91,23 @@ class PrometheusClient:
     def __init__(self, base_url: str, timeout: float) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        # Create opener without proxy for local connections
+        # Use empty ProxyHandler to bypass all proxy environment variables
+        proxy_handler = urllib.request.ProxyHandler({})
+        self.opener = urllib.request.build_opener(proxy_handler)
+        self.opener.addheaders = [("Accept", "application/json")]
 
     def _fetch_json(self, path: str, params: dict[str, str | int | float]) -> dict:
         query = urllib.parse.urlencode(params)
         url = f"{self.base_url}{path}?{query}"
-        request = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            payload = response.read().decode("utf-8")
-        return json.loads(payload)
+        request = urllib.request.Request(url)
+        try:
+            with self.opener.open(request, timeout=self.timeout) as response:
+                payload = response.read().decode("utf-8")
+            return json.loads(payload)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            # Log error for debugging but don't crash
+            return {"status": "error", "error": str(exc), "data": {"result": []}}
 
     def instant_query(self, prom_query: str) -> float | None:
         payload = self._fetch_json("/api/v1/query", {"query": prom_query})

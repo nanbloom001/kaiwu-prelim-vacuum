@@ -57,8 +57,14 @@ services:
       - shared_volume_train:/workspace/train
       - '${KAIWU_TRAIN_LOG}:/workspace/log'
       - '${KAIWU_CODE_FILE}:/workspace/code'
+      # Persist framework checkpoints to host (KaiwuDRL saves here)
+      - '${KAIWU_TRAIN_LOG}/framework_ckpt:/data/user_ckpt_dir'
+      # Archive directory for experiment tracking
+      - '${KAIWU_ARCHIVE_DIR}:/workspace/archive'
     environment:
       <<: *env
+      NVIDIA_VISIBLE_DEVICES: ${KAIWU_LEARNER_GPU}
+      CUDA_VISIBLE_DEVICES: ${KAIWU_LEARNER_GPU}
     labels:
       - 'kaiwu=train-check'
     depends_on:
@@ -67,8 +73,313 @@ services:
       - gamecore
     command:
       - bash
-      - '-c'
-      - "bash /root/tools/start_train_client.sh learner"
+      - '-lc'
+      - |
+        set -euo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+        import os
+
+        project = os.environ.get("KAIWU_PROJECT_CODE", "robot_vacuum")
+        root = Path(f"/data/projects/{project}")
+
+        spawn_snippets = [
+            "\n".join([
+                "import multiprocessing as mp",
+                "",
+                'if sys.platform.startswith("linux") and mp.get_start_method(allow_none=True) != "spawn":',
+                '    mp.set_start_method("spawn", force=True)',
+                "",
+            ]),
+            "\\n".join([
+                "import multiprocessing as mp",
+                "",
+                'if sys.platform.startswith("linux") and mp.get_start_method(allow_none=True) != "spawn":',
+                '    mp.set_start_method("spawn", force=True)',
+                "",
+            ]),
+        ]
+
+        for relative in (
+            "kaiwudrl/server/learner/learner.py",
+            "kaiwudrl/server/aisrv/aisrv.py",
+        ):
+            target = root / relative
+            if not target.exists():
+                continue
+            text = target.read_text()
+            original = text
+            for snippet in spawn_snippets:
+                if snippet in text:
+                    text = text.replace(snippet, "", 1)
+            if text != original:
+                target.write_text(text)
+
+        monitor_target = root / "common_python/monitor/monitor_manager.py"
+        text = monitor_target.read_text()
+        queue_marker = '_shared_queue = multiprocessing.Queue(CONFIG.queue_size)'
+        if queue_marker not in text:
+            if "import sys\n" not in text:
+                text = text.replace("import multiprocessing\n", "import multiprocessing\nimport sys\n", 1)
+            if "from common_python.config.config_control import CONFIG\n" not in text:
+                text = text.replace(
+                    "from common_python.logging.kaiwu_logger import KaiwuLogger\n",
+                    "from common_python.logging.kaiwu_logger import KaiwuLogger\nfrom common_python.config.config_control import CONFIG\n",
+                    1,
+                )
+            old = "\n".join([
+                "def _get_shared_queue():",
+                '    """延迟创建共享队列（避免 fork 后的连接问题）"""',
+                "    global _manager, _shared_queue",
+                "    if _shared_queue is None:",
+                "        _manager = multiprocessing.Manager()",
+                "        _shared_queue = _manager.Queue()",
+                "    return _shared_queue",
+                "",
+            ])
+            new = "\n".join([
+                "def _get_shared_queue():",
+                '    """延迟创建共享队列。Linux 独立训练优先使用原生 Queue，避免 Manager socket 断连。"""',
+                "    global _manager, _shared_queue",
+                "    if _shared_queue is None:",
+                '        if sys.platform.startswith("linux"):',
+                "            _shared_queue = multiprocessing.Queue(CONFIG.queue_size)",
+                "        else:",
+                "            _manager = multiprocessing.Manager()",
+                "            _shared_queue = _manager.Queue()",
+                "    return _shared_queue",
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {monitor_target}: queue function anchor not found")
+            text = text.replace(old, new, 1)
+            monitor_target.write_text(text)
+
+        model_file_common_target = root / "kaiwudrl/common/checkpoint/model_file_common.py"
+        text = model_file_common_target.read_text()
+        clear_user_marker = "for entry in os.listdir(model_path):"
+        if clear_user_marker not in text:
+            old = "\n".join([
+                "def clear_user_ckpt_dir():",
+                '    """',
+                "    清空/data/user_ckpt/下的文件夹内容, 在进程启动时进行操作",
+                "    为软链接时不做操作",
+                '    """',
+                "    model_path = CONFIG.user_ckpt_dir",
+                "    if os.path.islink(model_path):",
+                "        return",
+                "",
+                "    if os.path.exists(model_path):",
+                "        shutil.rmtree(model_path)",
+                "",
+            ])
+            new = "\n".join([
+                "def clear_user_ckpt_dir():",
+                '    """',
+                "    清空/data/user_ckpt/下的文件夹内容, 在进程启动时进行操作",
+                "    为软链接时不做操作",
+                '    """',
+                "    model_path = CONFIG.user_ckpt_dir",
+                "    if os.path.islink(model_path):",
+                "        return",
+                "",
+                "    if not os.path.exists(model_path):",
+                "        return",
+                "",
+                "    # Linux 独立部署中该路径通常是挂载根目录，不能直接 rmtree 根挂载点。",
+                "    for entry in os.listdir(model_path):",
+                "        entry_path = os.path.join(model_path, entry)",
+                "        try:",
+                "            if os.path.islink(entry_path) or os.path.isfile(entry_path):",
+                "                os.remove(entry_path)",
+                "            elif os.path.isdir(entry_path):",
+                "                shutil.rmtree(entry_path)",
+                "        except FileNotFoundError:",
+                "            continue",
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {model_file_common_target}: clear_user_ckpt_dir anchor not found")
+            text = text.replace(old, new, 1)
+            model_file_common_target.write_text(text)
+
+        trainer_target = root / "kaiwudrl/server/learner/trainer.py"
+        text = trainer_target.read_text()
+        trainer_marker = 'self.logger.info("train skip model_file_saver process because push_to_cos is disabled")'
+        if trainer_marker not in text:
+            old = "\n".join([
+                "        if self.agent_wrapper.is_chief:",
+                "            # model_file_saver, 用于保存模型文件到持久化设备, 比如COS, 采用单独的进程处理, 只有主learner进程才会执行",
+                "            self.model_file_saver = ModelFileSave()",
+                "            self.model_file_saver.start()",
+                "",
+            ])
+            new = "\n".join([
+                "        self.model_file_saver = None",
+                "        if self.agent_wrapper.is_chief:",
+                "            # 独立 Linux 训练且未开启 COS 时，跳过额外 fork 的 model_file_saver 进程。",
+                "            if int(CONFIG.push_to_cos):",
+                "                self.model_file_saver = ModelFileSave()",
+                "                self.model_file_saver.start()",
+                "            else:",
+                '                self.logger.info("train skip model_file_saver process because push_to_cos is disabled")',
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {trainer_target}: model_file_saver anchor not found")
+            text = text.replace(old, new, 1)
+        debug_marker = 'self.logger.info("train debug milestone after_alloc_utils")'
+        if debug_marker not in text:
+            replacements = [
+                (
+                    "        # 业务算法类监控值是个map形式\n        self.app_monitor_data = {}\n",
+                    "        # 业务算法类监控值是个map形式\n        self.app_monitor_data = {}\n        self.logger.info(\"train debug milestone after_monitor_state_reset\")\n",
+                ),
+                (
+                    "        self.alloc_util = AllocUtils(self.logger)\n",
+                    "        self.alloc_util = AllocUtils(self.logger)\n        self.logger.info(\"train debug milestone after_alloc_utils\")\n",
+                ),
+                (
+                    "        t.start()\n",
+                    "        t.start()\n        self.logger.info(\"train debug milestone after_aisrv_thread_start\")\n",
+                ),
+                (
+                    "            register_sigterm_handler(self.handle_sigterm, CONFIG.sigterm_pids_file)\n",
+                    "            register_sigterm_handler(self.handle_sigterm, CONFIG.sigterm_pids_file)\n            self.logger.info(\"train debug milestone after_register_sigterm\")\n",
+                ),
+                (
+                    "        if self.agent_wrapper.is_chief:\n            # 策略特定的初始化\n            self.strategy.before_run()\n",
+                    "        if self.agent_wrapper.is_chief:\n            # 策略特定的初始化\n            self.logger.info(\"train debug milestone before_strategy_before_run\")\n            self.strategy.before_run()\n            self.logger.info(\"train debug milestone after_strategy_before_run\")\n",
+                ),
+            ]
+            for old, new in replacements:
+                if old not in text:
+                    raise SystemExit(f"Failed to patch {trainer_target}: debug anchor not found for {old!r}")
+                text = text.replace(old, new, 1)
+            trainer_target.write_text(text)
+
+        off_policy_target = root / "kaiwudrl/server/learner/off_policy_strategy.py"
+        text = off_policy_target.read_text()
+        if "from kaiwudrl.common.checkpoint.model_file_sync import ModelFileSync\n" not in text:
+            text = text.replace(
+                "from kaiwudrl.common.checkpoint.model_file_sync_wrapper import ModelFileSyncWrapper\n",
+                "from kaiwudrl.common.checkpoint.model_file_sync_wrapper import ModelFileSyncWrapper\nfrom kaiwudrl.common.checkpoint.model_file_sync import ModelFileSync\n",
+                1,
+            )
+        before_run_marker = "# Linux 独立训练中避免在 reverb/TF 线程启动后再 fork 同步进程。"
+        if before_run_marker not in text:
+            old = "\n".join([
+                "        if CONFIG.wrapper_type == KaiwuDRLDefine.WRAPPER_REMOTE:",
+                "            self.trainer.model_file_sync_wrapper = ModelFileSyncWrapper()",
+                "            self.trainer.model_file_sync_wrapper.init()",
+                "",
+                "            # 只有在训练时才进行",
+                "            if CONFIG.run_mode == KaiwuDRLDefine.RUN_MODE_TRAIN:",
+                "                # off-policy场景下, 训练进程主动推送下第一个model文件到modelpool, 预加载和非预加载情况下都适合",
+                "                push_model_success = (",
+                "                    self.trainer.model_file_sync_wrapper.ckpt_sync_warper.push_checkpoint_to_model_pool(",
+                "                        self.trainer.logger",
+                "                    )",
+                "                )",
+                "                if push_model_success:",
+                '                    self.trainer.logger.info(f"train first model file push to modelpool success")',
+                "                else:",
+                '                    self.trainer.logger.error(f"train first model file push to modelpool failed")',
+                "",
+            ])
+            new = "\n".join([
+                "        if CONFIG.wrapper_type == KaiwuDRLDefine.WRAPPER_REMOTE:",
+                "            self.trainer.model_file_sync_wrapper = ModelFileSyncWrapper()",
+                "            # Linux 独立训练中避免在 reverb/TF 线程启动后再 fork 同步进程。",
+                "            self.trainer.model_file_sync_wrapper.ckpt_sync_warper = ModelFileSync()",
+                "",
+                "            # 只有在训练时才进行",
+                "            if CONFIG.run_mode == KaiwuDRLDefine.RUN_MODE_TRAIN:",
+                "                # off-policy场景下, 训练进程主动推送下第一个model文件到modelpool, 预加载和非预加载情况下都适合",
+                "                push_model_success = (",
+                "                    self.trainer.model_file_sync_wrapper.ckpt_sync_warper.push_checkpoint_to_model_pool(",
+                "                        self.trainer.logger",
+                "                    )",
+                "                )",
+                "                if push_model_success:",
+                '                    self.trainer.logger.info(f"train first model file push to modelpool success")',
+                "                else:",
+                '                    self.trainer.logger.error(f"train first model file push to modelpool failed")',
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {off_policy_target}: before_run anchor not found")
+            text = text.replace(old, new, 1)
+
+        process_marker = 'self.trainer.logger.info(f"train push checkpoint {model_file_id} to modelpool success")'
+        if process_marker not in text:
+            old = "\n".join([
+                "    def process_policy_specific(self, model_file_id):",
+                '        """',
+                "        OffPolicy不需要特殊处理",
+                '        """',
+                "        pass",
+                "",
+            ])
+            new = "\n".join([
+                "    def process_policy_specific(self, model_file_id):",
+                '        """',
+                "        OffPolicy 在独立训练模式下直接同步新模型到 modelpool，避免额外 fork。",
+                '        """',
+                '        sync_wrapper = getattr(self.trainer, "model_file_sync_wrapper", None)',
+                '        sync_worker = getattr(sync_wrapper, "ckpt_sync_warper", None)',
+                "        if sync_worker is None:",
+                "            return",
+                "",
+                "        push_model_success = sync_worker.push_checkpoint_to_model_pool(self.trainer.logger)",
+                "        if push_model_success:",
+                '            self.trainer.logger.info(f"train push checkpoint {model_file_id} to modelpool success")',
+                "        else:",
+                '            self.trainer.logger.error(f"train push checkpoint {model_file_id} to modelpool failed")',
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {off_policy_target}: process_policy_specific anchor not found")
+            text = text.replace(old, new, 1)
+
+        cleanup_marker = 'model_file_saver = getattr(self.trainer, "model_file_saver", None)'
+        if cleanup_marker not in text:
+            old = "\n".join([
+                "    def cleanup(self):",
+                '        """',
+                "        OffPolicy清理操作",
+                '        """',
+                "        # 非on-policy的才需要主动关闭self.model_file_sync_wrapper",
+                "        self.trainer.model_file_saver.stop()",
+                '        self.trainer.logger.info("train self.agent_wrapper.close success")',
+                "",
+                "        self.trainer.model_file_sync_wrapper.stop()",
+                '        self.trainer.logger.info("train self.model_file_sync_wrapper.stop success")',
+                "",
+            ])
+            new = "\n".join([
+                "    def cleanup(self):",
+                '        """',
+                "        OffPolicy清理操作",
+                '        """',
+                '        model_file_saver = getattr(self.trainer, "model_file_saver", None)',
+                '        if model_file_saver is not None and model_file_saver.is_alive():',
+                "            model_file_saver.stop()",
+                '            self.trainer.logger.info("train self.agent_wrapper.close success")',
+                "",
+                '        sync_wrapper = getattr(self.trainer, "model_file_sync_wrapper", None)',
+                '        sync_worker = getattr(sync_wrapper, "ckpt_sync_warper", None)',
+                '        if sync_worker is not None and sync_worker.is_alive():',
+                "            sync_worker.stop()",
+                '            self.trainer.logger.info("train self.model_file_sync_wrapper.stop success")',
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {off_policy_target}: cleanup anchor not found")
+            text = text.replace(old, new, 1)
+        off_policy_target.write_text(text)
+        PY
+        bash /root/tools/start_train_client.sh learner
     deploy:
       resources:
         reservations:
@@ -88,6 +399,8 @@ services:
       - shared_volume_train:/workspace/train
       - '${KAIWU_TRAIN_LOG}:/workspace/log'
       - '${KAIWU_CODE_FILE}:/workspace/code'
+      # Archive directory for experiment tracking
+      - '${KAIWU_ARCHIVE_DIR}:/workspace/archive'
     labels:
       - 'kaiwu=train-check'
     environment:
@@ -98,8 +411,327 @@ services:
       - learner
     command:
       - bash
-      - '-c'
-      - 'bash /root/tools/start_train_client.sh aisrv'
+      - '-lc'
+      - |
+        set -euo pipefail
+        hostname_value="$${HOSTNAME:-$$(cat /etc/hostname)}"
+        aisrv_index="$${hostname_value##*-}"
+        if [[ "$${aisrv_index}" =~ ^[0-9]+$$ ]]; then
+          if (( aisrv_index <= ${KAIWU_AISRV_GPU1_NUM} )); then
+            export NVIDIA_VISIBLE_DEVICES="${KAIWU_AISRV_GPU1}"
+            export CUDA_VISIBLE_DEVICES="${KAIWU_AISRV_GPU1}"
+          elif (( aisrv_index <= ${KAIWU_AISRV_GPU1_NUM} + ${KAIWU_AISRV_GPU2_NUM} )); then
+            export NVIDIA_VISIBLE_DEVICES="${KAIWU_AISRV_GPU2}"
+            export CUDA_VISIBLE_DEVICES="${KAIWU_AISRV_GPU2}"
+          else
+            export NVIDIA_VISIBLE_DEVICES="${KAIWU_AISRV_GPU3}"
+            export CUDA_VISIBLE_DEVICES="${KAIWU_AISRV_GPU3}"
+          fi
+        fi
+        python3 - <<'PY'
+        from pathlib import Path
+        import os
+
+        project = os.environ.get("KAIWU_PROJECT_CODE", "robot_vacuum")
+        root = Path(f"/data/projects/{project}")
+
+        spawn_snippets = [
+            "\n".join([
+                "import multiprocessing as mp",
+                "",
+                'if sys.platform.startswith("linux") and mp.get_start_method(allow_none=True) != "spawn":',
+                '    mp.set_start_method("spawn", force=True)',
+                "",
+            ]),
+            "\\n".join([
+                "import multiprocessing as mp",
+                "",
+                'if sys.platform.startswith("linux") and mp.get_start_method(allow_none=True) != "spawn":',
+                '    mp.set_start_method("spawn", force=True)',
+                "",
+            ]),
+        ]
+
+        for relative in (
+            "kaiwudrl/server/learner/learner.py",
+            "kaiwudrl/server/aisrv/aisrv.py",
+        ):
+            target = root / relative
+            if not target.exists():
+                continue
+            text = target.read_text()
+            original = text
+            for snippet in spawn_snippets:
+                if snippet in text:
+                    text = text.replace(snippet, "", 1)
+            if text != original:
+                target.write_text(text)
+
+        monitor_target = root / "common_python/monitor/monitor_manager.py"
+        text = monitor_target.read_text()
+        queue_marker = '_shared_queue = multiprocessing.Queue(CONFIG.queue_size)'
+        if queue_marker not in text:
+            if "import sys\n" not in text:
+                text = text.replace("import multiprocessing\n", "import multiprocessing\nimport sys\n", 1)
+            if "from common_python.config.config_control import CONFIG\n" not in text:
+                text = text.replace(
+                    "from common_python.logging.kaiwu_logger import KaiwuLogger\n",
+                    "from common_python.logging.kaiwu_logger import KaiwuLogger\nfrom common_python.config.config_control import CONFIG\n",
+                    1,
+                )
+            old = "\n".join([
+                "def _get_shared_queue():",
+                '    """延迟创建共享队列（避免 fork 后的连接问题）"""',
+                "    global _manager, _shared_queue",
+                "    if _shared_queue is None:",
+                "        _manager = multiprocessing.Manager()",
+                "        _shared_queue = _manager.Queue()",
+                "    return _shared_queue",
+                "",
+            ])
+            new = "\n".join([
+                "def _get_shared_queue():",
+                '    """延迟创建共享队列。Linux 独立训练优先使用原生 Queue，避免 Manager socket 断连。"""',
+                "    global _manager, _shared_queue",
+                "    if _shared_queue is None:",
+                '        if sys.platform.startswith("linux"):',
+                "            _shared_queue = multiprocessing.Queue(CONFIG.queue_size)",
+                "        else:",
+                "            _manager = multiprocessing.Manager()",
+                "            _shared_queue = _manager.Queue()",
+                "    return _shared_queue",
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {monitor_target}: queue function anchor not found")
+            text = text.replace(old, new, 1)
+            monitor_target.write_text(text)
+
+        model_file_common_target = root / "kaiwudrl/common/checkpoint/model_file_common.py"
+        text = model_file_common_target.read_text()
+        clear_user_marker = "for entry in os.listdir(model_path):"
+        if clear_user_marker not in text:
+            old = "\n".join([
+                "def clear_user_ckpt_dir():",
+                '    """',
+                "    清空/data/user_ckpt/下的文件夹内容, 在进程启动时进行操作",
+                "    为软链接时不做操作",
+                '    """',
+                "    model_path = CONFIG.user_ckpt_dir",
+                "    if os.path.islink(model_path):",
+                "        return",
+                "",
+                "    if os.path.exists(model_path):",
+                "        shutil.rmtree(model_path)",
+                "",
+            ])
+            new = "\n".join([
+                "def clear_user_ckpt_dir():",
+                '    """',
+                "    清空/data/user_ckpt/下的文件夹内容, 在进程启动时进行操作",
+                "    为软链接时不做操作",
+                '    """',
+                "    model_path = CONFIG.user_ckpt_dir",
+                "    if os.path.islink(model_path):",
+                "        return",
+                "",
+                "    if not os.path.exists(model_path):",
+                "        return",
+                "",
+                "    # Linux 独立部署中该路径通常是挂载根目录，不能直接 rmtree 根挂载点。",
+                "    for entry in os.listdir(model_path):",
+                "        entry_path = os.path.join(model_path, entry)",
+                "        try:",
+                "            if os.path.islink(entry_path) or os.path.isfile(entry_path):",
+                "                os.remove(entry_path)",
+                "            elif os.path.isdir(entry_path):",
+                "                shutil.rmtree(entry_path)",
+                "        except FileNotFoundError:",
+                "            continue",
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {model_file_common_target}: clear_user_ckpt_dir anchor not found")
+            text = text.replace(old, new, 1)
+            model_file_common_target.write_text(text)
+
+        trainer_target = root / "kaiwudrl/server/learner/trainer.py"
+        text = trainer_target.read_text()
+        trainer_marker = 'self.logger.info("train skip model_file_saver process because push_to_cos is disabled")'
+        if trainer_marker not in text:
+            old = "\n".join([
+                "        if self.agent_wrapper.is_chief:",
+                "            # model_file_saver, 用于保存模型文件到持久化设备, 比如COS, 采用单独的进程处理, 只有主learner进程才会执行",
+                "            self.model_file_saver = ModelFileSave()",
+                "            self.model_file_saver.start()",
+                "",
+            ])
+            new = "\n".join([
+                "        self.model_file_saver = None",
+                "        if self.agent_wrapper.is_chief:",
+                "            # 独立 Linux 训练且未开启 COS 时，跳过额外 fork 的 model_file_saver 进程。",
+                "            if int(CONFIG.push_to_cos):",
+                "                self.model_file_saver = ModelFileSave()",
+                "                self.model_file_saver.start()",
+                "            else:",
+                '                self.logger.info("train skip model_file_saver process because push_to_cos is disabled")',
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {trainer_target}: model_file_saver anchor not found")
+            text = text.replace(old, new, 1)
+        debug_marker = 'self.logger.info("train debug milestone after_alloc_utils")'
+        if debug_marker not in text:
+            replacements = [
+                (
+                    "        # 业务算法类监控值是个map形式\n        self.app_monitor_data = {}\n",
+                    "        # 业务算法类监控值是个map形式\n        self.app_monitor_data = {}\n        self.logger.info(\"train debug milestone after_monitor_state_reset\")\n",
+                ),
+                (
+                    "        self.alloc_util = AllocUtils(self.logger)\n",
+                    "        self.alloc_util = AllocUtils(self.logger)\n        self.logger.info(\"train debug milestone after_alloc_utils\")\n",
+                ),
+                (
+                    "        t.start()\n",
+                    "        t.start()\n        self.logger.info(\"train debug milestone after_aisrv_thread_start\")\n",
+                ),
+                (
+                    "            register_sigterm_handler(self.handle_sigterm, CONFIG.sigterm_pids_file)\n",
+                    "            register_sigterm_handler(self.handle_sigterm, CONFIG.sigterm_pids_file)\n            self.logger.info(\"train debug milestone after_register_sigterm\")\n",
+                ),
+                (
+                    "        if self.agent_wrapper.is_chief:\n            # 策略特定的初始化\n            self.strategy.before_run()\n",
+                    "        if self.agent_wrapper.is_chief:\n            # 策略特定的初始化\n            self.logger.info(\"train debug milestone before_strategy_before_run\")\n            self.strategy.before_run()\n            self.logger.info(\"train debug milestone after_strategy_before_run\")\n",
+                ),
+            ]
+            for old, new in replacements:
+                if old not in text:
+                    raise SystemExit(f"Failed to patch {trainer_target}: debug anchor not found for {old!r}")
+                text = text.replace(old, new, 1)
+            trainer_target.write_text(text)
+
+        off_policy_target = root / "kaiwudrl/server/learner/off_policy_strategy.py"
+        text = off_policy_target.read_text()
+        if "from kaiwudrl.common.checkpoint.model_file_sync import ModelFileSync\n" not in text:
+            text = text.replace(
+                "from kaiwudrl.common.checkpoint.model_file_sync_wrapper import ModelFileSyncWrapper\n",
+                "from kaiwudrl.common.checkpoint.model_file_sync_wrapper import ModelFileSyncWrapper\nfrom kaiwudrl.common.checkpoint.model_file_sync import ModelFileSync\n",
+                1,
+            )
+        before_run_marker = "# Linux 独立训练中避免在 reverb/TF 线程启动后再 fork 同步进程。"
+        if before_run_marker not in text:
+            old = "\n".join([
+                "        if CONFIG.wrapper_type == KaiwuDRLDefine.WRAPPER_REMOTE:",
+                "            self.trainer.model_file_sync_wrapper = ModelFileSyncWrapper()",
+                "            self.trainer.model_file_sync_wrapper.init()",
+                "",
+                "            # 只有在训练时才进行",
+                "            if CONFIG.run_mode == KaiwuDRLDefine.RUN_MODE_TRAIN:",
+                "                # off-policy场景下, 训练进程主动推送下第一个model文件到modelpool, 预加载和非预加载情况下都适合",
+                "                push_model_success = (",
+                "                    self.trainer.model_file_sync_wrapper.ckpt_sync_warper.push_checkpoint_to_model_pool(",
+                "                        self.trainer.logger",
+                "                    )",
+                "                )",
+                "                if push_model_success:",
+                '                    self.trainer.logger.info(f"train first model file push to modelpool success")',
+                "                else:",
+                '                    self.trainer.logger.error(f"train first model file push to modelpool failed")',
+                "",
+            ])
+            new = "\n".join([
+                "        if CONFIG.wrapper_type == KaiwuDRLDefine.WRAPPER_REMOTE:",
+                "            self.trainer.model_file_sync_wrapper = ModelFileSyncWrapper()",
+                "            # Linux 独立训练中避免在 reverb/TF 线程启动后再 fork 同步进程。",
+                "            self.trainer.model_file_sync_wrapper.ckpt_sync_warper = ModelFileSync()",
+                "",
+                "            # 只有在训练时才进行",
+                "            if CONFIG.run_mode == KaiwuDRLDefine.RUN_MODE_TRAIN:",
+                "                # off-policy场景下, 训练进程主动推送下第一个model文件到modelpool, 预加载和非预加载情况下都适合",
+                "                push_model_success = (",
+                "                    self.trainer.model_file_sync_wrapper.ckpt_sync_warper.push_checkpoint_to_model_pool(",
+                "                        self.trainer.logger",
+                "                    )",
+                "                )",
+                "                if push_model_success:",
+                '                    self.trainer.logger.info(f"train first model file push to modelpool success")',
+                "                else:",
+                '                    self.trainer.logger.error(f"train first model file push to modelpool failed")',
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {off_policy_target}: before_run anchor not found")
+            text = text.replace(old, new, 1)
+
+        process_marker = 'self.trainer.logger.info(f"train push checkpoint {model_file_id} to modelpool success")'
+        if process_marker not in text:
+            old = "\n".join([
+                "    def process_policy_specific(self, model_file_id):",
+                '        """',
+                "        OffPolicy不需要特殊处理",
+                '        """',
+                "        pass",
+                "",
+            ])
+            new = "\n".join([
+                "    def process_policy_specific(self, model_file_id):",
+                '        """',
+                "        OffPolicy 在独立训练模式下直接同步新模型到 modelpool，避免额外 fork。",
+                '        """',
+                '        sync_wrapper = getattr(self.trainer, "model_file_sync_wrapper", None)',
+                '        sync_worker = getattr(sync_wrapper, "ckpt_sync_warper", None)',
+                "        if sync_worker is None:",
+                "            return",
+                "",
+                "        push_model_success = sync_worker.push_checkpoint_to_model_pool(self.trainer.logger)",
+                "        if push_model_success:",
+                '            self.trainer.logger.info(f"train push checkpoint {model_file_id} to modelpool success")',
+                "        else:",
+                '            self.trainer.logger.error(f"train push checkpoint {model_file_id} to modelpool failed")',
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {off_policy_target}: process_policy_specific anchor not found")
+            text = text.replace(old, new, 1)
+
+        cleanup_marker = 'model_file_saver = getattr(self.trainer, "model_file_saver", None)'
+        if cleanup_marker not in text:
+            old = "\n".join([
+                "    def cleanup(self):",
+                '        """',
+                "        OffPolicy清理操作",
+                '        """',
+                "        # 非on-policy的才需要主动关闭self.model_file_sync_wrapper",
+                "        self.trainer.model_file_saver.stop()",
+                '        self.trainer.logger.info("train self.agent_wrapper.close success")',
+                "",
+                "        self.trainer.model_file_sync_wrapper.stop()",
+                '        self.trainer.logger.info("train self.model_file_sync_wrapper.stop success")',
+                "",
+            ])
+            new = "\n".join([
+                "    def cleanup(self):",
+                '        """',
+                "        OffPolicy清理操作",
+                '        """',
+                '        model_file_saver = getattr(self.trainer, "model_file_saver", None)',
+                '        if model_file_saver is not None and model_file_saver.is_alive():',
+                "            model_file_saver.stop()",
+                '            self.trainer.logger.info("train self.agent_wrapper.close success")',
+                "",
+                '        sync_wrapper = getattr(self.trainer, "model_file_sync_wrapper", None)',
+                '        sync_worker = getattr(sync_wrapper, "ckpt_sync_warper", None)',
+                '        if sync_worker is not None and sync_worker.is_alive():',
+                "            sync_worker.stop()",
+                '            self.trainer.logger.info("train self.model_file_sync_wrapper.stop success")',
+                "",
+            ])
+            if old not in text:
+                raise SystemExit(f"Failed to patch {off_policy_target}: cleanup anchor not found")
+            text = text.replace(old, new, 1)
+        off_policy_target.write_text(text)
+        PY
+        bash /root/tools/start_train_client.sh aisrv
     scale: ${KAIWU_AISRV_NUM}
     profiles:
       - distributed
@@ -181,7 +813,7 @@ services:
       - --rpc-bind-addr
       - 0.0.0.0:4001
     ports:
-      - '4000:4000'
+      - '${GREPTIMEDB_HTTP_PORT:-4000}:4000'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:4000/health"]
       interval: 10s

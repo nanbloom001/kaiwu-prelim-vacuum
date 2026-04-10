@@ -3,7 +3,9 @@ import json, re, math, subprocess
 from datetime import datetime
 from pathlib import Path
 
-BASE = Path(r"D:/TcKaiwuFinal")
+# Auto-detect base directory (works on both Windows and Linux)
+import os
+BASE = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 AISRV_LOG_DIR = BASE / "train" / "log" / "aisrv"
 
 def parse_gameover_records():

@@ -14,7 +14,9 @@ import sys
 import zipfile
 from pathlib import Path
 
-BASE = Path(r"D:/TcKaiwuFinal")
+# Auto-detect base directory (works on both Windows and Linux)
+import os
+BASE = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BACKUP_DIR = BASE / "train" / "backup_model"
 CODE_DIR = BASE / "code"
 RESUME_PKL = CODE_DIR / "model.ckpt-resume.pkl"
