@@ -80,6 +80,7 @@ class Preprocessor:
         self.chargers = []
         self.npc_positions = {}
         self.npc_prev_positions = {}
+        self.npc_pred_positions = {}
         self.npc_centers = {}
         self.stuck_chain = 0
         self._charger_dist_map = None
@@ -124,13 +125,41 @@ class Preprocessor:
     def get_teacher_mix_bias(self):
         bias = 0.0
         risk = self._npc_zone_penalty(self.cur_pos)
-        if risk >= 12.0:
+        if risk >= 18.0:
             bias += Config.RISK_TEACHER_BIAS
-        if self.charge_mode:
+        elif risk >= 12.0:
+            bias += 0.5 * Config.RISK_TEACHER_BIAS
+        if self.charge_mode and self._charge_slack() <= 0.18:
             bias += Config.CHARGE_TEACHER_BIAS
         if self.stuck_chain > 0:
             bias += Config.STUCK_TEACHER_BIAS * min(self.stuck_chain, 3)
-        return float(np.clip(bias, 0.0, 0.35))
+        return float(np.clip(bias, 0.0, 0.22))
+
+    def get_teacher_weight(self):
+        if self.should_force_teacher():
+            return 1.0
+
+        risk = self._npc_zone_penalty(self.cur_pos)
+        if risk >= 18.0:
+            return 0.85
+        if self.charge_mode and self._charge_slack() <= 0.12:
+            return 0.55
+        if self.stuck_chain > 0:
+            return min(0.65, 0.25 + 0.15 * self.stuck_chain)
+        return 0.0
+
+    def get_policy_weight(self):
+        if self.should_force_teacher():
+            return 0.0
+
+        risk = self._npc_zone_penalty(self.cur_pos)
+        if risk >= 18.0:
+            return 0.35
+        if self.charge_mode and self._charge_slack() <= 0.12:
+            return 0.55
+        if self.stuck_chain > 0:
+            return 0.6
+        return 1.0
 
     def _parse_env_obs(self, env_obs, last_action):
         observation = self._normalize_observation(env_obs)
@@ -268,6 +297,13 @@ class Preprocessor:
 
         self.npc_prev_positions = dict(self.npc_positions)
         self.npc_positions = new_positions
+        self.npc_pred_positions = {}
+        for idx, npc_pos in self.npc_positions.items():
+            prev_pos = self.npc_prev_positions.get(idx, npc_pos)
+            self.npc_pred_positions[idx] = (
+                npc_pos[0] + int(np.clip(npc_pos[0] - prev_pos[0], -1, 1)),
+                npc_pos[1] + int(np.clip(npc_pos[1] - prev_pos[1], -1, 1)),
+            )
 
     def _build_legal_action(self):
         env_mask = list(self._env_legal_action)
@@ -290,7 +326,7 @@ class Preprocessor:
                 obstacle_mask[act] = 0
                 safe_mask[act] = 0
                 continue
-            if self._would_hit_npc(next_pos):
+            if self._npc_dynamic_hard_block(next_pos):
                 safe_mask[act] = 0
 
         if sum(safe_mask) > 0:
@@ -308,7 +344,7 @@ class Preprocessor:
             if env_mask[act] == 0:
                 continue
             next_pos = (self.cur_pos[0] + dx, self.cur_pos[1] + dz)
-            if self._would_hit_npc(next_pos):
+            if self._npc_dynamic_hard_block(next_pos):
                 continue
             if self._is_local_move_passable(dx, dz) and self._is_global_cell_plannable(*next_pos, allow_unknown=True):
                 mask[act] = 1
@@ -321,6 +357,8 @@ class Preprocessor:
                 continue
             dx, dz = self.ACTION_DELTAS[act]
             next_pos = (self.cur_pos[0] + dx, self.cur_pos[1] + dz)
+            if self._npc_dynamic_hard_block(next_pos):
+                continue
             if self._is_local_move_passable(dx, dz) and self._is_global_cell_plannable(*next_pos, allow_unknown=True):
                 mask[act] = 1
         if sum(mask) > 0:
@@ -352,12 +390,22 @@ class Preprocessor:
             if self._chebyshev(pos, npc_pos) <= Config.NPC_COLLISION_RADIUS:
                 return True
 
-            prev_pos = self.npc_prev_positions.get(idx, npc_pos)
-            pred = (
-                npc_pos[0] + int(np.clip(npc_pos[0] - prev_pos[0], -1, 1)),
-                npc_pos[1] + int(np.clip(npc_pos[1] - prev_pos[1], -1, 1)),
-            )
+            pred = self.npc_pred_positions.get(idx, npc_pos)
             if self._chebyshev(pos, pred) <= Config.NPC_PREDICT_RADIUS:
+                return True
+            mid = ((npc_pos[0] + pred[0]) // 2, (npc_pos[1] + pred[1]) // 2)
+            if self._chebyshev(pos, mid) <= 1:
+                return True
+        return False
+
+    def _npc_dynamic_hard_block(self, pos):
+        if self._would_hit_npc(pos):
+            return True
+        for idx, npc_pos in self.npc_positions.items():
+            pred = self.npc_pred_positions.get(idx, npc_pos)
+            if self._chebyshev(pos, npc_pos) <= Config.NPC_COLLISION_RADIUS + 1:
+                return True
+            if self._chebyshev(pos, pred) <= Config.NPC_PREDICT_RADIUS + 1:
                 return True
         return False
 
@@ -414,6 +462,14 @@ class Preprocessor:
                 return True
         if self.goal_kind == "charger" and self.on_charger:
             return True
+        if self._path_is_npc_unsafe():
+            return True
+        return False
+
+    def _path_is_npc_unsafe(self):
+        for pos in self.path[:6]:
+            if self._npc_dynamic_hard_block(pos):
+                return True
         return False
 
     def _replan(self):
@@ -464,7 +520,7 @@ class Preprocessor:
                     continue
                 if not self._is_global_move_passable((x, z), (nx, nz), allow_unknown=allow_unknown):
                     continue
-                if self._npc_zone_hard_block((nx, nz)):
+                if self._npc_zone_hard_block((nx, nz)) or self._npc_dynamic_hard_block((nx, nz)):
                     continue
 
                 dist[nx, nz] = dist[x, z] + 1
@@ -496,7 +552,7 @@ class Preprocessor:
                     continue
                 if not self._is_global_move_passable((x, z), (nx, nz), allow_unknown=allow_unknown):
                     continue
-                if self._npc_zone_hard_block((nx, nz)):
+                if self._npc_zone_hard_block((nx, nz)) or self._npc_dynamic_hard_block((nx, nz)):
                     continue
                 dist[nx, nz] = dist[x, z] + 1
                 queue.append((nx, nz))
@@ -556,7 +612,7 @@ class Preprocessor:
                     continue
                 if not self._is_global_move_passable((x, z), (nx, nz), allow_unknown=allow_unknown):
                     continue
-                if self._npc_zone_hard_block((nx, nz)):
+                if self._npc_zone_hard_block((nx, nz)) or self._npc_dynamic_hard_block((nx, nz)):
                     continue
 
                 move_cost = self._transition_cost((x, z), (nx, nz))
@@ -579,14 +635,17 @@ class Preprocessor:
         transit = (
             float(self.clean_pass_count[nx, nz]) if self._in_bounds(nx, nz) else float(Config.MAX_TRANSIT_CLIP)
         )
+        charge_repeat_scale = Config.CHARGE_REPEAT_MULTIPLIER if self.goal_kind == "charger" or self.charge_mode else 1.0
 
         base = 1.0 + (0.05 if next_pos[0] != cur_pos[0] and next_pos[1] != cur_pos[1] else 0.0)
         recent_gap = self.step_no - int(self.last_visit_step[nx, nz]) if self._in_bounds(nx, nz) else 0
-        recent_penalty = 0.0 if recent_gap > 20 else 0.05 * max(0, 20 - recent_gap)
-        repeat_penalty = 0.12 * min(visit, float(Config.MAX_VISIT_CLIP))
-        transit_penalty = 0.22 * min(transit, float(Config.MAX_TRANSIT_CLIP))
-        risk_penalty = 0.025 * min(self._npc_zone_penalty(next_pos), 40.0)
+        recent_penalty = 0.0 if recent_gap > 20 else 0.08 * max(0, 20 - recent_gap)
+        repeat_penalty = 0.16 * charge_repeat_scale * min(visit, float(Config.MAX_VISIT_CLIP))
+        transit_penalty = 0.28 * charge_repeat_scale * min(transit, float(Config.MAX_TRANSIT_CLIP))
+        risk_penalty = 0.05 * min(self._npc_zone_penalty(next_pos), 60.0)
         interior_penalty = self._interior_clean_penalty(next_pos)
+        snake_bias = self._serpentine_bias(cur_pos, next_pos)
+        boundary_bonus = self._boundary_bonus(next_pos)
 
         dirty_bonus = 0.95 if cell == self.DIRTY else 0.0
         frontier_bonus = 0.0
@@ -600,14 +659,83 @@ class Preprocessor:
             recent_penalty += 0.8
 
         slack = self._charge_slack()
+        snake_scale = 1.0
         if self.goal_kind == "charger" or self.charge_mode:
             dirty_bonus *= slack
             frontier_bonus *= 0.65 * slack
+            snake_scale = Config.CHARGE_SNAKE_SCALE * (0.35 + 0.65 * slack)
 
-        cost = base + recent_penalty + repeat_penalty + transit_penalty + risk_penalty + interior_penalty
+        snake_penalty = 0.0
+        if snake_bias >= 0.0:
+            snake_penalty -= snake_scale * Config.SNAKE_PROGRESS_WEIGHT * snake_bias
+        else:
+            snake_penalty += snake_scale * Config.SNAKE_BACKTRACK_PENALTY * (-snake_bias)
+        if next_pos[0] != cur_pos[0] and next_pos[1] != cur_pos[1]:
+            snake_penalty += snake_scale * Config.SNAKE_DIAGONAL_PENALTY
+
+        cost = (
+            base
+            + recent_penalty
+            + repeat_penalty
+            + transit_penalty
+            + risk_penalty
+            + interior_penalty
+            + snake_penalty
+            - Config.BOUNDARY_BONUS_WEIGHT * boundary_bonus
+        )
         cost -= dirty_bonus
         cost -= frontier_bonus
         return max(0.12, float(cost))
+
+    def _serpentine_index(self, pos):
+        x, z = int(pos[0]), int(pos[1])
+        if z % 2 == 0:
+            return z * Config.GRID_SIZE + x
+        return z * Config.GRID_SIZE + (Config.GRID_SIZE - 1 - x)
+
+    def _row_forward_has_work(self, pos, lookahead=4):
+        x, z = int(pos[0]), int(pos[1])
+        row_dir = 1 if z % 2 == 0 else -1
+        for step in range(1, lookahead + 1):
+            nx = x + row_dir * step
+            if not self._in_bounds(nx, z):
+                break
+            if self.map_state[nx, z] == self.OBSTACLE:
+                break
+            if self.map_state[nx, z] == self.DIRTY:
+                return True
+            if self._has_unknown_neighbor((nx, z)):
+                return True
+        return False
+
+    def _serpentine_bias(self, cur_pos, next_pos):
+        if self.goal_kind == "charger" or self.charge_mode:
+            active = True
+        else:
+            active = self.goal_kind in {"dirty", "frontier"} or self._has_unknown_neighbor(cur_pos)
+        if not active:
+            return 0.0
+
+        cur_idx = self._serpentine_index(cur_pos)
+        next_idx = self._serpentine_index(next_pos)
+        delta_idx = next_idx - cur_idx
+        dx = next_pos[0] - cur_pos[0]
+        dz = next_pos[1] - cur_pos[1]
+
+        if delta_idx == 1:
+            return 1.0
+        if delta_idx == -1:
+            return -1.0
+
+        if abs(dz) == 1 and not self._row_forward_has_work(cur_pos):
+            return 0.65
+        if abs(dz) == 1 and self._row_forward_has_work(cur_pos):
+            return -0.35
+        if dx != 0 and dz == 0:
+            return 0.2 if delta_idx > 0 else -0.55
+        if dx != 0 and dz != 0:
+            return -0.15 if delta_idx < 0 else 0.05
+        return -0.2
 
     def _charge_slack(self):
         charger_dist = max(self._current_charger_distance(), 1)
@@ -654,7 +782,7 @@ class Preprocessor:
                 - 0.8 * d
                 - 0.55 * self.visit_count[gx, gz]
                 - 0.75 * self.clean_pass_count[gx, gz]
-                - 0.25 * self._npc_zone_penalty((gx, gz))
+                - 0.45 * self._npc_zone_penalty((gx, gz))
             )
 
             if self.goal_kind == "dirty" and self.goal == (gx, gz):
@@ -694,7 +822,7 @@ class Preprocessor:
                 - 0.9 * d
                 - 0.55 * self.visit_count[gx, gz]
                 - 0.85 * self.clean_pass_count[gx, gz]
-                - 0.35 * self._npc_zone_penalty((gx, gz))
+                - 0.55 * self._npc_zone_penalty((gx, gz))
             )
             if self.goal_kind == "frontier" and self.goal == (gx, gz):
                 score += 1.0
@@ -721,7 +849,13 @@ class Preprocessor:
                     d = int(dist[gx, gz])
                     if d == -1:
                         continue
-                    cost = d + 0.30 * float(self.visit_count[gx, gz]) + 0.55 * float(self.clean_pass_count[gx, gz])
+                    corridor_penalty = 0.08 * float(self._local_repeat_density((gx, gz), radius=1))
+                    cost = (
+                        d
+                        + 0.40 * float(self.visit_count[gx, gz])
+                        + 0.90 * float(self.clean_pass_count[gx, gz])
+                        + corridor_penalty
+                    )
                     if cost < best_dist:
                         best_dist = cost
                         best_goal = (gx, gz)
@@ -785,6 +919,89 @@ class Preprocessor:
     def _frontier_gain(self, x, z):
         return self._unknown_density((x, z), radius=3)
 
+    def _local_repeat_density(self, pos, radius=1):
+        x, z = pos
+        x0 = max(0, x - radius)
+        x1 = min(Config.GRID_SIZE, x + radius + 1)
+        z0 = max(0, z - radius)
+        z1 = min(Config.GRID_SIZE, z + radius + 1)
+        visit_sum = float(np.sum(self.visit_count[x0:x1, z0:z1]))
+        transit_sum = float(np.sum(self.clean_pass_count[x0:x1, z0:z1]))
+        return visit_sum + 1.5 * transit_sum
+
+    def _is_repeat_wall_cell(self, pos):
+        x, z = pos
+        if not self._in_bounds(x, z):
+            return False
+        if self.map_state[x, z] != self.CLEAN:
+            return False
+        return (
+            int(self.visit_count[x, z]) >= Config.BOUNDARY_REPEAT_VISIT_THRESHOLD
+            or int(self.clean_pass_count[x, z]) >= Config.BOUNDARY_REPEAT_TRANSIT_THRESHOLD
+        )
+
+    def _is_soft_wall(self, pos):
+        x, z = pos
+        if not self._in_bounds(x, z):
+            return True
+        if self.map_state[x, z] == self.OBSTACLE:
+            return True
+        if self._npc_zone_penalty(pos) >= Config.BOUNDARY_NPC_THRESHOLD:
+            return True
+        if self._is_repeat_wall_cell(pos):
+            return True
+        return False
+
+    def _boundary_bonus(self, pos):
+        x, z = pos
+        if not self._in_bounds(x, z):
+            return -1.0
+
+        wall_neighbors = 0
+        open_neighbors = 0
+        value_neighbors = 0
+        cardinal_dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+        for dx, dz in cardinal_dirs:
+            nx = x + dx
+            nz = z + dz
+            neighbor = (nx, nz)
+            if self._is_soft_wall(neighbor):
+                wall_neighbors += 1
+                continue
+
+            open_neighbors += 1
+            if self._in_bounds(nx, nz):
+                if self.map_state[nx, nz] == self.DIRTY or self.map_state[nx, nz] == self.UNKNOWN:
+                    value_neighbors += 1
+                elif self._has_unknown_neighbor(neighbor):
+                    value_neighbors += 1
+                elif not self._is_repeat_wall_cell(neighbor):
+                    value_neighbors += 1
+
+        bonus = 0.0
+        if 1 <= wall_neighbors <= 2:
+            bonus += 1.0 + 0.18 * wall_neighbors
+        elif wall_neighbors == 3:
+            bonus += 0.45
+        elif wall_neighbors >= 4:
+            bonus -= 0.55
+
+        if value_neighbors >= 2:
+            bonus += 0.35
+        elif value_neighbors == 0:
+            bonus -= 0.35
+
+        if open_neighbors <= 1:
+            bonus -= 0.25
+
+        if self._is_repeat_wall_cell(pos):
+            bonus -= 0.45
+        if self._npc_zone_penalty(pos) >= Config.BOUNDARY_NPC_THRESHOLD:
+            bonus -= 0.65
+
+        return float(bonus)
+
     def _charger_dist_at(self, pos, charger_dist):
         x, z = pos
         if charger_dist is not None:
@@ -836,6 +1053,10 @@ class Preprocessor:
                 score += 1.5 * self._frontier_gain(nx, nz)
                 score -= 0.45 * self.visit_count[nx, nz]
                 score -= 0.75 * self.clean_pass_count[nx, nz]
+                score -= 0.08 * self._npc_zone_penalty(next_pos)
+                snake_scale = 1.0 if not self.charge_mode else Config.CHARGE_SNAKE_SCALE * (0.35 + 0.65 * self._charge_slack())
+                score += Config.SNAKE_ACTION_WEIGHT * snake_scale * self._serpentine_bias(self.cur_pos, next_pos)
+                score += Config.BOUNDARY_ACTION_WEIGHT * self._boundary_bonus(next_pos)
 
             if next_pos == self.last_pos:
                 score -= 2.0
@@ -920,23 +1141,22 @@ class Preprocessor:
         penalty = 0.0
         for center in self.npc_centers.values():
             dist = self._chebyshev(pos, center)
-            if dist <= Config.NPC_CENTER_HARD_RADIUS:
-                penalty += 25.0
-            elif dist <= Config.NPC_CENTER_SOFT_RADIUS:
-                penalty += float(Config.NPC_CENTER_SOFT_RADIUS - dist + 1)
+            if dist <= Config.NPC_CENTER_SOFT_RADIUS:
+                penalty += self._npc_field_value(pos, center, Config.NPC_FIELD_CENTER_SCALE, Config.NPC_FIELD_SOFTEN + 2.0)
 
         for idx, npc_pos in self.npc_positions.items():
-            dist = self._chebyshev(pos, npc_pos)
-            if dist <= 2:
-                penalty += 30.0
-            prev_pos = self.npc_prev_positions.get(idx, npc_pos)
-            pred = (
-                npc_pos[0] + int(np.clip(npc_pos[0] - prev_pos[0], -1, 1)),
-                npc_pos[1] + int(np.clip(npc_pos[1] - prev_pos[1], -1, 1)),
-            )
-            if self._chebyshev(pos, pred) <= 2:
-                penalty += 18.0
+            pred = self.npc_pred_positions.get(idx, npc_pos)
+            mid = ((npc_pos[0] + pred[0]) // 2, (npc_pos[1] + pred[1]) // 2)
+            penalty += self._npc_field_value(pos, npc_pos, Config.NPC_FIELD_NPC_SCALE, Config.NPC_FIELD_SOFTEN)
+            penalty += self._npc_field_value(pos, pred, Config.NPC_FIELD_PRED_SCALE, Config.NPC_FIELD_SOFTEN)
+            penalty += self._npc_field_value(pos, mid, Config.NPC_FIELD_MID_SCALE, Config.NPC_FIELD_SOFTEN + 0.5)
         return penalty
+
+    def _npc_field_value(self, pos, source, strength, soften):
+        dx = float(pos[0] - source[0])
+        dz = float(pos[1] - source[1])
+        dist_sq = dx * dx + dz * dz
+        return float(strength / (dist_sq + soften))
 
     def _is_on_charger(self, pos):
         x, z = pos
@@ -1048,7 +1268,7 @@ class Preprocessor:
         if self.on_charger and not self.last_on_charger:
             reward += Config.CHARGE_REWARD
 
-        if self._npc_zone_penalty(self.cur_pos) >= 25.0:
+        if self._npc_zone_penalty(self.cur_pos) >= 35.0:
             reward += Config.NPC_DANGER_PENALTY
 
         cx, cz = self.cur_pos

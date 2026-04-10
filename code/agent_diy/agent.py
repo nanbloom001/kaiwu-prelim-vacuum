@@ -64,6 +64,8 @@ class Agent(BaseAgent):
             teacher_prob=list(self.preprocessor.get_pending_prob()),
             teacher_force=bool(self.preprocessor.should_force_teacher()),
             teacher_mix_bias=float(self.preprocessor.get_teacher_mix_bias()),
+            teacher_weight=float(self.preprocessor.get_teacher_weight()),
+            policy_weight=float(self.preprocessor.get_policy_weight()),
         )
         remain_info = {
             "goal_kind": self.preprocessor.goal_kind,
@@ -86,22 +88,27 @@ class Agent(BaseAgent):
         legal_arr = np.array(legal_action, dtype=np.float32)
 
         try:
+            if Config.TEACHER_ONLY:
+                return [self._teacher_fallback_act_data(obs_data, legal_arr)]
             if teacher_force:
                 return [self._teacher_fallback_act_data(obs_data, legal_arr)]
 
             logits, value = self._run_model(obs_data.feature)
             model_prob = self._legal_soft_max(logits, legal_arr)
-            mixed_prob = self._mix_with_teacher(model_prob, teacher_prob, legal_arr, teacher_mix_bias)
-            use_safe_greedy = self.train_step < Config.SAFE_GREEDY_WARMUP_STEPS or teacher_mix_bias > 0.0
-            action = self._legal_sample(mixed_prob, use_max=use_safe_greedy)
-            d_action = self._legal_sample(mixed_prob, use_max=True)
+            action_prob = model_prob
+            infer_teacher_mix = self._get_infer_teacher_mix(teacher_mix_bias)
+            if infer_teacher_mix > 1e-6:
+                action_prob = self._mix_with_teacher(model_prob, teacher_prob, legal_arr, infer_teacher_mix)
+            use_safe_greedy = self.train_step < Config.SAFE_GREEDY_WARMUP_STEPS and infer_teacher_mix > 0.0
+            action = self._legal_sample(action_prob, use_max=use_safe_greedy)
+            d_action = self._legal_sample(action_prob, use_max=True)
             return [
                 ActData(
                     act=[action],
                     action=[action],
                     d_action=[d_action],
-                    prob=list(mixed_prob),
-                    probs=list(mixed_prob),
+                    prob=list(action_prob),
+                    probs=list(action_prob),
                     value=value,
                     values=value,
                 )
@@ -126,6 +133,19 @@ class Agent(BaseAgent):
         return self.last_action
 
     def learn(self, list_sample_data):
+        if Config.TEACHER_ONLY:
+            return {
+                "total_loss": 0.0,
+                "reward": 0.0,
+                "policy_loss": 0.0,
+                "value_loss": 0.0,
+                "entropy_loss": 0.0,
+                "imitation_loss": 0.0,
+                "teacher_mix": 1.0,
+                "imitation_coef": 0.0,
+                "teacher_weight": 1.0,
+                "policy_weight": 0.0,
+            }
         result = self.algorithm.learn(list_sample_data)
         self.train_step = self.algorithm.train_step
         return result
@@ -223,18 +243,17 @@ class Agent(BaseAgent):
             logits, value = self.model(obs_tensor, inference=True)
         return logits.cpu().numpy()[0], value.cpu().numpy()[0]
 
-    def _mix_with_teacher(self, model_prob, teacher_prob, legal_arr, teacher_mix_bias=0.0):
-        teacher_mix = self._get_infer_teacher_mix(teacher_mix_bias)
+    def _mix_with_teacher(self, model_prob, teacher_prob, legal_arr, teacher_mix):
         teacher_prob = self._normalize_teacher_prob(teacher_prob, legal_arr)
         mixed = (1.0 - teacher_mix) * model_prob + teacher_mix * teacher_prob
         return self._safe_normalize_prob(mixed, legal_arr)
 
     def _get_infer_teacher_mix(self, teacher_mix_bias=0.0):
-        teacher_mix = max(self.algorithm.get_teacher_mix(), Config.INFER_TEACHER_MIX_FLOOR)
-        if self.train_step < Config.STUDENT_WARMUP_STEPS:
-            teacher_mix = max(teacher_mix, Config.INFER_TEACHER_MIX_WARMUP)
-        teacher_mix = min(1.0, teacher_mix + teacher_mix_bias)
-        return float(teacher_mix)
+        if self.train_step >= Config.STUDENT_WARMUP_STEPS:
+            return 0.0
+        teacher_mix = max(self.algorithm.get_teacher_mix(), Config.INFER_TEACHER_MIX_WARMUP)
+        teacher_mix = max(teacher_mix, teacher_mix_bias)
+        return float(np.clip(teacher_mix, Config.INFER_TEACHER_MIX_FLOOR, 1.0))
 
     def _normalize_teacher_prob(self, teacher_prob, legal_arr):
         if teacher_prob is None:

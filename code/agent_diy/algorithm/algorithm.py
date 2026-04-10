@@ -45,6 +45,8 @@ class Algorithm:
         advantage = self._stack_field(list_sample_data, "advantage", torch.float32).view(-1, 1)
         reward = self._stack_field(list_sample_data, "reward", torch.float32).view(-1, 1)
         teacher_prob = self._stack_field(list_sample_data, "teacher_prob", torch.float32)
+        teacher_weight = self._stack_field(list_sample_data, "teacher_weight", torch.float32).view(-1, 1)
+        policy_weight = self._stack_field(list_sample_data, "policy_weight", torch.float32).view(-1, 1)
 
         advantage = (advantage - advantage.mean()) / advantage.std(unbiased=False).clamp_min(1e-6)
 
@@ -65,8 +67,9 @@ class Algorithm:
             reward_sum=reward_sum,
             advantage=advantage,
             teacher_prob=teacher_prob,
-            teacher_mix=teacher_mix,
             imitation_coef=imitation_coef,
+            teacher_weight=teacher_weight,
+            policy_weight=policy_weight,
         )
 
         total_loss.backward()
@@ -84,13 +87,15 @@ class Algorithm:
             "imitation_loss": round(info["imitation_loss"], 4),
             "teacher_mix": round(teacher_mix, 4),
             "imitation_coef": round(imitation_coef, 4),
+            "teacher_weight": round(info["teacher_weight"], 4),
+            "policy_weight": round(info["policy_weight"], 4),
         }
 
         now = time.time()
         if now - self.last_report_time >= 60:
             if self.logger:
                 self.logger.info(
-                    "policy_loss: %.4f, value_loss: %.4f, entropy_loss: %.4f, imitation_loss: %.4f, teacher_mix: %.4f, imitation_coef: %.4f"
+                    "policy_loss: %.4f, value_loss: %.4f, entropy_loss: %.4f, imitation_loss: %.4f, teacher_mix: %.4f, imitation_coef: %.4f, teacher_weight: %.4f, policy_weight: %.4f"
                     % (
                         results["policy_loss"],
                         results["value_loss"],
@@ -98,6 +103,8 @@ class Algorithm:
                         results["imitation_loss"],
                         results["teacher_mix"],
                         results["imitation_coef"],
+                        results["teacher_weight"],
+                        results["policy_weight"],
                     )
                 )
             if self.monitor:
@@ -137,29 +144,38 @@ class Algorithm:
         reward_sum,
         advantage,
         teacher_prob,
-        teacher_mix,
         imitation_coef,
+        teacher_weight,
+        policy_weight,
     ):
         model_prob = self._masked_softmax(logits, legal_action)
         teacher_prob = self._normalize_teacher_prob(teacher_prob, legal_action)
-        mixed_prob = self._mix_policy(model_prob, teacher_prob, legal_action, teacher_mix)
 
         vp = value_pred.view(-1, 1)
         vp_clip = old_value + (vp - old_value).clamp(-self.clip_param, self.clip_param)
         value_loss = 0.5 * torch.maximum((reward_sum - vp) ** 2, (reward_sum - vp_clip) ** 2).mean()
 
-        entropy_loss = (-(mixed_prob * torch.log(mixed_prob.clamp_min(1e-9))).sum(1)).mean()
+        entropy_loss = self._weighted_mean(
+            -(model_prob * torch.log(model_prob.clamp_min(1e-9))).sum(1, keepdim=True),
+            policy_weight,
+        )
 
         action_one_hot = torch.nn.functional.one_hot(old_action[:, 0].long(), Config.ACTION_DIM).float()
-        new_prob = (action_one_hot * mixed_prob).sum(1, keepdim=True)
+        new_prob = (action_one_hot * model_prob).sum(1, keepdim=True)
         old_action_prob = (action_one_hot * old_prob).sum(1, keepdim=True)
         ratio = new_prob / old_action_prob.clamp_min(1e-9)
-        policy_loss = torch.maximum(
-            -ratio * advantage,
-            -ratio.clamp(1.0 - self.clip_param, 1.0 + self.clip_param) * advantage,
-        ).mean()
+        policy_loss = self._weighted_mean(
+            torch.maximum(
+                -ratio * advantage,
+                -ratio.clamp(1.0 - self.clip_param, 1.0 + self.clip_param) * advantage,
+            ),
+            policy_weight,
+        )
 
-        imitation_loss = (-(teacher_prob * torch.log(model_prob.clamp_min(1e-9))).sum(1)).mean()
+        imitation_loss = self._weighted_mean(
+            -(teacher_prob * torch.log(model_prob.clamp_min(1e-9))).sum(1, keepdim=True),
+            teacher_weight,
+        )
 
         total_loss = self.vf_coef * value_loss + policy_loss - self.beta * entropy_loss + imitation_coef * imitation_loss
         return total_loss, {
@@ -167,6 +183,8 @@ class Algorithm:
             "value_loss": float(value_loss.item()),
             "entropy_loss": float(entropy_loss.item()),
             "imitation_loss": float(imitation_loss.item()),
+            "teacher_weight": float(teacher_weight.mean().item()),
+            "policy_weight": float(policy_weight.mean().item()),
         }
 
     def _stack_field(self, list_sample_data, field, dtype):
@@ -188,7 +206,8 @@ class Algorithm:
         fallback = legal_action / legal_action.sum(dim=1, keepdim=True).clamp_min(1.0)
         return torch.where(denom > 0.0, teacher_prob / denom.clamp_min(1e-9), fallback)
 
-    def _mix_policy(self, model_prob, teacher_prob, legal_action, teacher_mix):
-        mixed = (1.0 - teacher_mix) * model_prob + teacher_mix * teacher_prob
-        mixed = mixed * legal_action
-        return mixed / mixed.sum(dim=1, keepdim=True).clamp_min(1e-9)
+    def _weighted_mean(self, value, weight):
+        weight_sum = weight.sum()
+        if float(weight_sum.item()) <= 1e-6:
+            return value.new_tensor(0.0)
+        return (value * weight).sum() / weight_sum.clamp_min(1e-6)

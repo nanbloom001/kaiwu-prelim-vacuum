@@ -23,6 +23,8 @@ ObsData = create_cls(
     teacher_prob=None,
     teacher_force=None,
     teacher_mix_bias=None,
+    teacher_weight=None,
+    policy_weight=None,
 )
 
 
@@ -52,6 +54,8 @@ SampleData = create_cls(
     advantage=1,
     teacher_action=1,
     teacher_prob=Config.ACTION_DIM,
+    teacher_weight=1,
+    policy_weight=1,
 )
 
 
