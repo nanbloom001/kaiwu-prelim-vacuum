@@ -6,7 +6,7 @@ replay_buffer_capacity = 10000
 
 # The ratio of the sample pool capacity that triggers training
 # 当样本池中的样本占总容量的比例达到该值时，启动训练
-preload_ratio = 1.0
+preload_ratio = 0.2
 
 # When new samples are added to the sample pool, the logic for removing old samples: reverb.selectors.Lifo, reverb.selectors.Fifo
 # 当新样本加入样本池时，旧样本的移除逻辑，可选项：reverb.selectors.Lifo, reverb.selectors.Fifo
@@ -40,7 +40,7 @@ reverb_error_buffer = 5
 
 # Training batch size limit for Learner
 # Learner训练时样本批处理大小
-train_batch_size = 2048
+train_batch_size = 1024
 
 # Model dump frequency (steps)
 # 训练间隔多少步输出模型参数文件

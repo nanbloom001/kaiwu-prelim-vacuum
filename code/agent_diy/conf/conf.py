@@ -1,43 +1,88 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 ###########################################################################
-# Copyright © 1998 - 2026 Tencent. All Rights Reserved.
+# Copyright (c) 1998 - 2026 Tencent. All Rights Reserved.
 ###########################################################################
 """
-Author: Tencent AI Arena Authors
+Configuration for the hybrid DIY vacuum agent.
 """
 
 
-import numpy as np
-
-
-# Configuration, including dimension settings and algorithm parameter settings.
-# 配置，包含维度设置，算法参数设置
 class Config:
+    GRID_SIZE = 128
+    VIEW_SIZE = 21
+    LOCAL_VIEW_SIZE = 7
 
-    # Whether to use CNN networks
-    # 是否使用CNN网络
-    USE_CNN = False
-    VIEW_SIZE = 50 if USE_CNN else 0
+    LOCAL_CHANNELS = 5
+    LOCAL_FEATURE_DIM = LOCAL_VIEW_SIZE * LOCAL_VIEW_SIZE * LOCAL_CHANNELS
+    GLOBAL_FEATURE_DIM = 26
+    FEATURE_DIM = LOCAL_FEATURE_DIM + GLOBAL_FEATURE_DIM
+    FEATURE_VECTOR_SHAPE = (FEATURE_DIM,)
+    FEATURE_IMAGE_SHAPE = (0,)
 
-    FEATURE_VECTOR_SHAPE = (153,)
-    FEATURE_IMAGE_SHAPE = (4, VIEW_SIZE + 1, VIEW_SIZE + 1)
-
-    ACTION_SHAPE = (8,)
+    ACTION_DIM = 8
+    ACTION_SHAPE = (ACTION_DIM,)
     VALUE_SHAPE = (1,)
 
-    # Discount factor GAMMA in RL
-    # RL中的回报折扣GAMMA
-    GAMMA = 0.95
+    # Planner settings
+    REPLAN_INTERVAL = 4
+    LOW_BATTERY_RATIO = 0.56
+    RETURN_CHARGE_BUFFER = 28
+    TARGET_CHARGE_BUFFER = 36
+    MAX_TRACKED_PATH = 128
+    DIRTY_CLUSTER_RADIUS = 3
+    FRONTIER_CLUSTER_RADIUS = 4
+    CHARGER_HEURISTIC_SCALE = 1.25
+    PATH_FOLLOW_BONUS = 4.5
+    SAVE_MODEL_INTERVAL_SEC = 60
+    SAMPLE_CHUNK_SIZE = 256
+    MAX_VISIT_CLIP = 12
+    MAX_TRANSIT_CLIP = 12
 
-    # Initial learning rate
-    # 初始的学习率
-    START_LR = 5e-4
+    # NPC risk settings
+    NPC_COLLISION_RADIUS = 1
+    NPC_PREDICT_RADIUS = 1
+    NPC_CENTER_HARD_RADIUS = 3
+    NPC_CENTER_SOFT_RADIUS = 10
 
-    # Value function loss coefficient
-    # 价值函数损失系数
-    VALUE_LOSS_COEFF = 0.5
+    # Reward shaping
+    GAMMA = 0.99
+    LAMDA = 0.95
+    STEP_PENALTY = -0.01
+    STUCK_PENALTY = -0.10
+    CLEAN_REWARD = 1.15
+    CHARGE_REWARD = 0.15
+    NPC_DANGER_PENALTY = -0.15
+    REPEAT_CLEAN_PENALTY = 0.03
+    FRONTIER_REWARD = 0.02
 
-    # Entropy regularization coefficient
-    # 熵正则化系数
-    ENTROPY_LOSS_COEFF = 0.025
+    # Model / optimizer
+    HIDDEN_DIM = 192
+    INIT_LEARNING_RATE_START = 3e-4
+    BETA_START = 0.0015
+    CLIP_PARAM = 0.2
+    VF_COEF = 0.5
+    USE_GRAD_CLIP = True
+    GRAD_CLIP_RANGE = 0.5
+
+    # Teacher-student hybrid learning
+    IMITATION_COEF_START = 0.95
+    IMITATION_COEF_END = 0.18
+    IMITATION_DECAY_STEPS = 7000
+    TEACHER_MIX_START = 0.88
+    TEACHER_MIX_END = 0.30
+    TEACHER_MIX_DECAY_STEPS = 9000
+    INFER_TEACHER_MIX_FLOOR = 0.58
+    INFER_TEACHER_MIX_WARMUP = 0.92
+    STUDENT_WARMUP_STEPS = 2000
+    SAFE_GREEDY_WARMUP_STEPS = 2000
+    RISK_TEACHER_BIAS = 0.22
+    CHARGE_TEACHER_BIAS = 0.12
+    STUCK_TEACHER_BIAS = 0.08
+    FORCE_TEACHER_RISK = 22.0
+    FORCE_TEACHER_STUCK = 2
+    CRITICAL_CHARGE_MARGIN = 10
+    REWARD_SCALE = 0.35
+    FINAL_BONUS_SCALE = 0.35
+
+    CHECKPOINT_TAG = "diy_hybrid_v2"
