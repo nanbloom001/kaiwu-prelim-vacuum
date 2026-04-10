@@ -24,6 +24,33 @@ from tools.metrics_utils import get_training_metrics
 from tools.train_env_conf_validate import read_usr_conf
 
 
+def _env_int(name, default):
+    value = os.getenv(name)
+    if value is None or value == "":
+        return int(default)
+    return int(value)
+
+
+class PerfWindow:
+    def __init__(self):
+        self.values = {}
+
+    def add(self, name, duration_ms, count=1):
+        stats = self.values.setdefault(name, {"total_ms": 0.0, "count": 0})
+        stats["total_ms"] += float(duration_ms)
+        stats["count"] += int(count)
+
+    def flush(self, prefix):
+        payload = {}
+        for name, stats in self.values.items():
+            payload[f"{prefix}_{name}_total_ms"] = round(stats["total_ms"], 4)
+            payload[f"{prefix}_{name}_count"] = int(stats["count"])
+            if stats["count"] > 0:
+                payload[f"{prefix}_{name}_avg_ms"] = round(stats["total_ms"] / stats["count"], 4)
+        self.values = {}
+        return payload
+
+
 def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
     env = envs[0]
     agent = agents[0]
@@ -73,11 +100,30 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         monitor=monitor,
         archive=archive,
     )
+    send_perf = PerfWindow()
+    last_send_perf_report_time = 0.0
 
     while True:
         for g_data in episode_runner.run_episodes():
+            send_begin = time.perf_counter()
             agent.send_sample_data(g_data)
+            send_perf.add("send_sample_data", (time.perf_counter() - send_begin) * 1000.0)
+            send_perf.add("samples_sent", 0.0, count=len(g_data))
             g_data.clear()
+            now = time.time()
+            if now - last_send_perf_report_time >= _env_int(
+                "KAIWU_PERF_STAT_WINDOW_SECONDS", Config.PERF_STAT_WINDOW_SECONDS
+            ):
+                payload = {
+                    "record_type": "aisrv_send_window",
+                    "episode_cnt": episode_runner.episode_cnt,
+                }
+                payload.update(send_perf.flush("workflow"))
+                runtime_metrics = agent.get_runtime_metrics() if hasattr(agent, "get_runtime_metrics") else {}
+                for key, value in runtime_metrics.items():
+                    payload[f"agent_{key}"] = value
+                archive.log_train_window(payload)
+                last_send_perf_report_time = now
 
 
 class EnvConfigSampler:
@@ -206,6 +252,8 @@ class EpisodeRunner:
         self.episode_cnt = 0
         self.last_report_monitor_time = 0
         self.last_get_training_metrics_time = 0
+        self.last_perf_stat_time = 0
+        self.perf_window = PerfWindow()
 
         self.failure_counts = {
             "battery": 0,
@@ -240,10 +288,16 @@ class EpisodeRunner:
         self.last_episode_snapshot_episode = 0
         self.last_time_snapshot_at = time.time()
         self.last_latest_sync_episode = 0
-        self.save_interval = Config.SAVE_MODEL_INTERVAL_EPISODES
-        self.resume_episode_interval = Config.RESUME_EPISODE_SNAPSHOT_INTERVAL
-        self.latest_sync_interval = Config.RESUME_LATEST_SYNC_INTERVAL_EPISODES
-        self.time_save_interval_seconds = Config.RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS
+        self.save_interval = _env_int("KAIWU_SAVE_MODEL_INTERVAL_EPISODES", Config.SAVE_MODEL_INTERVAL_EPISODES)
+        self.resume_episode_interval = _env_int(
+            "KAIWU_RESUME_EPISODE_SNAPSHOT_INTERVAL", Config.RESUME_EPISODE_SNAPSHOT_INTERVAL
+        )
+        self.latest_sync_interval = _env_int(
+            "KAIWU_RESUME_LATEST_SYNC_INTERVAL_EPISODES", Config.RESUME_LATEST_SYNC_INTERVAL_EPISODES
+        )
+        self.time_save_interval_seconds = _env_int(
+            "KAIWU_RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS", Config.RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS
+        )
         self.keep_episode_snapshots = Config.KEEP_EPISODE_RESUME_SNAPSHOTS
         self.keep_time_snapshots = Config.KEEP_TIME_RESUME_SNAPSHOTS
         self.keep_best_snapshots = Config.KEEP_BEST_RESUME_SNAPSHOTS
@@ -362,6 +416,14 @@ class EpisodeRunner:
                             continue
                         for key, value in group_metrics.items():
                             window_payload[f"{group_name}_{key}"] = value
+                    if now - self.last_perf_stat_time >= _env_int(
+                        "KAIWU_PERF_STAT_WINDOW_SECONDS", Config.PERF_STAT_WINDOW_SECONDS
+                    ):
+                        window_payload.update(self.perf_window.flush("episode"))
+                        runtime_metrics = self.agent.get_runtime_metrics() if hasattr(self.agent, "get_runtime_metrics") else {}
+                        for key, value in runtime_metrics.items():
+                            window_payload[f"agent_{key}"] = value
+                        self.last_perf_stat_time = now
                     self.archive.log_train_window(window_payload)
 
             sampled_usr_conf, sampled_meta = self.config_sampler.sample(self.episode_cnt + 1)
@@ -379,10 +441,14 @@ class EpisodeRunner:
                 )
                 continue
 
+            load_begin = time.perf_counter()
             self.agent.reset(env_obs)
             self.agent.load_model(id="latest")
+            self.perf_window.add("load_model", (time.perf_counter() - load_begin) * 1000.0)
 
+            obs_begin = time.perf_counter()
             obs_data, _ = self.agent.observation_process(env_obs)
+            self.perf_window.add("observation_process", (time.perf_counter() - obs_begin) * 1000.0)
 
             collector = []
             self.episode_cnt += 1
@@ -396,7 +462,9 @@ class EpisodeRunner:
             )
 
             while not done:
+                predict_begin = time.perf_counter()
                 act_data = self.agent.predict([obs_data])[0]
+                self.perf_window.add("predict", (time.perf_counter() - predict_begin) * 1000.0)
                 act = self.agent.action_process(act_data)
 
                 env_reward, env_obs = self.env.step(act)
@@ -419,7 +487,9 @@ class EpisodeRunner:
                 step += 1
                 done = terminated or truncated
 
+                next_obs_begin = time.perf_counter()
                 next_obs_data, _ = self.agent.observation_process(env_obs)
+                self.perf_window.add("observation_process", (time.perf_counter() - next_obs_begin) * 1000.0)
                 next_obs_data.frame_no = frame_no
 
                 reward_scalar = float(self.agent.last_reward)
@@ -481,7 +551,11 @@ class EpisodeRunner:
                         self.last_report_monitor_time = now
 
                     if collector:
+                        sample_process_begin = time.perf_counter()
                         collector = sample_process(collector)
+                        self.perf_window.add("sample_process", (time.perf_counter() - sample_process_begin) * 1000.0)
+                        self.perf_window.add("episodes_yielded", 0.0, count=1)
+                        self.perf_window.add("samples_built", 0.0, count=len(collector))
                         yield collector
                     break
 

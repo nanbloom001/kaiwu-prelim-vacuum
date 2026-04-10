@@ -1,0 +1,151 @@
+{
+  "generated_at": "2026-04-10 16:34:40",
+  "baseline_envs": 8,
+  "duration_seconds": 180,
+  "experiments": [
+    {
+      "name": "A-baseline",
+      "description": "当前配置: cache=4, workers=4",
+      "cache_multiplier": 4,
+      "reverb_workers": 4,
+      "status": "ok",
+      "row_count": 2,
+      "step_per_min": 125.9,
+      "mean_total_ms": 731.42,
+      "mean_fetch_ms": 707.43,
+      "mean_train_ms": 23.94,
+      "p95_fetch_ms": 604.5,
+      "mean_ratio": 8.32,
+      "first_buffer": "2048/8192",
+      "last_buffer": "2048/8192",
+      "rows": [
+        {
+          "time": "2026-04-10 16:21:08",
+          "step": 42,
+          "total_ms": 628.38,
+          "fetch_ms": 604.5,
+          "train_ms": 23.8,
+          "ratio": 5.614621409921671,
+          "buffer_utilization": "2048/8192"
+        },
+        {
+          "time": "2026-04-10 16:22:09",
+          "step": 170,
+          "total_ms": 834.47,
+          "fetch_ms": 810.36,
+          "train_ms": 24.08,
+          "ratio": 11.02679419775765,
+          "buffer_utilization": "2048/8192"
+        }
+      ]
+    },
+    {
+      "name": "B-bigger-buffer",
+      "description": "cache=16, workers=4",
+      "cache_multiplier": 16,
+      "reverb_workers": 4,
+      "status": "ok",
+      "row_count": 2,
+      "step_per_min": 94.43,
+      "mean_total_ms": 3414.62,
+      "mean_fetch_ms": 3393.28,
+      "mean_train_ms": 21.3,
+      "p95_fetch_ms": 3355.31,
+      "mean_ratio": 6.07,
+      "first_buffer": "20480/32768",
+      "last_buffer": "20480/32768",
+      "rows": [
+        {
+          "time": "2026-04-10 16:24:52",
+          "step": 31,
+          "total_ms": 3453.63,
+          "fetch_ms": 3431.25,
+          "train_ms": 22.32,
+          "ratio": 3.9204643695195753,
+          "buffer_utilization": "20480/32768"
+        },
+        {
+          "time": "2026-04-10 16:25:53",
+          "step": 127,
+          "total_ms": 3375.62,
+          "fetch_ms": 3355.31,
+          "train_ms": 20.28,
+          "ratio": 8.217883096366508,
+          "buffer_utilization": "20480/32768"
+        }
+      ]
+    },
+    {
+      "name": "C-bigger-buffer-more-workers",
+      "description": "cache=16, workers=8",
+      "cache_multiplier": 16,
+      "reverb_workers": 8,
+      "status": "ok",
+      "row_count": 2,
+      "step_per_min": 94.43,
+      "mean_total_ms": 3393.62,
+      "mean_fetch_ms": 3369.95,
+      "mean_train_ms": 23.64,
+      "p95_fetch_ms": 3349.53,
+      "mean_ratio": 6.13,
+      "first_buffer": "20480/32768",
+      "last_buffer": "20480/32768",
+      "rows": [
+        {
+          "time": "2026-04-10 16:28:34",
+          "step": 31,
+          "total_ms": 3373.27,
+          "fetch_ms": 3349.53,
+          "train_ms": 23.7,
+          "ratio": 4.103147418083113,
+          "buffer_utilization": "20480/32768"
+        },
+        {
+          "time": "2026-04-10 16:29:35",
+          "step": 127,
+          "total_ms": 3413.97,
+          "fetch_ms": 3390.36,
+          "train_ms": 23.59,
+          "ratio": 8.155269181325055,
+          "buffer_utilization": "20480/32768"
+        }
+      ]
+    },
+    {
+      "name": "D-all-config",
+      "description": "cache=32, workers=8",
+      "cache_multiplier": 32,
+      "reverb_workers": 8,
+      "status": "ok",
+      "row_count": 2,
+      "step_per_min": 98.18,
+      "mean_total_ms": 6755.18,
+      "mean_fetch_ms": 6728.66,
+      "mean_train_ms": 26.49,
+      "p95_fetch_ms": 6728.02,
+      "mean_ratio": 5.41,
+      "first_buffer": "45056/65536",
+      "last_buffer": "45056/65536",
+      "rows": [
+        {
+          "time": "2026-04-10 16:32:20",
+          "step": 25,
+          "total_ms": 6753.49,
+          "fetch_ms": 6728.02,
+          "train_ms": 25.43,
+          "ratio": 3.108493716228523,
+          "buffer_utilization": "45056/65536"
+        },
+        {
+          "time": "2026-04-10 16:33:26",
+          "step": 133,
+          "total_ms": 6756.87,
+          "fetch_ms": 6729.29,
+          "train_ms": 27.56,
+          "ratio": 7.714730789928343,
+          "buffer_utilization": "45056/65536"
+        }
+      ]
+    }
+  ]
+}

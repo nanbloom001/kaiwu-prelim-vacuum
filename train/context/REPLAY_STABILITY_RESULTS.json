@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-04-10 14:10:59",
+  "experiments": [
+    {
+      "name": "v1-2048",
+      "reverb_type": 1,
+      "batch_size": 2048,
+      "status": "insufficient_data",
+      "row_count": 0,
+      "rows": []
+    },
+    {
+      "name": "v2-2048",
+      "reverb_type": 2,
+      "batch_size": 2048,
+      "status": "insufficient_data",
+      "row_count": 0,
+      "rows": []
+    }
+  ]
+}

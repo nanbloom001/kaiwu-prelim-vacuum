@@ -1,0 +1,148 @@
+{
+  "generated_at": "2026-04-10 15:58:23",
+  "fixed_params": {
+    "reverb_type": 2,
+    "batch_size": 2048,
+    "dump_model_freq": 200,
+    "cache_multiplier": 4,
+    "rate_limiter": "MinSize",
+    "perf_window_seconds": "60"
+  },
+  "experiments": [
+    {
+      "total_envs": 4,
+      "aisrv_num": 1,
+      "parallel": 4,
+      "gamecore_num": 4,
+      "reverb_type": 2,
+      "batch_size": 2048,
+      "status": "insufficient_data",
+      "row_count": 1,
+      "rows": [
+        {
+          "time": "2026-04-10 15:45:50",
+          "step": 78,
+          "total_ms": 770.0,
+          "fetch_ms": 746.9,
+          "train_ms": 23.07,
+          "ratio": 9.91336725828472,
+          "buffer_utilization": "2048/8192"
+        }
+      ]
+    },
+    {
+      "total_envs": 6,
+      "aisrv_num": 2,
+      "parallel": 4,
+      "gamecore_num": 6,
+      "reverb_type": 2,
+      "batch_size": 2048,
+      "status": "ok",
+      "row_count": 2,
+      "step_per_min": 118.03,
+      "mean_total_ms": 860.08,
+      "mean_fetch_ms": 837.67,
+      "mean_train_ms": 22.38,
+      "mean_ratio": 8.29,
+      "p95_fetch_ms": 688.2,
+      "first_buffer": "2048/8192",
+      "last_buffer": "2048/8192",
+      "rows": [
+        {
+          "time": "2026-04-10 15:48:30",
+          "step": 44,
+          "total_ms": 710.98,
+          "fetch_ms": 688.2,
+          "train_ms": 22.76,
+          "ratio": 5.676346456692913,
+          "buffer_utilization": "2048/8192"
+        },
+        {
+          "time": "2026-04-10 15:49:31",
+          "step": 164,
+          "total_ms": 1009.17,
+          "fetch_ms": 987.15,
+          "train_ms": 22.0,
+          "ratio": 10.899273104880582,
+          "buffer_utilization": "2048/8192"
+        }
+      ]
+    },
+    {
+      "total_envs": 8,
+      "aisrv_num": 2,
+      "parallel": 4,
+      "gamecore_num": 8,
+      "reverb_type": 2,
+      "batch_size": 2048,
+      "status": "ok",
+      "row_count": 2,
+      "step_per_min": 130.0,
+      "mean_total_ms": 892.65,
+      "mean_fetch_ms": 869.07,
+      "mean_train_ms": 23.55,
+      "mean_ratio": 8.21,
+      "p95_fetch_ms": 775.13,
+      "first_buffer": "2048/8192",
+      "last_buffer": "2048/8192",
+      "rows": [
+        {
+          "time": "2026-04-10 15:52:12",
+          "step": 38,
+          "total_ms": 798.19,
+          "fetch_ms": 775.13,
+          "train_ms": 23.03,
+          "ratio": 5.411584729851888,
+          "buffer_utilization": "2048/8192"
+        },
+        {
+          "time": "2026-04-10 15:53:12",
+          "step": 168,
+          "total_ms": 987.11,
+          "fetch_ms": 963.01,
+          "train_ms": 24.07,
+          "ratio": 11.000191828122002,
+          "buffer_utilization": "2048/8192"
+        }
+      ]
+    },
+    {
+      "total_envs": 12,
+      "aisrv_num": 3,
+      "parallel": 4,
+      "gamecore_num": 12,
+      "reverb_type": 2,
+      "batch_size": 2048,
+      "status": "ok",
+      "row_count": 2,
+      "step_per_min": 120.0,
+      "mean_total_ms": 849.18,
+      "mean_fetch_ms": 823.16,
+      "mean_train_ms": 25.99,
+      "mean_ratio": 5.74,
+      "p95_fetch_ms": 751.54,
+      "first_buffer": "2048/8192",
+      "last_buffer": "2048/8192",
+      "rows": [
+        {
+          "time": "2026-04-10 15:55:57",
+          "step": 77,
+          "total_ms": 919.43,
+          "fetch_ms": 894.79,
+          "train_ms": 24.62,
+          "ratio": 5.003998223011995,
+          "buffer_utilization": "2048/8192"
+        },
+        {
+          "time": "2026-04-10 15:56:58",
+          "step": 199,
+          "total_ms": 778.93,
+          "fetch_ms": 751.54,
+          "train_ms": 27.36,
+          "ratio": 6.468771328349444,
+          "buffer_utilization": "2048/8192"
+        }
+      ]
+    }
+  ]
+}

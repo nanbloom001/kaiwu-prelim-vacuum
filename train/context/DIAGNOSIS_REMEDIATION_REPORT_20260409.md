@@ -606,3 +606,528 @@ AISRV 指标中：
    - win rate 与 clean score 趋势
 4. 如后续需要长期维护，建议把当前 compose 内的运行时热补丁逐步固化到正式源码/镜像中，减少后续重启依赖
 
+---
+
+## 12. 2026-04-10 Learner 吞吐专项诊断与修复记录
+
+本章节用于持续追加 learner 吞吐、并行扩容、多 AISRV 链路、GPU 利用率相关问题的诊断结果。
+
+后续若继续排查同类问题，应继续追加到本文件，不再新建独立诊断文件。
+
+### 12.1 问题现象
+
+本轮排查期间，核心现象如下：
+
+- 并行环境数量增加后，训练速度没有随之提升，甚至出现下降
+- `global step/min` 基本停留在 `135 ~ 148 step/min` 附近
+- AISRV 侧 `sample_receive_cnt` 随并行环境和 AISRV 数量上升而显著增长
+- learner 侧 GPU 利用率始终较低，主要只使用 `GPU0`
+- learner 训练日志中，`data_fetch` 明显高于 `real_train`
+
+已观察到的典型日志形态：
+
+- 优化前常见窗口：
+  - `train once cost time` 约 `918 ~ 1202 ms`
+  - `data_fetch` 约 `791 ~ 825 ms`
+  - `real_train` 约 `127 ~ 377 ms`
+- 优化后稳定训练窗口：
+  - `train once cost time` 约 `751 ~ 1059 ms`
+  - `data_fetch` 约 `725 ~ 1032 ms`
+  - `real_train` 约 `26 ~ 27 ms`
+
+这说明：
+
+- learner 真正的前向/反向训练已经不是主要瓶颈
+- 当前主瓶颈在样本获取与 batch 组装链路，而不是 GPU 算力本身
+
+### 12.2 关键结论
+
+#### 12.2.1 `global step/min` 是正确的训练速度指标
+
+从业务算法代码看，`global step` 对应真实的 learner 参数更新次数，而不是环境步数或 episode 数。
+
+定位位置：
+
+- [algorithm.py](/home/user/TcKaiwuFinal/code/agent_ppo/algorithm/algorithm.py)
+
+关键行为：
+
+- `Algorithm.learn()` 每执行一次真实优化步骤后执行 `self.train_step += 1`
+
+因此：
+
+- `global step/min` 可以直接作为 learner 训练更新吞吐指标
+
+#### 12.2.2 并行环境增加但训练速度不升，主因不是统计口径，而是 learner / replay 数据链路先成为瓶颈
+
+已经做过的对照实验显示：
+
+- 单 AISRV 扩容：
+  - `4 env` 约 `148 step/min`
+  - `8 env` 约 `144 ~ 145 step/min`
+  - `16 env` 约 `137 ~ 140 step/min`
+- 多 AISRV 扩容：
+  - `1x4` 时 `sample_receive/min` 约 `8170`
+  - `2x4` 时 `sample_receive/min` 约 `33375`
+  - `2x8` 时 `sample_receive/min` 约 `64141`
+  - `3x8` 时 `sample_receive/min` 约 `136636`
+
+结论：
+
+- 样本产出吞吐显著增长
+- learner 更新吞吐没有同步增长
+- 因此系统已经进入“样本生成远快于样本消费”的状态
+
+### 12.3 问题位置
+
+#### 12.3.1 业务侧训练入口存在“拆开再拼回去”的重复开销
+
+定位位置：
+
+- [algorithm.py](/home/user/TcKaiwuFinal/code/agent_ppo/algorithm/algorithm.py)
+- 容器内框架代码：`/data/projects/robot_vacuum/kaiwudrl/interface/remote_agent.py`
+
+原始链路是：
+
+1. reverb dataset 返回 batch tensor
+2. 框架层 `remote_agent.py` 把 batch tensor 反序列化成 `list[SampleData]`
+3. 业务侧 `Algorithm.learn()` 再对 `obs / act / prob / value / reward_sum / advantage` 逐项 `torch.stack()`
+
+这导致 learner 侧每个 batch 都要经历一轮：
+
+- `tensor -> Python 对象列表 -> tensor`
+
+这部分属于纯 CPU / Python 开销，对 GPU 无贡献，但会体现在 `data_fetch` 阶段。
+
+#### 12.3.2 reverb dataset 预取链路本身是单线程、大批量、串行拉取
+
+定位位置：
+
+- 容器内框架代码：`/data/projects/robot_vacuum/kaiwudrl/common/replay_buffer/reverb_dataset_v1.py`
+
+关键实现特征：
+
+- 只有一个后台填充线程
+- 每次通过 `client.sample()` 按大 batch 拉取数据
+- 拉取后再做 Python 侧 `raw_batch -> process_batch -> tensor`
+- 只有当 `active_buffer` 满足 `train_batch_size` 时 learner 才能继续推进
+
+这导致：
+
+- learner 很容易在等待 replay buffer 组 batch
+- `data_fetch` 时间显著高于 `real_train`
+
+#### 12.3.3 当前架构仍是单 learner 单卡
+
+定位位置：
+
+- [train/.docker-compose.yaml](/home/user/TcKaiwuFinal/train/.docker-compose.yaml)
+
+当前运行方式决定了：
+
+- learner 只有一个
+- 实际训练只在单张 GPU 上进行
+- 即使宿主机有 4 张显卡，也不会自动转化为 4 卡训练
+
+因此：
+
+- 当前 GPU0 低占用不是“显卡坏了”
+- 而是单 learner 结构下，数据链路先卡住了，GPU 自然无法吃满
+
+### 12.4 已实施并验证有效的修复
+
+以下修复已保留在业务代码中，且实测可以正常训练：
+
+#### 12.4.1 learner 侧 PyTorch runtime 调优
+
+修改位置：
+
+- [agent.py](/home/user/TcKaiwuFinal/code/agent_ppo/agent.py)
+- [conf.py](/home/user/TcKaiwuFinal/code/agent_ppo/conf/conf.py)
+
+已做内容：
+
+- learner 不再强制固定 `torch.set_num_threads(1)`
+- learner 改为使用可配置 CPU 线程数
+- CUDA 下开启：
+  - `torch.set_float32_matmul_precision("high")`
+  - `cudnn.benchmark = True`
+  - TF32 相关开关
+- optimizer 优先尝试：
+  - `foreach=True`
+  - `fused=True`
+- learner CUDA 训练启用 AMP
+
+当前保留配置：
+
+- `LEARNER_CPU_THREADS = 4`
+- `LEARNER_CPU_INTEROP_THREADS = 2`
+- `LEARNER_USE_AMP = True`
+- `LEARNER_ALLOW_FOREACH_OPTIMIZER = True`
+- `LEARNER_ALLOW_FUSED_OPTIMIZER = True`
+
+#### 12.4.2 业务侧改为直接消费 batch tensor，跳过 `SampleData` 列表重组开销
+
+修改位置：
+
+- [agent.py](/home/user/TcKaiwuFinal/code/agent_ppo/agent.py)
+- [algorithm.py](/home/user/TcKaiwuFinal/code/agent_ppo/algorithm/algorithm.py)
+- [conf.py](/home/user/TcKaiwuFinal/code/agent_ppo/conf/conf.py)
+
+已做内容：
+
+- 在 `Agent` 中为 learner 打开 `PREFER_BATCH_TENSOR_LEARN`
+- 对框架 `RemoteAgent.learn()` 做定向 patch：
+  - learner 收到 batch tensor 时，直接把 tensor 交给业务 `learn()`
+  - 不再反序列化成 `list[SampleData]`
+- 在 `Algorithm.learn()` 中增加：
+  - `_unpack_train_batch()`
+  - `_unpack_batch_tensor()`
+  - `_unpack_sample_objects()`
+
+这样业务侧就支持两种输入：
+
+- 直接 batch tensor
+- 兼容旧的 `list[SampleData]`
+
+实测效果：
+
+- `real_train` 从之前常见的 `127 ~ 377 ms` 压到了约 `26 ms`
+- 说明 learner 真正训练阶段的 CPU 与张量整理开销已经明显下降
+
+#### 12.4.3 训练已恢复正常，checkpoint 持续推进
+
+实测结果：
+
+- learner 正常启动并训练
+- checkpoint 已持续生成到：
+  - `model.ckpt-100.pkl`
+  - `model.ckpt-200.pkl`
+  - 更高编号 checkpoint 在不同窗口中也持续生成
+- AISRV `learner_proxy` 日志显示：
+  - `send sample stat, succ_cnt ...`
+  - `error_cnt is 0`
+
+结论：
+
+- 当前系统处于“可持续训练”的状态
+- 没有出现此前那种 learner 卡死、checkpoint 不增长、AISRV 持续报错的严重故障
+
+### 12.5 已尝试但未保留的修复
+
+#### 12.5.1 尝试对 reverb dataset 做多线程并行预取
+
+尝试内容：
+
+- 在业务层对容器内 `ReverbDataset` 进行 monkey patch
+- 试图把单线程预取改为多线程分块预取
+
+结果：
+
+- learner 重启后出现：
+  - `input ready size is 0`
+  - `global step is 0`
+  - 训练未真正开始
+- AISRV 出现 reverb 写入异常：
+  - `Item confirmation worker were stopped when 2 unconfirmed items ...`
+
+结论：
+
+- 该尝试没有通过验证
+- 已回退
+- 当前代码库中没有保留这部分修改
+
+### 12.6 当前状态判断
+
+截至本次记录，当前状态为：
+
+- 训练链路正常
+- checkpoint 持续生成
+- AISRV 正常发送样本
+- learner 正常消耗样本并训练
+- GPU0 被实际使用
+- GPU1/2/3 基本空闲
+
+但同时也应明确：
+
+- learner 真正计算开销已经压低
+- 主要瓶颈仍是 `data_fetch`
+- 当前并不是“GPU 算不满”，而是“数据链路供给不到位”
+
+### 12.7 后续修复建议
+
+如果后续继续优化 learner 吞吐，建议按以下优先级推进：
+
+1. 不要继续在业务层堆叠 monkey patch 到 replay/reverb 核心逻辑。
+2. 应直接修改框架层正式实现：
+   - 容器内 `reverb_dataset_v1.py`
+   - 容器内 `remote_agent.py`
+   - 容器内 `replay_buffer_wrapper.py`
+3. 优先目标不是再压 `real_train`，而是降低：
+   - `data_fetch`
+   - replay batch 等待
+   - Python 对象拆装成本
+4. 建议做正式对照实验：
+   - `train_batch_size = 2048`
+   - `train_batch_size = 1024`
+   - 对比 `global step/min`
+   - 对比 `data_fetch_ms`
+   - 对比 `sample_production_and_consumption_ratio`
+5. 如果目标是充分利用 4 张 GPU，则需要架构升级，而不是继续挤压当前单 learner：
+   - 多 learner
+   - DDP / 多卡训练
+   - 或明确的参数服务器 / 多进程训练方案
+
+### 12.8 本章节涉及的关键文件
+
+- [agent.py](/home/user/TcKaiwuFinal/code/agent_ppo/agent.py)
+- [algorithm.py](/home/user/TcKaiwuFinal/code/agent_ppo/algorithm/algorithm.py)
+- [conf.py](/home/user/TcKaiwuFinal/code/agent_ppo/conf/conf.py)
+- [train/.docker-compose.yaml](/home/user/TcKaiwuFinal/train/.docker-compose.yaml)
+- `/data/projects/robot_vacuum/kaiwudrl/interface/remote_agent.py`
+- `/data/projects/robot_vacuum/kaiwudrl/common/replay_buffer/reverb_dataset_v1.py`
+
+### 12.9 追加约定
+
+后续如果继续发现以下问题，统一追加到本文件本章节之后：
+
+- learner 吞吐问题
+- replay / reverb 取数瓶颈
+- 多 AISRV 并行递减问题
+- GPU 利用率偏低问题
+- batch size / 并行环境 / learner 架构相关实验结果
+
+---
+
+## 13. 2026-04-10 第一阶段业务层优化实施记录
+
+本节记录“先业务后框架”路线中的第一阶段实际实施内容、验证结果和新的观察。
+
+### 13.1 本次已实施的改动
+
+#### 13.1.1 Agent.load_model 增加同文件缓存跳过逻辑
+
+修改位置：
+
+- [agent.py](/home/user/TcKaiwuFinal/code/agent_ppo/agent.py)
+
+实现内容：
+
+- 新增 `AGENT_LOAD_MODEL_CACHE` 配置
+- 为 `load_model()` 增加基于：
+  - `model_file_path`
+  - `stat().st_mtime_ns`
+  的缓存判断
+- 当 episode 间重复加载同一 checkpoint 文件且文件未变化时：
+  - 跳过 `torch.load()`
+  - 不重复执行 `model.load_state_dict()`
+
+新增运行时统计项：
+
+- `load_model_calls`
+- `load_model_reloads`
+- `load_model_cache_hits`
+
+原因：
+
+- AISRV 业务 workflow 每局开始都会执行 `agent.load_model(id="latest")`
+- 在模型未变化时重复从磁盘读模型是纯额外开销
+
+#### 13.1.2 增加 AISRV 业务侧性能窗口统计
+
+修改位置：
+
+- [train_workflow.py](/home/user/TcKaiwuFinal/code/agent_ppo/workflow/train_workflow.py)
+
+实现内容：
+
+- 新增 `PerfWindow`
+- 对以下路径增加耗时累计：
+  - `load_model`
+  - `observation_process`
+  - `predict`
+  - `sample_process`
+  - `send_sample_data`
+- 对以下计数增加窗口统计：
+  - `samples_built`
+  - `samples_sent`
+  - `episodes_yielded`
+
+说明：
+
+- 当前这些窗口统计已经写入业务归档链路
+- 由于 archive agent 与宿主目录同步有时间差，短时间内不一定立刻在宿主 `train/archive` 下可见
+
+#### 13.1.3 训练快照相关参数改为环境变量可覆盖
+
+修改位置：
+
+- [conf.py](/home/user/TcKaiwuFinal/code/agent_ppo/conf/conf.py)
+- [train_workflow.py](/home/user/TcKaiwuFinal/code/agent_ppo/workflow/train_workflow.py)
+
+已支持的运行时覆盖项：
+
+- `KAIWU_SAVE_MODEL_INTERVAL_EPISODES`
+- `KAIWU_RESUME_EPISODE_SNAPSHOT_INTERVAL`
+- `KAIWU_RESUME_LATEST_SYNC_INTERVAL_EPISODES`
+- `KAIWU_RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS`
+- `KAIWU_PERF_STAT_WINDOW_SECONDS`
+
+目的：
+
+- 后续做吞吐实验时，不必每次改业务源码
+- 可以直接通过环境变量快速调整试验参数
+
+#### 13.1.4 为新增逻辑补充轻量单测
+
+新增文件：
+
+- [test_runtime_optimizations.py](/home/user/TcKaiwuFinal/code/tests/test_runtime_optimizations.py)
+
+已覆盖内容：
+
+- `load_model` 缓存跳过逻辑
+- `Algorithm._unpack_batch_tensor()` 的字段切片正确性
+- `PerfWindow` 统计与 flush 行为
+
+执行结果：
+
+- 容器内 `unittest` 通过，`3/3 OK`
+
+### 13.2 本次实施后的验证结果
+
+实施后已重启 `learner` 和 `aisrv`，训练恢复正常，关键结果如下：
+
+- learner 正常训练
+- AISRV 正常 rollout
+- checkpoint 持续增长：
+  - `model.ckpt-100.pkl`
+  - `model.ckpt-200.pkl`
+  - `model.ckpt-300.pkl`
+  - `model.ckpt-400.pkl`
+- AISRV `training_metrics` 持续出数
+- GPU0 继续被实际使用
+
+### 13.3 新的关键观察
+
+本次实施后，learner 日志出现了一个重要现象：
+
+- `12:47:32` 窗口：
+  - `train once cost time = 706.19 ms`
+  - `data_fetch = 681.10 ms`
+  - `real_train = 25.02 ms`
+- `12:48:32` 窗口：
+  - `train once cost time = 47.63 ms`
+  - `data_fetch = 23.39 ms`
+  - `real_train = 24.21 ms`
+- `12:49:33` 窗口：
+  - `train once cost time = 815.37 ms`
+  - `data_fetch = 789.67 ms`
+  - `real_train = 25.60 ms`
+
+这说明：
+
+- 业务侧轻量优化已经能在部分窗口显著减少等待
+- `real_train` 仍稳定维持在 `25ms` 左右
+- 但 `data_fetch` 波动仍然很大
+- replay / reverb 数据供给仍然是主要不稳定因素
+
+也就是说：
+
+- 当前第一阶段优化有效
+- 但它只能降低一部分上层无效开销
+- 还不能根治 replay 数据链路的抖动
+
+### 13.4 当前结论更新
+
+截至本次实施后，结论更新为：
+
+1. 业务层“同模型重复加载”确实是可消除开销，已做掉。
+2. learner 真正训练算子开销已稳定压缩到很低，仍不是主瓶颈。
+3. 当前剩余的主要问题是：
+   - replay buffer 供给波动
+   - reverb dataset 取样链路不稳定
+   - `data_fetch` 在不同窗口中出现明显抖动
+4. 下一阶段应优先推进：
+   - `train_batch_size` 对照实验
+   - replay / reverb 框架层热路径改造
+
+### 13.5 下一步建议
+
+建议严格按以下顺序继续：
+
+1. 先基于当前代码做 `train_batch_size = 2048 / 1536 / 1024` 的对照实验。
+2. 若 `data_fetch` 仍长期主导，则进入框架层改造：
+   - `reverb_dataset_v1.py`
+   - `remote_agent.py`
+   - `replay_buffer_wrapper.py`
+3. 在 replay 热路径未稳定前，不建议直接推进多 GPU 或多 learner。
+
+---
+
+## 14. 2026-04-10 第二阶段：基础设施修复 + 环境缩放实验
+
+### 14.1 基础设施修复
+
+本轮发现实验基础设施本身存在两个阻断性 bug，训练根本没在跑：
+
+#### 14.1.1 `replace_toml_key()` 热补丁失效导致 TOMLDecodeError
+
+**文件**：`train/.docker-compose.yaml`
+
+**现象**：learner 容器每次启动即崩溃，报 `dynaconf.vendor.tomllib.TOMLDecodeError: Cannot overwrite a value (at line 59, column 39)`。
+
+**根因**：`replace_toml_key()` 用正则 `^key\s*=.*$` (MULTILINE) 尝试删除 TOML 中的同名 key，但未能匹配原始行。函数只做了追加，导致 `pytorch_read_data_from_reverb_type` 和 `replay_buffer_cache_multiplier` 各出现两次。
+
+**修复**：改为逐行 `split("=", 1)[0].strip() != key` 过滤所有同名行，再末尾追加唯一新值。
+
+#### 14.1.2 实验脚本日志采集路径错误
+
+**文件**：`train/run_replay_stability_experiments.py`
+
+**现象**：`collect_rows()` 从宿主机 `train/log/learner/` 目录读日志（空目录），导致实验结果 `row_count=0`。
+
+**根因**：容器内日志写在 `/data/projects/robot_vacuum/log/learner.log`（KaiwuDRL 框架路径），不在 Docker 挂载的 `/workspace/log/` 下。
+
+**修复**：改为 `docker exec kaiwu-train-learner-1 cat /data/projects/robot_vacuum/log/learner.log` 读取，同时适配纯文本格式（原代码假设 JSON lines）。
+
+### 14.2 环境数量递增缩放实验
+
+**脚本**：`train/run_env_scaling_experiment.py`（新建）
+
+**固定参数**：reverb_type=2, batch_size=2048, cache_multiplier=4, rate_limiter=MinSize
+
+**实验矩阵**：4 / 6 / 8 / 12 环境数，每组 180 秒
+
+**结果**：
+
+| 环境数 | AISRV | step/min | mean_fetch | mean_train | mean_ratio | buffer |
+|--------|-------|----------|-----------|-----------|-----------|--------|
+| 4 | 1 | N/A (1行) | 747ms | 23ms | 9.9 | 2048/8192 |
+| 6 | 2 | 118 | 838ms | 22ms | 8.3 | 2048/8192 |
+| 8 | 2 | 130 | 869ms | 24ms | 8.2 | 2048/8192 |
+| 12 | 3 | 120 | 823ms | 26ms | 5.7 | 2048/8192 |
+
+完整数据：`train/context/ENV_SCALING_RESULTS.json`
+
+### 14.3 核心结论
+
+1. **data_fetch 不随环境数下降**：4→12 环境，fetch 始终在 700-1000ms 波动。
+2. **step_per_min 基本持平**：118~130，增加环境数无显著吞吐增益。
+3. **buffer 只用了 25%** (2048/8192)：空间充裕，不是瓶颈。
+4. **real_train 稳定 22-27ms**：确认业务层训练不是瓶颈。
+5. **瓶颈在 reverb 读路径本身**，不在数据生产端。
+
+### 14.4 下一步建议
+
+1. 不要再靠加环境数优化吞吐，已证明无效。
+2. 优先排查 reverb dataset 读路径（`reverb_dataset_v1.py` 单线程预取、`remote_agent.py` 反序列化）。
+3. batch_size 对照实验（1024 vs 2048）仍值得做。
+4. 在 replay 读路径稳定前，不建议推进多 GPU / 多 learner。
+
+### 14.5 涉及文件
+
+- `train/run_env_scaling_experiment.py`（新建）
+- `train/run_replay_stability_experiments.py`（修复 collect_rows）
+- `train/.docker-compose.yaml`（修复 replace_toml_key）
+- `train/context/ENV_SCALING_RESULTS.json`
