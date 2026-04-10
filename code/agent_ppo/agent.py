@@ -204,18 +204,14 @@ class Agent(BaseAgent):
 
         mode = getattr(self.preprocessor, "current_mode", Config.MODE_NUM)
         if mode == self.preprocessor.MODE_CHARGE:
-            bias_scale = 1.15
+            bias_scale = 0.6
         elif mode == self.preprocessor.MODE_EVADE:
-            bias_scale = 1.35
+            bias_scale = 0.8
         else:
-            bias_scale = 0.75
+            bias_scale = 0.4
 
-        invalid_pressure = float(np.clip(getattr(self.preprocessor, "invalid_move_ema", 0.0), 0.0, 1.0))
-        revisit_pressure = float(
-            np.clip((getattr(self.preprocessor, "cur_visit_count", 1) - 1) / 6.0, 0.0, 1.0)
-        )
-        adaptive_scale = bias_scale + 0.4 * invalid_pressure + 0.2 * revisit_pressure
-        return logits + adaptive_scale * biases
+        # 关闭bias：纯reward驱动，避免推向墙角
+        return logits
 
     def _legal_soft_max(self, logits, legal_action):
         """Softmax with legal action masking.

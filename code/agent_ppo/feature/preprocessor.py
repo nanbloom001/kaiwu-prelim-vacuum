@@ -482,7 +482,7 @@ class Preprocessor:
         return scores
 
     def get_action_biases(self):
-        dirty_scores = self._directional_patch_scores(self.dirty_memory, radii=(4, 8, 12), weights=(1.0, 0.7, 0.4))
+        dirty_scores = self._directional_patch_scores(self.dirty_memory, radii=(3, 6, 10, 15), weights=(1.5, 1.2, 0.8, 0.4))
         frontier_scores = self._directional_patch_scores(
             1.0 - self.explored_map,
             radii=(5, 10, 15),
@@ -494,11 +494,11 @@ class Preprocessor:
             weights=(0.9, 0.5, 0.2),
         )
 
-        biases = 0.8 * dirty_scores + 0.35 * frontier_scores - 0.3 * visit_scores
+        biases = 1.0 * dirty_scores + 0.4 * frontier_scores - 0.4 * visit_scores
 
         local_dirty_vec = self._local_dirty_vector()
         if local_dirty_vec is not None:
-            biases += 1.6 * self._alignment_scores(*local_dirty_vec)
+            biases += 1.5 * self._alignment_scores(*local_dirty_vec)
 
         charge_align = self._alignment_scores(self.nearest_charger_dx, self.nearest_charger_dz)
         npc_align = self._alignment_scores(self.nearest_npc_dx, self.nearest_npc_dz)
@@ -508,13 +508,14 @@ class Preprocessor:
         charge_pressure = float(np.clip((10.0 - self.charger_slack) / 10.0, 0.0, 1.0))
 
         if self.current_mode == self.MODE_CHARGE:
-            biases = 2.2 * charge_align - 0.5 * visit_scores
+            dirt_in_path = self._directional_patch_scores(self.dirty_memory, radii=(3, 6), weights=(1.0, 0.6))
+            biases = 1.5 * charge_align + 0.8 * dirt_in_path - 0.4 * visit_scores
         elif self.current_mode == self.MODE_EVADE:
-            biases = 2.4 * evade_align + 0.4 * charge_pressure * charge_align - 0.2 * visit_scores
+            biases = 2.0 * evade_align + 0.4 * charge_pressure * charge_align - 0.2 * visit_scores
         else:
             biases += 0.45 * charge_pressure * charge_align
 
-        biases -= 1.2 * npc_pressure * np.maximum(npc_align, 0.0)
+        biases -= 1.6 * npc_pressure * np.maximum(npc_align, 0.0)
         return biases.astype(np.float32)
 
     def feature_process(self, env_obs, last_action):
@@ -531,7 +532,7 @@ class Preprocessor:
         return feature, legal_action, reward
 
     def reward_process(self):
-        cleaning_reward = 1.0 * float(self.cleaned_this_step)
+        cleaning_reward = 2.0 * float(self.cleaned_this_step)
         explore_reward = 0.02 * float(min(self.new_explored_cells, 4))
 
         charge_pressure = float(np.clip((8.0 - self.charger_slack) / 8.0, 0.0, 1.0))
@@ -544,9 +545,9 @@ class Preprocessor:
 
         npc_risk = float(np.clip((4.0 - self.nearest_npc_dist) / 4.0, 0.0, 1.0))
         npc_penalty = -0.04 * npc_risk
-        revisit_penalty = -0.01 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
-        stuck_penalty = -0.05 * self.last_move_invalid
-        idle_penalty = -0.01 * float(np.clip(self.no_progress_steps / 30.0, 0.0, 1.0))
+        revisit_penalty = -0.06 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
+        stuck_penalty = -0.2 * self.last_move_invalid
+        idle_penalty = -0.03 * float(np.clip(self.no_progress_steps / 30.0, 0.0, 1.0))
 
         reward = (
             cleaning_reward
@@ -557,4 +558,4 @@ class Preprocessor:
             + stuck_penalty
             + idle_penalty
         )
-        return float(np.clip(reward, -4.0, 4.0))
+        return float(np.clip(reward, -4.0, 6.0))
