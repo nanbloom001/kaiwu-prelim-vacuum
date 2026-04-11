@@ -38,7 +38,7 @@ class Config:
     LAMDA = 0.95
 
     INIT_LEARNING_RATE_START = 0.0001
-    BETA_START = 0.005
+    BETA_START = 0.007
     CLIP_PARAM = 0.2
     VF_COEF = 0.5
 
