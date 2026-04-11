@@ -583,6 +583,16 @@ class Preprocessor:
         )
         charger_reward = 0.10 * charge_pressure * float(delta_charger_slack)
 
+        # Charger path exploration: reward exploring toward known charger
+        # Encourages lighting up the path to charger when area is unexplored
+        charger_path_explore = 0.0
+        if self.nearest_charger_dist < 200.0 and self.new_explored_cells > 0:
+            # delta_dist < 0 means we moved closer to charger
+            delta_dist = self.nearest_charger_dist - self.last_nearest_charger_dist
+            if delta_dist < 0:
+                # Reward proportional to how much closer we got + explored new cells
+                charger_path_explore = 0.15 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
+
         # Charging direct bonus
         charge_bonus = 0.5 * self.just_charged
 
@@ -610,6 +620,7 @@ class Preprocessor:
             + explore_reward
             + frontier_reward
             + charger_reward
+            + charger_path_explore
             + charge_bonus
             + npc_penalty
             + revisit_penalty
