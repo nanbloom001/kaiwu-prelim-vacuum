@@ -232,3 +232,24 @@
 
 **决策**: 不做调整. 分数趋势+29%, value_loss下降. Entropy单次破0.25后恢复, 5次均值0.281. 放宽触发条件: 若5次rolling平均<0.25则提高BETA至0.007. 继续监控.
 
+### 06:42 — BETA调整 0.005→0.007 (等待重启)
+
+**触发条件**: entropy降至0.215, 5次rolling平均=0.253逼近阈值
+**最新entropy趋势** (每~1min):
+0.2368 → 0.2958 → 0.2696 → 0.277 → 0.23 → 0.2547 → 0.2267 → 0.3559 → 0.2143 → **0.215**
+
+**修改**:
+- conf.py: BETA_START 0.005→0.007
+- Git: 80c7300(checkpoint) → 769987a(BETA+0.002)
+
+**状态**: ⚠️ 代码已修改并commit, 但容器重启被权限系统阻止. 需要用户手动重启learner:
+```bash
+docker restart kaiwu-train-learner-1
+```
+或完整重启:
+```bash
+cd D:/TcKaiwuFinal/train && docker compose -p kaiwu-train -f .docker-compose.yaml --profile distributed down && docker compose -p kaiwu-train -f .docker-compose.yaml --profile distributed up -d
+```
+
+训练在BETA=0.005下继续运行, 等待重启生效.
+
