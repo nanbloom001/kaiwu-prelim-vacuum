@@ -18,6 +18,14 @@ code/*.meta.json
 !code/model.ckpt-resume.meta.json
 code/resume_snapshots/
 code/manual_checkpoints/
+code/session_best/
+code/*.tmp
+
+# 打包临时/提交目录
+train/_package_tmp/
+train/_package_submit/
+train/_package_test/
+train/tb_logs/
 
 license.dat
 dev/

@@ -14,7 +14,7 @@ class Config:
     LOCAL_VIEW_CHANNELS = 3
     GLOBAL_MEMORY_SIZE = 8
     GLOBAL_MEMORY_CHANNELS = 3
-    SCALAR_DIM = 48
+    SCALAR_DIM = 74  # 39 raw + 26 extra (4 NPC×3 + 4 charger×3 - NPC#1 - charger#1 already in raw + 8 dir_dirty) + 9 one-hot
 
     FEATURES = [
         LOCAL_VIEW_CHANNELS * LOCAL_VIEW_SIZE * LOCAL_VIEW_SIZE,
@@ -49,7 +49,7 @@ class Config:
     GRAD_CLIP_RANGE = 0.5
 
     # Training snapshot / resume strategy
-    SAVE_MODEL_INTERVAL_EPISODES = 100
+    SAVE_MODEL_INTERVAL_EPISODES = 50
     RESUME_LATEST_SYNC_INTERVAL_EPISODES = 20
     RESUME_EPISODE_SNAPSHOT_INTERVAL = 50
     RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS = 15 * 60

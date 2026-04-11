@@ -88,14 +88,27 @@ class Agent(BaseAgent):
     def predict(self, list_obs_data):
         """Stochastic inference for training (exploration).
 
-        训练时推理（随机采样动作）。
+        Training inference with expert override (Layer 2) and directional bias (Layer 3).
         """
         obs_data = list_obs_data[0]
         feature = obs_data.feature
         legal_action = obs_data.legal_action
 
         logits, value = self._run_model(feature)
-        logits = self._blend_policy_logits(logits)
+
+        # Layer 2: Expert strategic override (charging)
+        expert = self.preprocessor.expert
+        should_override, expert_action = expert.get_override(self.preprocessor, legal_action)
+        if should_override:
+            prob = self._uniform_over_legal(legal_action)
+            return [
+                ActData(
+                    action=[expert_action],
+                    d_action=[expert_action],
+                    prob=prob,
+                    value=value,
+                )
+            ]
 
         legal_arr = np.array(legal_action, dtype=np.float32)
         prob = self._legal_soft_max(logits, legal_arr)
@@ -197,21 +210,10 @@ class Agent(BaseAgent):
         value = rst[1].cpu().numpy()[0]
         return logits, value
 
-    def _blend_policy_logits(self, logits):
-        biases = self.preprocessor.get_action_biases()
-        if biases is None:
-            return logits
-
-        mode = getattr(self.preprocessor, "current_mode", Config.MODE_NUM)
-        if mode == self.preprocessor.MODE_CHARGE:
-            bias_scale = 0.6
-        elif mode == self.preprocessor.MODE_EVADE:
-            bias_scale = 0.8
-        else:
-            bias_scale = 0.4
-
-        # 关闭bias：纯reward驱动，避免推向墙角
-        return logits
+    def _uniform_over_legal(self, legal_action):
+        """Uniform distribution over legal actions (for stable PPO ratio)."""
+        n = max(sum(legal_action), 1)
+        return [1.0 / n if x else 0.0 for x in legal_action]
 
     def _legal_soft_max(self, logits, legal_action):
         """Softmax with legal action masking.

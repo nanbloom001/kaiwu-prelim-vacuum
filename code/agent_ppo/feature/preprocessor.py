@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from agent_ppo.conf.conf import Config
+from agent_ppo.feature.expert import ExpertPolicy
 
 
 def _norm(value, v_max, v_min=0.0):
@@ -50,6 +51,7 @@ class Preprocessor:
     MODE_EVADE = 2
 
     def __init__(self):
+        self.expert = ExpertPolicy()
         self.reset()
 
     def reset(self):
@@ -94,6 +96,10 @@ class Preprocessor:
         self.nearest_npc_dist = 200.0
         self.nearest_npc_dx = 0.0
         self.nearest_npc_dz = 0.0
+
+        self.all_npc_info = []
+        self.all_charger_info = []
+        self.directional_dirty = np.zeros(self.ACTION_DIM, dtype=np.float32)
 
         self.local_dirt_density = 0.0
         self.local_obstacle_density = 0.0
@@ -212,6 +218,34 @@ class Preprocessor:
             self.nearest_npc_dx,
             self.nearest_npc_dz,
         ) = self._nearest_npc_metrics()
+
+        # All NPC info: (dist, dx, dz) sorted by distance
+        hx, hz = self.cur_pos
+        self.all_npc_info = []
+        for npc in self._npcs:
+            pos = npc.get("pos") or {}
+            nx, nz = int(pos.get("x", 0)), int(pos.get("z", 0))
+            dx, dz = nx - hx, nz - hz
+            dist = float(max(abs(dx), abs(dz)))
+            self.all_npc_info.append((dist, float(dx), float(dz)))
+        self.all_npc_info.sort(key=lambda x: x[0])
+
+        # All charger info: (dist, dx, dz) sorted by distance
+        self.all_charger_info = []
+        for organ in self._organs:
+            if int(organ.get("sub_type", 1)) != 1:
+                continue
+            pos = organ.get("pos") or {}
+            cx, cz = int(pos.get("x", 0)), int(pos.get("z", 0))
+            half_w = max(int(organ.get("w", 3)) // 2, 0)
+            half_h = max(int(organ.get("h", 3)) // 2, 0)
+            dist_x = max(abs(hx - cx) - half_w, 0)
+            dist_z = max(abs(hz - cz) - half_h, 0)
+            dist = float(max(dist_x, dist_z))
+            self.all_charger_info.append((dist, float(cx - hx), float(cz - hz)))
+        self.all_charger_info.sort(key=lambda x: x[0])
+
+        self.directional_dirty = self._compute_directional_dirty()
 
         self.local_dirt_density = float(np.mean(self._view_map == 2))
         self.local_obstacle_density = float(np.mean(self._view_map == 0))
@@ -428,7 +462,44 @@ class Preprocessor:
             dtype=np.float32,
         )
 
-        return np.concatenate([scalar, self._last_action_one_hot(last_action)], axis=0)
+        # All 4 NPC slots (padding missing with far-away sentinel)
+        PAD = (200.0, 0.0, 0.0)
+        npc1 = self.all_npc_info[0] if len(self.all_npc_info) > 0 else PAD
+        npc2 = self.all_npc_info[1] if len(self.all_npc_info) > 1 else PAD
+        npc3 = self.all_npc_info[2] if len(self.all_npc_info) > 2 else PAD
+        npc4 = self.all_npc_info[3] if len(self.all_npc_info) > 3 else PAD
+        # All 4 charger slots
+        ch1 = self.all_charger_info[0] if len(self.all_charger_info) > 0 else PAD
+        ch2 = self.all_charger_info[1] if len(self.all_charger_info) > 1 else PAD
+        ch3 = self.all_charger_info[2] if len(self.all_charger_info) > 2 else PAD
+        ch4 = self.all_charger_info[3] if len(self.all_charger_info) > 3 else PAD
+
+        extra = np.array(
+            [
+                _norm(npc2[0], self.GRID_SIZE),
+                _clip_signed(npc2[1], self.GRID_SIZE),
+                _clip_signed(npc2[2], self.GRID_SIZE),
+                _norm(npc3[0], self.GRID_SIZE),
+                _clip_signed(npc3[1], self.GRID_SIZE),
+                _clip_signed(npc3[2], self.GRID_SIZE),
+                _norm(npc4[0], self.GRID_SIZE),
+                _clip_signed(npc4[1], self.GRID_SIZE),
+                _clip_signed(npc4[2], self.GRID_SIZE),
+                _norm(ch2[0], self.GRID_SIZE),
+                _clip_signed(ch2[1], self.GRID_SIZE),
+                _clip_signed(ch2[2], self.GRID_SIZE),
+                _norm(ch3[0], self.GRID_SIZE),
+                _clip_signed(ch3[1], self.GRID_SIZE),
+                _clip_signed(ch3[2], self.GRID_SIZE),
+                _norm(ch4[0], self.GRID_SIZE),
+                _clip_signed(ch4[1], self.GRID_SIZE),
+                _clip_signed(ch4[2], self.GRID_SIZE),
+                *self.directional_dirty,
+            ],
+            dtype=np.float32,
+        )
+
+        return np.concatenate([scalar, extra, self._last_action_one_hot(last_action)], axis=0)
 
     def get_legal_action(self):
         merged = [int(a and b) for a, b in zip(self._legal_act, self._actual_legal_act)]
@@ -468,6 +539,23 @@ class Preprocessor:
         if patch.size == 0:
             return 0.0
         return float(np.mean(patch))
+
+    def _compute_directional_dirty(self):
+        """Compute directional dirty density for each of 8 action directions."""
+        hx, hz = self.cur_pos
+        DIRS = [(-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]
+        result = np.zeros(self.ACTION_DIM, dtype=np.float32)
+        for i, (ddx, ddz) in enumerate(DIRS):
+            total = 0.0
+            count = 0
+            for r in range(1, 6):
+                gx = hx + ddx * r
+                gz = hz + ddz * r
+                if 0 <= gx < self.GRID_SIZE and 0 <= gz < self.GRID_SIZE:
+                    total += float(self.dirty_memory[gz, gx])
+                    count += 1
+            result[i] = total / max(count, 1)
+        return result
 
     def _directional_patch_scores(self, grid, radii, weights, patch_radius=1):
         hx, hz = self.cur_pos

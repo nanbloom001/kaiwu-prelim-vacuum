@@ -230,6 +230,11 @@ class EpisodeRunner:
         self.is_new_best = False
         self.code_path = resolve_shared_code_dir()
         self.code_dir = str(self.code_path)
+        self.session_id = time.strftime("%Y%m%d-%H%M%S")
+        self.session_dir = self.code_path / "session_best" / self.session_id
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.best_score_file = self.session_dir / "best_score.json"
+        self.logger.info(f"[SESSION] New training session: {self.session_id}")
         self.resume_snapshot_dir = self.code_path / "resume_snapshots"
         self.resume_snapshot_dir.mkdir(parents=True, exist_ok=True)
         self.resume_latest_path = self.code_path / "model.ckpt-resume.pkl"
@@ -248,12 +253,45 @@ class EpisodeRunner:
         self.keep_time_snapshots = Config.KEEP_TIME_RESUME_SNAPSHOTS
         self.keep_best_snapshots = Config.KEEP_BEST_RESUME_SNAPSHOTS
 
+    def _persist_best_score(self):
+        data = {
+            "best_robust_score": self.best_robust_score,
+            "best_avg_score": self.best_avg_score,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "episode_cnt": self.episode_cnt,
+        }
+        tmp = self.best_score_file.parent / f".{self.best_score_file.name}.{os.getpid()}.{time.time_ns()}.tmp"
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=True, indent=2)
+        os.replace(tmp, self.best_score_file)
+
+    def _update_manifest(self):
+        manifest_path = self.code_path / "session_best" / "manifest.json"
+        entries = {}
+        if manifest_path.exists():
+            try:
+                entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                entries = {}
+        entries[self.session_id] = {
+            "best_robust_score": round(self.best_robust_score, 4),
+            "best_avg_score": round(self.best_avg_score, 4),
+            "episode_cnt": self.episode_cnt,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        tmp = manifest_path.parent / f".manifest.{os.getpid()}.{time.time_ns()}.tmp"
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=True, indent=2)
+        os.replace(tmp, manifest_path)
+
     def _save_best_model(self, clean_score):
-        best_path = os.path.join(self.code_dir, "best_model.pkl")
+        best_path = self.session_dir / "best_model.pkl"
         state_dict = {k: v.clone().cpu() for k, v in self.agent.model.state_dict().items()}
         torch.save(state_dict, best_path)
+        self._persist_best_score()
+        self._update_manifest()
         self.logger.info(
-            f"[BEST] ep={self.episode_cnt} avg={self.best_avg_score:.2f} "
+            f"[BEST] session={self.session_id} ep={self.episode_cnt} avg={self.best_avg_score:.2f} "
             f"robust={self.best_robust_score:.2f} score={clean_score:.1f} saved to {best_path}"
         )
 
@@ -301,14 +339,28 @@ class EpisodeRunner:
         )
 
         if with_named_snapshot:
+            if trigger == "best":
+                snapshot_name = f"best-ep{self.episode_cnt:06d}-score{int(round(clean_score)):05d}.pkl"
+                snapshot_path = self.session_dir / snapshot_name
+                self._write_state_dict(snapshot_path, state_dict)
+                self.archive.log_event(
+                    "resume_snapshot_saved",
+                    {
+                        "trigger": trigger,
+                        "episode_cnt": self.episode_cnt,
+                        "clean_score": round(float(clean_score), 4),
+                        "path": str(snapshot_path),
+                    },
+                )
+                self.logger.info(
+                    f"[SNAPSHOT] trigger={trigger} ep={self.episode_cnt} "
+                    f"score={clean_score:.1f} path={snapshot_path}"
+                )
+                return
             if trigger == "episode":
                 snapshot_name = f"resume-episode-ep{self.episode_cnt:06d}.pkl"
                 keep_count = self.keep_episode_snapshots
                 prune_prefix = "resume-episode"
-            elif trigger == "best":
-                snapshot_name = f"resume-best-ep{self.episode_cnt:06d}-score{int(round(clean_score)):05d}.pkl"
-                keep_count = self.keep_best_snapshots
-                prune_prefix = "resume-best"
             else:
                 snapshot_name = f"resume-time-{time.strftime('%Y%m%d-%H%M%S')}.pkl"
                 keep_count = self.keep_time_snapshots
