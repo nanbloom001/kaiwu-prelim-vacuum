@@ -21,7 +21,7 @@ class ExpertPolicy:
     )
 
     CHARGE_DIST_MULT = 2.0
-    CHARGE_SAFETY_MARGIN = 40
+    CHARGE_SAFETY_MARGIN = 50
 
     # Cost-map parameters
     _INF_COST = 1e6
@@ -89,12 +89,43 @@ class ExpertPolicy:
         self.update_chargers(prep)
 
         threshold = prep.nearest_charger_dist * self.CHARGE_DIST_MULT + self.CHARGE_SAFETY_MARGIN
+
+        # Activate earlier when path to charger is mostly unexplored
+        if self._charger_list and self._path_unexplored_ratio(prep) > 0.3:
+            threshold = int(threshold * 1.5) + 30
+
         if prep.battery <= threshold:
             act = self._plan_to_charger(prep)
             if act is not None and legal_action[act]:
                 return True, act
 
         return False, None
+
+    def _path_unexplored_ratio(self, prep):
+        """Ratio of unexplored cells in the corridor to the nearest charger."""
+        if not self._charger_list:
+            return 0.0
+        hx, hz = prep.cur_pos
+        best = min(self._charger_list,
+                   key=lambda c: max(abs(hx - c[0]) - c[2], abs(hz - c[1]) - c[3]))
+        cx, cz = best[0], best[1]
+        steps = max(abs(cx - hx), abs(cz - hz))
+        if steps == 0:
+            return 0.0
+
+        unexplored = 0
+        total = 0
+        for t in range(1, steps):
+            x = int(hx + (cx - hx) * t / steps)
+            z = int(hz + (cz - hz) * t / steps)
+            for ox in range(-2, 3):
+                for oz in range(-2, 3):
+                    sx, sz = x + ox, z + oz
+                    if 0 <= sx < self.GRID and 0 <= sz < self.GRID:
+                        total += 1
+                        if prep.explored_map[sx, sz] < 0.5:
+                            unexplored += 1
+        return unexplored / max(total, 1)
 
     # ------------------------------------------------------------------
     # Cost-map construction

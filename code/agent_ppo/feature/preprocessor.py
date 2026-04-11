@@ -559,7 +559,7 @@ class Preprocessor:
 
     def reward_process(self):
         # Primary cleaning reward
-        cleaning_reward = 2.0 * float(self.cleaned_this_step)
+        cleaning_reward = 1.5 * float(self.cleaned_this_step)
 
         # Cleaning streak bonus
         streak_bonus = 0.15 * min(float(self.cleaned_this_step > 0), 1.0) * min(self.consecutive_clean_steps, 5)
@@ -591,7 +591,7 @@ class Preprocessor:
             delta_dist = self.nearest_charger_dist - self.last_nearest_charger_dist
             if delta_dist < 0:
                 # Reward proportional to how much closer we got + explored new cells
-                charger_path_explore = 0.15 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
+                charger_path_explore = 0.06 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
 
         # Charging direct bonus
         charge_bonus = 0.5 * self.just_charged
@@ -605,7 +605,7 @@ class Preprocessor:
         if is_on_frontier:
             revisit_penalty = -0.05 * float(np.clip(self.cur_visit_count - 1, 0.0, 2.0))
         else:
-            revisit_penalty = -0.20 * float(np.clip(self.cur_visit_count - 1, 0.0, 4.0))
+            revisit_penalty = -0.08 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
 
         # Stuck penalty: escalating with duration
         stuck_penalty = -0.3 * self.last_move_invalid - 0.15 * _norm(self.stuck_steps, 10)
@@ -627,4 +627,4 @@ class Preprocessor:
             + stuck_penalty
             + idle_penalty
         )
-        return float(np.clip(reward, -4.0, 6.0))
+        return float(np.clip(reward, -3.0, 4.0))
