@@ -100,21 +100,25 @@ class ExpertPolicy:
     # Cost-map construction
     # ------------------------------------------------------------------
 
+    _UNEXPLORED_COST = 3.0       # moderate cost for unexplored (passable but uncertain)
+
     def _build_cost_map(self, prep, npc_weight=1.0):
         """Build 128x128 weighted cost map.
 
         Cell costs:
-          - 1.0            : explored + passable
-          - _INF_COST      : unexplored or impassable (wall)
-          - 1.0 + danger   : passable cell near NPC (danger decays exponentially)
+          - 1.0               : explored + passable
+          - _UNEXPLORED_COST  : unexplored (passable but uncertain, allows charger routing)
+          - _INF_COST         : explored + impassable (known wall)
+          - 1.0 + danger      : passable cell near NPC (danger decays exponentially)
 
         npc_weight=0 produces a binary cost map (no NPC avoidance).
         """
         G = self.GRID
-        cost = np.ones((G, G), dtype=np.float32)
+        cost = np.full((G, G), self._UNEXPLORED_COST, dtype=np.float32)
 
-        impassable = (prep.explored_map < 0.5) | (prep.passable_map < 0.5)
-        cost[impassable] = self._INF_COST
+        explored = prep.explored_map >= 0.5
+        cost[explored & (prep.passable_map >= 0.5)] = 1.0
+        cost[explored & (prep.passable_map < 0.5)] = self._INF_COST
 
         if npc_weight > 0:
             for npc in prep._npcs:
