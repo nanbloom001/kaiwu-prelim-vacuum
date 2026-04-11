@@ -30,7 +30,7 @@ def _parse_time(s):
 
 
 def _parse_gameover_logs():
-    """Parse all GAMEOVER records from aisrv logs."""
+    """Parse all GAMEOVER records from aisrv logs, including map_id."""
     records = []
     for logf in AISRV_LOG_DIR.glob("aisrv_kaiwu_rl_helper_pid*_log_*.log"):
         with open(logf, "r", encoding="utf-8") as f:
@@ -41,14 +41,19 @@ def _parse_gameover_logs():
                     r'"time": "([^"]+)".*ep:(\d+) steps:(\d+) result:(\w+).*clean_score:([\d.]+)',
                     line,
                 )
-                if m:
-                    records.append({
-                        "time": m.group(1),
-                        "ep": int(m.group(2)),
-                        "steps": int(m.group(3)),
-                        "result": m.group(4),
-                        "clean_score": float(m.group(5)),
-                    })
+                if not m:
+                    continue
+                # Extract map_id from the new format: map:X
+                map_m = re.search(r'map:(\S+)', line)
+                map_id = map_m.group(1) if map_m else None
+                records.append({
+                    "time": m.group(1),
+                    "ep": int(m.group(2)),
+                    "steps": int(m.group(3)),
+                    "result": m.group(4),
+                    "clean_score": float(m.group(5)),
+                    "map_id": map_id,
+                })
     records.sort(key=lambda x: x["ep"])
     return records
 
@@ -94,7 +99,6 @@ def convert():
     writer = EventFileWriter(str(TB_DIR))
 
     # 1. Per-episode clean_score (full resolution)
-    scores = [r["clean_score"] for r in records]
     for r in records:
         wt = _parse_time(r["time"])
         writer.add_event(_make_scalar("clean_score", r["clean_score"], r["ep"], wt))
@@ -149,6 +153,63 @@ def convert():
         writer.add_event(_make_scalar("metrics/reward", m["reward"], step, wt))
         writer.add_event(_make_scalar("metrics/charge_count", m["charge_count"], step, wt))
         writer.add_event(_make_scalar("metrics/clean_score_avg", m["clean_score_avg"], step, wt))
+
+    # ---------------------------------------------------------------
+    # 8. Per-map metrics + cross-map variance (generalization tracking)
+    # ---------------------------------------------------------------
+    import numpy as np
+
+    has_map_data = any(r["map_id"] is not None for r in records)
+    if has_map_data:
+        # Group records by map_id
+        map_groups: dict[str, list] = {}
+        for r in records:
+            mid = r["map_id"]
+            if mid is None:
+                continue
+            map_groups.setdefault(mid, []).append(r)
+
+        # 8a. Per-map clean_score and rolling average
+        for mid, mrecs in sorted(map_groups.items()):
+            tag_prefix = f"map_{mid}"
+            for r in mrecs:
+                wt = _parse_time(r["time"])
+                writer.add_event(_make_scalar(f"{tag_prefix}/clean_score", r["clean_score"], r["ep"], wt))
+            # Rolling avg (window=10) per map
+            map_window = []
+            for r in mrecs:
+                map_window.append(r["clean_score"])
+                if len(map_window) > 10:
+                    map_window.pop(0)
+                wt = _parse_time(r["time"])
+                writer.add_event(
+                    _make_scalar(f"{tag_prefix}/rolling_avg_10", sum(map_window) / len(map_window), r["ep"], wt)
+                )
+
+        # 8b. Cross-map variance metrics (sliding window of 20 episodes)
+        # For each episode, compute variance of recent per-map averages
+        map_score_windows: dict[str, list[float]] = {}
+        for r in records:
+            mid = r["map_id"]
+            if mid is None:
+                continue
+            map_score_windows.setdefault(mid, []).append(r["clean_score"])
+            if len(map_score_windows[mid]) > 15:
+                map_score_windows[mid] = map_score_windows[mid][-15:]
+
+            # Only compute when we have >= 3 maps with data
+            map_avgs = {}
+            for m, scores in map_score_windows.items():
+                if len(scores) >= 3:
+                    map_avgs[m] = sum(scores) / len(scores)
+
+            if len(map_avgs) >= 3:
+                avg_vals = list(map_avgs.values())
+                wt = _parse_time(r["time"])
+                writer.add_event(_make_scalar("cross_map/variance", float(np.std(avg_vals)), r["ep"], wt))
+                writer.add_event(_make_scalar("cross_map/min_avg", min(avg_vals), r["ep"], wt))
+                writer.add_event(_make_scalar("cross_map/spread", max(avg_vals) - min(avg_vals), r["ep"], wt))
+                writer.add_event(_make_scalar("cross_map/mean_avg", sum(avg_vals) / len(avg_vals), r["ep"], wt))
 
     writer.close()
     print(f"TensorBoard: {len(records)} episodes, {len(metrics)} metrics -> {TB_DIR}")

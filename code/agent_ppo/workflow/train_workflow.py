@@ -228,6 +228,7 @@ class EpisodeRunner:
         self.best_robust_score = float("-inf")
         self.last_clean_score = 0.0
         self.is_new_best = False
+        self.per_map_scores: dict[str, list[float]] = {}
         self.code_path = resolve_shared_code_dir()
         self.code_dir = str(self.code_path)
         self.session_id = time.strftime("%Y%m%d-%H%M%S")
@@ -566,7 +567,7 @@ class EpisodeRunner:
             "collision": -4.0,
             "unknown": -3.0,
         }.get(fail_reason, -3.0)
-        efficiency_bonus = 0.4 * cleaning_ratio + 0.2 * min(clean_score / max(step, 1), 1.5)
+        efficiency_bonus = 0.6 * cleaning_ratio + 0.3 * min(clean_score / max(step, 1), 1.5)
         final_reward = outcome_bonus + efficiency_bonus
         result_str = "WIN" if fail_reason == "completed" else "FAIL"
 
@@ -588,19 +589,46 @@ class EpisodeRunner:
         self.rolling_charge_efficiency_total += charge_efficiency
         self.rolling_clean_per_step_total += clean_per_step
 
+        map_id = extra_info.get("map_id") or extra_info.get("map_code") or "?"
+        actual_robot_count = int(env_info.get("npc_count", sampled_env_conf.get("robot_count", 1)))
+        actual_charger_count = int(env_info.get("total_charger", sampled_env_conf.get("charger_count", 4)))
         self.logger.info(
             f"[GAMEOVER] ep:{self.episode_cnt} steps:{step} "
             f"result:{result_str} final_bonus:{final_reward:.2f} "
             f"total_reward:{total_reward:.3f} clean_score:{clean_score:.1f} "
             f"dirt_cleaned:{fm.dirt_cleaned}/{fm.total_dirt} "
             f"invalid_move_rate:{invalid_move_rate:.3f} "
-            f"profile:{sampled_meta['profile']}"
+            f"profile:{sampled_meta['profile']} "
+            f"map:{map_id} chargers:{actual_charger_count} robots:{actual_robot_count}"
         )
 
         self.score_window.append(clean_score)
         if len(self.score_window) > 30:
             self.score_window.pop(0)
         self.is_new_best = False
+
+        # Per-map score tracking for generalization monitoring
+        if map_id != "?":
+            self.per_map_scores.setdefault(str(map_id), []).append(clean_score)
+            if len(self.per_map_scores[str(map_id)]) > 30:
+                self.per_map_scores[str(map_id)] = self.per_map_scores[str(map_id)][-30:]
+
+        # Log cross-map variance every 10 episodes
+        if self.episode_cnt % 10 == 0 and len(self.per_map_scores) >= 3:
+            map_avgs = {}
+            for mid, scores in sorted(self.per_map_scores.items()):
+                if len(scores) >= 3:
+                    map_avgs[mid] = round(sum(scores[-10:]) / len(scores[-10:]), 1)
+            if len(map_avgs) >= 3:
+                avg_vals = list(map_avgs.values())
+                variance = float(np.std(avg_vals))
+                min_avg = min(avg_vals)
+                spread = max(avg_vals) - min_avg
+                self.logger.info(
+                    f"[MAP_STATS] maps:{map_avgs} "
+                    f"variance:{variance:.1f} min_avg:{min_avg:.1f} spread:{spread:.1f}"
+                )
+
         if len(self.score_window) >= 20:
             rolling_avg = sum(self.score_window) / len(self.score_window)
             robust_score = (
@@ -617,8 +645,6 @@ class EpisodeRunner:
                 self.is_new_best = True
 
         checkpoint_ref = getattr(self.agent, "current_model_ref", {}) or {}
-        actual_robot_count = int(env_info.get("npc_count", sampled_env_conf.get("robot_count", 1)))
-        actual_charger_count = int(env_info.get("total_charger", sampled_env_conf.get("charger_count", 4)))
         actual_battery_max = int(hero.get("battery_max", env_info.get("battery_max", sampled_env_conf.get("battery_max", 200))))
         actual_max_step = int(env_info.get("max_step", sampled_env_conf.get("max_step", step)))
         episode_payload = {
