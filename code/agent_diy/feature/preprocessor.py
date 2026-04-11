@@ -45,6 +45,7 @@ class Preprocessor:
         (0, 1),
         (1, 1),
     ]
+    GRID_X, GRID_Z = np.indices((Config.GRID_SIZE, Config.GRID_SIZE), dtype=np.float32)
 
     def __init__(self):
         self.reset()
@@ -95,6 +96,20 @@ class Preprocessor:
 
         self.pending_action = 0
         self.pending_prob = np.full(Config.ACTION_DIM, 1.0 / Config.ACTION_DIM, dtype=np.float32)
+        self.region_lock_kind = None
+        self.region_lock_center = None
+        self._unknown_neighbor_mask = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        self._frontier_mask = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        self._npc_zone_hard_block_map = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        self._npc_dynamic_hard_block_map = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        self._npc_penalty_map = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=np.float32)
+        self._plannable_unknown_map = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        self._plannable_known_map = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        self._dirty_integral = np.zeros((Config.GRID_SIZE + 1, Config.GRID_SIZE + 1), dtype=np.float32)
+        self._unknown_integral = np.zeros((Config.GRID_SIZE + 1, Config.GRID_SIZE + 1), dtype=np.float32)
+        self._clean_integral = np.zeros((Config.GRID_SIZE + 1, Config.GRID_SIZE + 1), dtype=np.float32)
+        self._visit_integral = np.zeros((Config.GRID_SIZE + 1, Config.GRID_SIZE + 1), dtype=np.float32)
+        self._transit_integral = np.zeros((Config.GRID_SIZE + 1, Config.GRID_SIZE + 1), dtype=np.float32)
 
     def feature_process(self, env_obs, last_action):
         self._parse_env_obs(env_obs, last_action)
@@ -223,6 +238,80 @@ class Preprocessor:
             if self.map_state[cx, cz] == self.CLEAN and (cx, cz) not in self._current_step_cleaned:
                 self.clean_pass_count[cx, cz] = min(32767, self.clean_pass_count[cx, cz] + 1)
 
+        self._refresh_spatial_caches()
+
+    def _build_integral_grid(self, grid):
+        padded = np.pad(grid.astype(np.float32, copy=False), ((1, 0), (1, 0)), mode="constant")
+        return padded.cumsum(axis=0).cumsum(axis=1)
+
+    def _window_sum(self, integral, x0, x1, z0, z1):
+        return float(integral[x1, z1] - integral[x0, z1] - integral[x1, z0] + integral[x0, z0])
+
+    def _stamp_chebyshev_disk(self, target, center, radius):
+        if radius < 0:
+            return
+        x, z = int(center[0]), int(center[1])
+        x0 = max(0, x - radius)
+        x1 = min(Config.GRID_SIZE, x + radius + 1)
+        z0 = max(0, z - radius)
+        z1 = min(Config.GRID_SIZE, z + radius + 1)
+        target[x0:x1, z0:z1] = True
+
+    def _refresh_spatial_caches(self):
+        dirty_mask = self.map_state == self.DIRTY
+        unknown_mask = self.map_state == self.UNKNOWN
+        clean_mask = self.map_state == self.CLEAN
+        self._plannable_unknown_map = self.map_state != self.OBSTACLE
+        self._plannable_known_map = clean_mask | dirty_mask
+
+        self._dirty_integral = self._build_integral_grid(dirty_mask)
+        self._unknown_integral = self._build_integral_grid(unknown_mask)
+        self._clean_integral = self._build_integral_grid(clean_mask)
+        self._visit_integral = self._build_integral_grid(self.visit_count)
+        self._transit_integral = self._build_integral_grid(self.clean_pass_count)
+
+        padded_unknown = np.pad(unknown_mask, 1, mode="constant", constant_values=False)
+        neighbor_mask = np.zeros_like(unknown_mask, dtype=bool)
+        for dx, dz in self.ACTION_DELTAS:
+            neighbor_mask |= padded_unknown[1 + dx : 1 + dx + Config.GRID_SIZE, 1 + dz : 1 + dz + Config.GRID_SIZE]
+        self._unknown_neighbor_mask = neighbor_mask
+        self._frontier_mask = self._plannable_known_map & self._unknown_neighbor_mask
+
+        zone_block = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        dynamic_block = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        penalty = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=np.float32)
+
+        grid_x = self.GRID_X
+        grid_z = self.GRID_Z
+        for center in self.npc_centers.values():
+            self._stamp_chebyshev_disk(zone_block, center, Config.NPC_CENTER_HARD_RADIUS)
+            dx = grid_x - float(center[0])
+            dz = grid_z - float(center[1])
+            cheb = np.maximum(np.abs(dx), np.abs(dz))
+            contrib = Config.NPC_FIELD_CENTER_SCALE / (dx * dx + dz * dz + (Config.NPC_FIELD_SOFTEN + 2.0))
+            penalty += np.where(cheb <= Config.NPC_CENTER_SOFT_RADIUS, contrib, 0.0).astype(np.float32)
+
+        for idx, npc_pos in self.npc_positions.items():
+            pred = self.npc_pred_positions.get(idx, npc_pos)
+            mid = ((npc_pos[0] + pred[0]) // 2, (npc_pos[1] + pred[1]) // 2)
+
+            self._stamp_chebyshev_disk(dynamic_block, npc_pos, Config.NPC_COLLISION_RADIUS + 1)
+            self._stamp_chebyshev_disk(dynamic_block, pred, Config.NPC_PREDICT_RADIUS + 1)
+            self._stamp_chebyshev_disk(dynamic_block, mid, 1)
+
+            for source, strength, soften in (
+                (npc_pos, Config.NPC_FIELD_NPC_SCALE, Config.NPC_FIELD_SOFTEN),
+                (pred, Config.NPC_FIELD_PRED_SCALE, Config.NPC_FIELD_SOFTEN),
+                (mid, Config.NPC_FIELD_MID_SCALE, Config.NPC_FIELD_SOFTEN + 0.5),
+            ):
+                dx = grid_x - float(source[0])
+                dz = grid_z - float(source[1])
+                penalty += (strength / (dx * dx + dz * dz + soften)).astype(np.float32)
+
+        self._npc_zone_hard_block_map = zone_block
+        self._npc_dynamic_hard_block_map = dynamic_block
+        self._npc_penalty_map = penalty
+
     def _update_stuck_state(self):
         if self.cur_pos != self.last_pos or self.last_action < 0:
             self.stuck_chain = 0
@@ -232,6 +321,7 @@ class Preprocessor:
         self.path = []
         self.goal = None
         self.goal_kind = None
+        self._clear_region_lock()
 
         dx, dz = self.ACTION_DELTAS[int(self.last_action)]
         next_pos = (self.cur_pos[0] + dx, self.cur_pos[1] + dz)
@@ -371,7 +461,8 @@ class Preprocessor:
         if not self._is_local_passable(dx, dz):
             return False
         if dx != 0 and dz != 0:
-            if not (self._is_local_passable(dx, 0) and self._is_local_passable(0, dz)):
+            # Environment diagonal rule: at least one side corridor must be passable.
+            if not (self._is_local_passable(dx, 0) or self._is_local_passable(0, dz)):
                 return False
         return True
 
@@ -399,20 +490,16 @@ class Preprocessor:
         return False
 
     def _npc_dynamic_hard_block(self, pos):
-        if self._would_hit_npc(pos):
+        x, z = int(pos[0]), int(pos[1])
+        if not self._in_bounds(x, z):
             return True
-        for idx, npc_pos in self.npc_positions.items():
-            pred = self.npc_pred_positions.get(idx, npc_pos)
-            if self._chebyshev(pos, npc_pos) <= Config.NPC_COLLISION_RADIUS + 1:
-                return True
-            if self._chebyshev(pos, pred) <= Config.NPC_PREDICT_RADIUS + 1:
-                return True
-        return False
+        return bool(self._npc_dynamic_hard_block_map[x, z])
 
     def _select_action(self, legal_action):
         self._trim_path_head()
         if self._need_charge():
             self.charge_mode = True
+            self._clear_region_lock()
         elif self.on_charger and self.battery >= int(self.battery_max * 0.98):
             self.charge_mode = False
 
@@ -472,6 +559,90 @@ class Preprocessor:
                 return True
         return False
 
+    def _clear_region_lock(self):
+        self.region_lock_kind = None
+        self.region_lock_center = None
+
+    def _region_radius(self, kind):
+        if kind == "dirty":
+            return Config.REGION_LOCK_DIRTY_RADIUS
+        if kind == "frontier":
+            return Config.REGION_LOCK_FRONTIER_RADIUS
+        return 0
+
+    def _window_bounds(self, pos, radius):
+        x, z = int(pos[0]), int(pos[1])
+        x0 = max(0, x - radius)
+        x1 = min(Config.GRID_SIZE, x + radius + 1)
+        z0 = max(0, z - radius)
+        z1 = min(Config.GRID_SIZE, z + radius + 1)
+        return x0, x1, z0, z1
+
+    def _region_mass(self, kind, center):
+        if center is None:
+            return 0.0
+
+        radius = self._region_radius(kind)
+        x0, x1, z0, z1 = self._window_bounds(center, radius)
+        window = self.map_state[x0:x1, z0:z1]
+        if window.size == 0:
+            return 0.0
+
+        dirty = float(np.sum(window == self.DIRTY))
+        unknown = float(np.sum(window == self.UNKNOWN))
+        if kind == "dirty":
+            return dirty + 0.12 * unknown
+        if kind == "frontier":
+            return 0.75 * unknown + 0.35 * dirty
+        return 0.0
+
+    def _region_min_mass(self, kind):
+        if kind == "dirty":
+            return Config.REGION_LOCK_DIRTY_MIN_MASS
+        if kind == "frontier":
+            return Config.REGION_LOCK_FRONTIER_MIN_MASS
+        return float("inf")
+
+    def _set_region_lock(self, kind, center, mass):
+        if kind not in {"dirty", "frontier"} or center is None:
+            return
+        if mass < self._region_min_mass(kind):
+            return
+        self.region_lock_kind = kind
+        self.region_lock_center = (int(center[0]), int(center[1]))
+
+    def _should_keep_region_lock(self):
+        if self.charge_mode or self.region_lock_center is None or self.region_lock_kind is None:
+            return False
+
+        dirty_mass = self._region_mass("dirty", self.region_lock_center)
+        frontier_mass = self._region_mass("frontier", self.region_lock_center)
+        return (
+            dirty_mass >= Config.REGION_LOCK_DIRTY_MIN_MASS
+            or frontier_mass >= Config.REGION_LOCK_FRONTIER_MIN_MASS
+        )
+
+    def _filter_candidates_by_region(self, candidates, kind, region_center, restrict_region):
+        if region_center is None:
+            return list(candidates)
+
+        radius = self._region_radius(kind)
+        filtered = [
+            (int(gx), int(gz))
+            for gx, gz in candidates
+            if self._chebyshev((int(gx), int(gz)), region_center) <= radius
+        ]
+        if filtered:
+            return filtered
+        if restrict_region:
+            return []
+        return list(candidates)
+
+    def _distance_to_region(self, pos, kind, center):
+        if center is None or kind not in {"dirty", "frontier"}:
+            return 0
+        return max(0, self._chebyshev(pos, center) - self._region_radius(kind))
+
     def _replan(self):
         dist, prev_x, prev_z = self._build_bfs_tree(allow_unknown=True)
         self._charger_dist_map = self._build_multi_source_dist(self._charger_cells(), allow_unknown=True)
@@ -481,10 +652,45 @@ class Preprocessor:
         if self.charge_mode:
             goal_kind, goal = self._pick_best_charger_goal(dist)
         else:
-            goal_kind, goal = self._pick_best_dirty_goal(dist, self._charger_dist_map)
+            if self._should_keep_region_lock():
+                region_center = self.region_lock_center
+                if self.region_lock_kind == "dirty":
+                    goal_kind, goal = self._pick_best_dirty_goal(
+                        dist,
+                        self._charger_dist_map,
+                        region_center=region_center,
+                        restrict_region=True,
+                    )
+                    if goal is None:
+                        goal_kind, goal = self._pick_best_frontier_goal(
+                            dist,
+                            self._charger_dist_map,
+                            region_center=region_center,
+                            restrict_region=True,
+                        )
+                else:
+                    goal_kind, goal = self._pick_best_frontier_goal(
+                        dist,
+                        self._charger_dist_map,
+                        region_center=region_center,
+                        restrict_region=True,
+                    )
+                    if goal is None:
+                        goal_kind, goal = self._pick_best_dirty_goal(
+                            dist,
+                            self._charger_dist_map,
+                            region_center=region_center,
+                            restrict_region=True,
+                        )
+            else:
+                self._clear_region_lock()
+
+            if goal is None:
+                goal_kind, goal = self._pick_best_dirty_goal(dist, self._charger_dist_map)
             if goal is None:
                 goal_kind, goal = self._pick_best_frontier_goal(dist, self._charger_dist_map)
             if goal is None and self.battery <= int(self.battery_max * 0.55):
+                self._clear_region_lock()
                 goal_kind, goal = self._pick_best_charger_goal(dist)
 
         self.goal_kind = goal_kind
@@ -504,6 +710,10 @@ class Preprocessor:
         dist = np.full((Config.GRID_SIZE, Config.GRID_SIZE), -1, dtype=np.int16)
         prev_x = np.full((Config.GRID_SIZE, Config.GRID_SIZE), -1, dtype=np.int16)
         prev_z = np.full((Config.GRID_SIZE, Config.GRID_SIZE), -1, dtype=np.int16)
+        plannable = self._plannable_unknown_map if allow_unknown else self._plannable_known_map
+        zone_block = self._npc_zone_hard_block_map
+        dynamic_block = self._npc_dynamic_hard_block_map
+        grid_size = Config.GRID_SIZE
 
         start_x, start_z = self.cur_pos
         queue = deque([(start_x, start_z)])
@@ -514,13 +724,15 @@ class Preprocessor:
             for dx, dz in self.ACTION_DELTAS:
                 nx = x + dx
                 nz = z + dz
-                if not self._in_bounds(nx, nz):
+                if nx < 0 or nx >= grid_size or nz < 0 or nz >= grid_size:
                     continue
                 if dist[nx, nz] != -1:
                     continue
-                if not self._is_global_move_passable((x, z), (nx, nz), allow_unknown=allow_unknown):
+                if not plannable[nx, nz]:
                     continue
-                if self._npc_zone_hard_block((nx, nz)) or self._npc_dynamic_hard_block((nx, nz)):
+                if dx != 0 and dz != 0 and not (plannable[x + dx, z] or plannable[x, z + dz]):
+                    continue
+                if zone_block[nx, nz] or dynamic_block[nx, nz]:
                     continue
 
                 dist[nx, nz] = dist[x, z] + 1
@@ -533,6 +745,10 @@ class Preprocessor:
     def _build_multi_source_dist(self, starts, allow_unknown):
         dist = np.full((Config.GRID_SIZE, Config.GRID_SIZE), -1, dtype=np.int16)
         queue = deque()
+        plannable = self._plannable_unknown_map if allow_unknown else self._plannable_known_map
+        zone_block = self._npc_zone_hard_block_map
+        dynamic_block = self._npc_dynamic_hard_block_map
+        grid_size = Config.GRID_SIZE
         for sx, sz in starts:
             if not self._in_bounds(sx, sz):
                 continue
@@ -546,13 +762,15 @@ class Preprocessor:
             for dx, dz in self.ACTION_DELTAS:
                 nx = x + dx
                 nz = z + dz
-                if not self._in_bounds(nx, nz):
+                if nx < 0 or nx >= grid_size or nz < 0 or nz >= grid_size:
                     continue
                 if dist[nx, nz] != -1:
                     continue
-                if not self._is_global_move_passable((x, z), (nx, nz), allow_unknown=allow_unknown):
+                if not plannable[nx, nz]:
                     continue
-                if self._npc_zone_hard_block((nx, nz)) or self._npc_dynamic_hard_block((nx, nz)):
+                if dx != 0 and dz != 0 and not (plannable[x + dx, z] or plannable[x, z + dz]):
+                    continue
+                if zone_block[nx, nz] or dynamic_block[nx, nz]:
                     continue
                 dist[nx, nz] = dist[x, z] + 1
                 queue.append((nx, nz))
@@ -561,7 +779,8 @@ class Preprocessor:
 
     def _is_global_move_passable(self, cur_pos, next_pos, allow_unknown):
         nx, nz = next_pos
-        if not self._is_global_cell_plannable(nx, nz, allow_unknown=allow_unknown):
+        plannable = self._plannable_unknown_map if allow_unknown else self._plannable_known_map
+        if not self._in_bounds(nx, nz) or not plannable[nx, nz]:
             return False
 
         dx = nx - cur_pos[0]
@@ -569,10 +788,7 @@ class Preprocessor:
         if dx != 0 and dz != 0:
             side_a = (cur_pos[0] + dx, cur_pos[1])
             side_b = (cur_pos[0], cur_pos[1] + dz)
-            if not (
-                self._is_global_cell_plannable(*side_a, allow_unknown=allow_unknown)
-                and self._is_global_cell_plannable(*side_b, allow_unknown=allow_unknown)
-            ):
+            if not (plannable[side_a[0], side_a[1]] or plannable[side_b[0], side_b[1]]):
                 return False
         return True
 
@@ -755,17 +971,20 @@ class Preprocessor:
             return 0.0
         return 0.06 * max(0, self._local_clean_density(pos, radius=2) - 6)
 
-    def _pick_best_dirty_goal(self, dist, charger_dist):
+    def _pick_best_dirty_goal(self, dist, charger_dist, region_center=None, restrict_region=False):
         dirty_cells = np.argwhere(self.map_state == self.DIRTY)
         if len(dirty_cells) == 0:
             return None, None
 
         candidates = self._cluster_cells(dirty_cells, Config.DIRTY_CLUSTER_RADIUS, self._dirty_density)
+        candidates = self._filter_candidates_by_region(candidates, "dirty", region_center, restrict_region)
         if not candidates:
             return None, None
 
         best_score = -1e9
         best_goal = None
+        best_region_anchor = None
+        best_region_mass = 0.0
         for gx, gz in candidates:
             d = int(dist[gx, gz])
             if d <= 0:
@@ -784,29 +1003,44 @@ class Preprocessor:
                 - 0.75 * self.clean_pass_count[gx, gz]
                 - 0.45 * self._npc_zone_penalty((gx, gz))
             )
+            region_anchor = region_center if region_center is not None else (gx, gz)
+            region_mass = self._region_mass("dirty", region_anchor)
+            score += Config.REGION_LOCK_VALUE_WEIGHT * min(region_mass, 18.0)
 
             if self.goal_kind == "dirty" and self.goal == (gx, gz):
                 score += 1.5
+            if (
+                self.region_lock_kind == "dirty"
+                and self.region_lock_center is not None
+                and self._chebyshev((gx, gz), self.region_lock_center) <= self._region_radius("dirty")
+            ):
+                score += Config.REGION_LOCK_STICKY_BONUS
 
             if score > best_score:
                 best_score = score
                 best_goal = (int(gx), int(gz))
+                best_region_anchor = region_anchor
+                best_region_mass = region_mass
 
         if best_goal is None:
             return None, None
+        self._set_region_lock("dirty", best_region_anchor, best_region_mass)
         return "dirty", best_goal
 
-    def _pick_best_frontier_goal(self, dist, charger_dist):
+    def _pick_best_frontier_goal(self, dist, charger_dist, region_center=None, restrict_region=False):
         frontier_cells = self._collect_frontiers()
         if not frontier_cells:
             return None, None
 
         candidates = self._cluster_cells(frontier_cells, Config.FRONTIER_CLUSTER_RADIUS, self._frontier_gain)
+        candidates = self._filter_candidates_by_region(candidates, "frontier", region_center, restrict_region)
         if not candidates:
             return None, None
 
         best_score = -1e9
         best_goal = None
+        best_region_anchor = None
+        best_region_mass = 0.0
         for gx, gz in candidates:
             d = int(dist[gx, gz])
             if d <= 0:
@@ -824,15 +1058,27 @@ class Preprocessor:
                 - 0.85 * self.clean_pass_count[gx, gz]
                 - 0.55 * self._npc_zone_penalty((gx, gz))
             )
+            region_anchor = region_center if region_center is not None else (gx, gz)
+            region_mass = self._region_mass("frontier", region_anchor)
+            score += Config.REGION_LOCK_VALUE_WEIGHT * min(region_mass, 22.0)
             if self.goal_kind == "frontier" and self.goal == (gx, gz):
                 score += 1.0
+            if (
+                self.region_lock_kind == "frontier"
+                and self.region_lock_center is not None
+                and self._chebyshev((gx, gz), self.region_lock_center) <= self._region_radius("frontier")
+            ):
+                score += Config.REGION_LOCK_STICKY_BONUS
 
             if score > best_score:
                 best_score = score
                 best_goal = (int(gx), int(gz))
+                best_region_anchor = region_anchor
+                best_region_mass = region_mass
 
         if best_goal is None:
             return None, None
+        self._set_region_lock("frontier", best_region_anchor, best_region_mass)
         return "frontier", best_goal
 
     def _pick_best_charger_goal(self, dist):
@@ -874,21 +1120,13 @@ class Preprocessor:
         return cells
 
     def _collect_frontiers(self):
-        frontier_cells = []
-        passable_coords = np.argwhere((self.map_state == self.CLEAN) | (self.map_state == self.DIRTY))
-        for gx, gz in passable_coords:
-            if self._has_unknown_neighbor((int(gx), int(gz))):
-                frontier_cells.append((int(gx), int(gz)))
-        return frontier_cells
+        return [tuple(map(int, pos)) for pos in np.argwhere(self._frontier_mask)]
 
     def _has_unknown_neighbor(self, pos):
         x, z = pos
-        for dx, dz in self.ACTION_DELTAS:
-            nx = x + dx
-            nz = z + dz
-            if self._in_bounds(nx, nz) and self.map_state[nx, nz] == self.UNKNOWN:
-                return True
-        return False
+        if not self._in_bounds(x, z):
+            return False
+        return bool(self._unknown_neighbor_mask[x, z])
 
     def _cluster_cells(self, cells, radius, weight_fn):
         if len(cells) == 0:
@@ -925,8 +1163,8 @@ class Preprocessor:
         x1 = min(Config.GRID_SIZE, x + radius + 1)
         z0 = max(0, z - radius)
         z1 = min(Config.GRID_SIZE, z + radius + 1)
-        visit_sum = float(np.sum(self.visit_count[x0:x1, z0:z1]))
-        transit_sum = float(np.sum(self.clean_pass_count[x0:x1, z0:z1]))
+        visit_sum = self._window_sum(self._visit_integral, x0, x1, z0, z1)
+        transit_sum = self._window_sum(self._transit_integral, x0, x1, z0, z1)
         return visit_sum + 1.5 * transit_sum
 
     def _is_repeat_wall_cell(self, pos):
@@ -1037,6 +1275,7 @@ class Preprocessor:
         scores = np.full((Config.ACTION_DIM,), -1e9, dtype=np.float32)
         charger_dist_now = self._current_charger_distance()
         goal_dist_now = self._chebyshev(self.cur_pos, self.goal) if self.goal is not None else 0
+        region_dist_now = self._distance_to_region(self.cur_pos, self.region_lock_kind, self.region_lock_center)
 
         for act, (dx, dz) in enumerate(self.ACTION_DELTAS):
             if not legal_action[act]:
@@ -1070,6 +1309,10 @@ class Preprocessor:
                     score += 7.0
             elif self.goal is not None:
                 score += 1.35 * (goal_dist_now - self._chebyshev(next_pos, self.goal))
+                region_dist_next = self._distance_to_region(next_pos, self.region_lock_kind, self.region_lock_center)
+                score += Config.REGION_LOCK_ACTION_WEIGHT * (region_dist_now - region_dist_next)
+                if region_dist_next == 0 and self.region_lock_kind in {"dirty", "frontier"}:
+                    score += 0.25
 
             scores[act] = float(score)
         return scores
@@ -1096,7 +1339,7 @@ class Preprocessor:
         x1 = min(Config.GRID_SIZE, x + 3)
         z0 = max(0, z - 2)
         z1 = min(Config.GRID_SIZE, z + 3)
-        return int(np.sum(self.map_state[x0:x1, z0:z1] == self.DIRTY))
+        return int(self._window_sum(self._dirty_integral, x0, x1, z0, z1))
 
     def _unknown_density(self, pos, radius=2):
         x, z = pos
@@ -1104,8 +1347,7 @@ class Preprocessor:
         x1 = min(Config.GRID_SIZE, x + radius + 1)
         z0 = max(0, z - radius)
         z1 = min(Config.GRID_SIZE, z + radius + 1)
-        window = self.map_state[x0:x1, z0:z1]
-        return int(np.sum(window == self.UNKNOWN))
+        return int(self._window_sum(self._unknown_integral, x0, x1, z0, z1))
 
     def _local_clean_density(self, pos, radius=2):
         x, z = pos
@@ -1113,8 +1355,7 @@ class Preprocessor:
         x1 = min(Config.GRID_SIZE, x + radius + 1)
         z0 = max(0, z - radius)
         z1 = min(Config.GRID_SIZE, z + radius + 1)
-        window = self.map_state[x0:x1, z0:z1]
-        return int(np.sum(window == self.CLEAN))
+        return int(self._window_sum(self._clean_integral, x0, x1, z0, z1))
 
     def _nearest_charger_heuristic(self, pos):
         if not self.chargers:
@@ -1132,25 +1373,16 @@ class Preprocessor:
         return self._chebyshev(pos, (near_x, near_z))
 
     def _npc_zone_hard_block(self, pos):
-        for center in self.npc_centers.values():
-            if self._chebyshev(pos, center) <= Config.NPC_CENTER_HARD_RADIUS:
-                return True
-        return False
+        x, z = int(pos[0]), int(pos[1])
+        if not self._in_bounds(x, z):
+            return True
+        return bool(self._npc_zone_hard_block_map[x, z])
 
     def _npc_zone_penalty(self, pos):
-        penalty = 0.0
-        for center in self.npc_centers.values():
-            dist = self._chebyshev(pos, center)
-            if dist <= Config.NPC_CENTER_SOFT_RADIUS:
-                penalty += self._npc_field_value(pos, center, Config.NPC_FIELD_CENTER_SCALE, Config.NPC_FIELD_SOFTEN + 2.0)
-
-        for idx, npc_pos in self.npc_positions.items():
-            pred = self.npc_pred_positions.get(idx, npc_pos)
-            mid = ((npc_pos[0] + pred[0]) // 2, (npc_pos[1] + pred[1]) // 2)
-            penalty += self._npc_field_value(pos, npc_pos, Config.NPC_FIELD_NPC_SCALE, Config.NPC_FIELD_SOFTEN)
-            penalty += self._npc_field_value(pos, pred, Config.NPC_FIELD_PRED_SCALE, Config.NPC_FIELD_SOFTEN)
-            penalty += self._npc_field_value(pos, mid, Config.NPC_FIELD_MID_SCALE, Config.NPC_FIELD_SOFTEN + 0.5)
-        return penalty
+        x, z = int(pos[0]), int(pos[1])
+        if not self._in_bounds(x, z):
+            return 1e9
+        return float(self._npc_penalty_map[x, z])
 
     def _npc_field_value(self, pos, source, strength, soften):
         dx = float(pos[0] - source[0])
