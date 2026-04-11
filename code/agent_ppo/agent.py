@@ -88,16 +88,16 @@ class Agent(BaseAgent):
     def predict(self, list_obs_data):
         """Stochastic inference for training (exploration).
 
-        Training inference with expert override (Layer 2) and directional bias (Layer 3).
+        Training inference with expert override, NPC safety filter, and anti-stuck.
         """
         obs_data = list_obs_data[0]
         feature = obs_data.feature
         legal_action = obs_data.legal_action
 
         logits, value = self._run_model(feature)
+        expert = self.preprocessor.expert
 
         # Layer 2: Expert strategic override (charging)
-        expert = self.preprocessor.expert
         should_override, expert_action = expert.get_override(self.preprocessor, legal_action)
         if should_override:
             prob = self._uniform_over_legal(legal_action)
@@ -110,7 +110,25 @@ class Agent(BaseAgent):
                 )
             ]
 
-        legal_arr = np.array(legal_action, dtype=np.float32)
+        # Layer 1: NPC safety filter — block moves toward nearby NPCs
+        filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
+
+        # Layer 3: Anti-stuck — random legal action if stuck too long
+        if self.preprocessor.stuck_steps >= 10:
+            legal_indices = [i for i, l in enumerate(filtered_legal) if l]
+            if legal_indices:
+                random_action = int(np.random.choice(legal_indices))
+                prob = self._uniform_over_legal(filtered_legal)
+                return [
+                    ActData(
+                        action=[random_action],
+                        d_action=[random_action],
+                        prob=prob,
+                        value=value,
+                    )
+                ]
+
+        legal_arr = np.array(filtered_legal, dtype=np.float32)
         prob = self._legal_soft_max(logits, legal_arr)
         action = self._legal_sample(prob, use_max=False)
         d_action = self._legal_sample(prob, use_max=True)
