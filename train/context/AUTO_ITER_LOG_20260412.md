@@ -336,3 +336,22 @@ cd D:/TcKaiwuFinal/train && docker compose -p kaiwu-train -f .docker-compose.yam
 - 如果0.007后entropy仍低于0.25, 下次深度分析将进一步提高至0.008
 - 不做额外代码修改, 避免过度调参
 
+### 07:33 — 快照报告 (Q4后小幅回升)
+
+```
+[快照 07:33] ep:894 | avg_score:156 | FAIL:97% | avg_invalid:0.367 | charge:0/interval
+```
+
+**趋势**: Deep analysis Q4=137 → Last30=156 (+14%, 回升但仍低于Q3 peak 179)
+**Top 5**: 317(0.000,map4), 315(0.000,map1), 274(0.154,map9), 256(0.203,map7), 255(0.174,map5)
+**WIN**: 1/30 (ep:858 map:9) | **灾难局**(inv>0.9): 5/30 (17%) | **Good局**(inv<0.2): 8/30 (27%)
+
+**训练算法metrics** (global_step: 12100):
+- value_loss: 120-150 (稳定✓)
+- entropy_loss: 0.196~0.305 (10次均值=0.243, 5次均值=0.257, 最新0.305)
+- policy_loss: -1~-5
+
+**MAP**: 强弱差距仍然明显, map1/map4/map9稳定高分, map6/map8/map3波动大
+
+**决策**: 训练从Q4低点回升(+14%), entropy最新值0.305(>0.3). BETA=0.007修改仍在等待重启. 不做额外调整. 等用户醒来重启容器.
+
