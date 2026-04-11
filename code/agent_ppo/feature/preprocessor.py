@@ -608,7 +608,7 @@ class Preprocessor:
             revisit_penalty = -0.08 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
 
         # Stuck penalty: escalating with duration
-        stuck_penalty = -0.3 * self.last_move_invalid - 0.15 * _norm(self.stuck_steps, 10)
+        stuck_penalty = -0.5 * self.last_move_invalid - 0.25 * _norm(self.stuck_steps, 10)
 
         # Idle penalty
         idle_penalty = -0.1 * float(np.clip(self.no_progress_steps / 15.0, 0.0, 1.0))
