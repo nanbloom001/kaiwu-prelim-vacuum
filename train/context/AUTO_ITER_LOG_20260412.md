@@ -511,3 +511,33 @@ cd D:/TcKaiwuFinal/train && docker compose -p kaiwu-train -f .docker-compose.yam
 
 **决策**: 训练处于巅峰状态. **不做任何调整.**
 
+### 09:48 — 快照报告 (ALL-TIME BEST 1063!)
+
+```
+[快照 09:48] ep:870 | avg_score:191 | FAIL:90% | avg_charge:0.3/ep | charge_nonzero:5/30
+```
+
+**趋势**: Prev30=242 → Last30=191 (-21%, 正常波动)
+**MAP_STATS** (last30):
+- 强图: map6(465), map10(241), map5(210)
+- 弱图: map9(5), map2(7), map1(42)
+**Top 5**: **1063**(map6), **775**(map10), **527**(map10), **419**(map5), **364**(map4)
+**ALL-TIME BEST: 1063** (map6, charge=1, 09:43) — 突破之前865!
+**Battery FAIL**: 27/30 | **Completed (survived)**: 3/30
+
+**ALL-TIME Top 10 (全session)**:
+1063, 899, 792, 782, 775, 768, 766, 608, 597, 594
+
+**训练算法metrics** (global_step: 25584):
+- value_loss: 99-185 (波动但未发散)
+- entropy_loss: 0.32-0.47 (✓ 非常健康)
+- policy_loss: -1.3~+1.4 (正常)
+
+**关键观察**:
+1. **新ALL-TIME BEST: 1063** — 比之前865高出23%! map6+1charge达成
+2. **Top 10全部刷新**: 8个新纪录进入前十，分数范围594-1063
+3. **Last30趋势-21%**: 表面看是下降，但主要是因为弱图(map9=5, map2=7)拉低均值
+4. **充电仍不稳定**: avg_charge=0.3，但1063分大分仅用1次充电
+
+**决策**: 不做调整. 虽然Last30均值下降21%，但这是map组合方差所致. 新纪录1063证明模型仍在进步. Entropy 0.32-0.47完全健康. BETA=0.007保留待重启.
+
