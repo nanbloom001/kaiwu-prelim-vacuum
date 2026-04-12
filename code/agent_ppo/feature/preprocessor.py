@@ -262,13 +262,21 @@ class Preprocessor:
         self.wall_adjacent, self.dirty_adjacent = self._calc_adjacency()
         self.current_mode = self._infer_mode()
 
+        # Coordinate validation: agent's position must be passable in global map
+        hx, hz = self.cur_pos
+        if 0 <= hx < self.GRID_SIZE and 0 <= hz < self.GRID_SIZE:
+            assert self.passable_map[hx, hz] >= 0.5, (
+                f"Coordinate bug! Agent at ({hx},{hz}) not passable in global map. "
+                f"passable_map[{hx},{hz}]={self.passable_map[hx, hz]}"
+            )
+
     def _update_memory(self, hx, hz):
         new_cells = 0
         half = self.VIEW_HALF
         for row in range(self.VIEW_SIZE):
             for col in range(self.VIEW_SIZE):
-                gx = hx - half + row
-                gz = hz - half + col
+                gx = hx - half + col
+                gz = hz - half + row
                 if not (0 <= gx < self.GRID_SIZE and 0 <= gz < self.GRID_SIZE):
                     continue
                 if self.explored_map[gx, gz] == 0:
@@ -331,8 +339,8 @@ class Preprocessor:
         return best_dist, best_dx, best_dz
 
     def _cell_passable_local(self, dx, dz):
-        row = self.VIEW_HALF + dx
-        col = self.VIEW_HALF + dz
+        row = self.VIEW_HALF + dz
+        col = self.VIEW_HALF + dx
         if not (0 <= row < self.VIEW_SIZE and 0 <= col < self.VIEW_SIZE):
             return False
         return int(self._view_map[row, col]) != 0
@@ -369,8 +377,8 @@ class Preprocessor:
         frontier = 0
         for row in range(self.VIEW_SIZE):
             for col in range(self.VIEW_SIZE):
-                gx = hx - self.VIEW_HALF + row
-                gz = hz - self.VIEW_HALF + col
+                gx = hx - self.VIEW_HALF + col
+                gz = hz - self.VIEW_HALF + row
                 if not (0 <= gx < self.GRID_SIZE and 0 <= gz < self.GRID_SIZE):
                     continue
                 if int(self._view_map[row, col]) == 0:
@@ -581,7 +589,7 @@ class Preprocessor:
             -1.0,
             1.0,
         )
-        charger_reward = 0.10 * charge_pressure * float(delta_charger_slack)
+        charger_reward = 0.15 * charge_pressure * float(delta_charger_slack)
 
         # Charger path exploration: reward exploring toward known charger
         # Encourages lighting up the path to charger when area is unexplored
@@ -591,10 +599,10 @@ class Preprocessor:
             delta_dist = self.nearest_charger_dist - self.last_nearest_charger_dist
             if delta_dist < 0:
                 # Reward proportional to how much closer we got + explored new cells
-                charger_path_explore = 0.06 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
+                charger_path_explore = 0.12 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
 
         # Charging direct bonus
-        charge_bonus = 0.5 * self.just_charged
+        charge_bonus = 1.0 * self.just_charged
 
         # NPC avoidance: quadratic penalty
         npc_risk = float(np.clip((6.0 - self.nearest_npc_dist) / 6.0, 0.0, 1.0))

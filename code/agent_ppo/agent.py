@@ -88,7 +88,8 @@ class Agent(BaseAgent):
     def predict(self, list_obs_data):
         """Stochastic inference for training (exploration).
 
-        Training inference with expert override, NPC safety filter, and anti-stuck.
+        Layer order: NPC Filter → Expert → Anti-stuck → RL
+        Expert uses model's softmax probability (not uniform) for correct PPO ratio.
         """
         obs_data = list_obs_data[0]
         feature = obs_data.feature
@@ -97,21 +98,22 @@ class Agent(BaseAgent):
         logits, value = self._run_model(feature)
         expert = self.preprocessor.expert
 
-        # Layer 2: Expert strategic override (charging)
-        should_override, expert_action = expert.get_override(self.preprocessor, legal_action)
+        # Layer 1: NPC safety filter — block moves toward nearby NPCs (first!)
+        filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
+
+        # Layer 2: Expert strategic override (charging) — uses filtered mask
+        should_override, expert_action = expert.get_override(self.preprocessor, filtered_legal)
         if should_override:
-            prob = self._uniform_over_legal(legal_action)
+            legal_arr = np.array(filtered_legal, dtype=np.float32)
+            prob = self._legal_soft_max(logits, legal_arr)
             return [
                 ActData(
                     action=[expert_action],
                     d_action=[expert_action],
-                    prob=prob,
+                    prob=list(prob),
                     value=value,
                 )
             ]
-
-        # Layer 1: NPC safety filter — block moves toward nearby NPCs
-        filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
 
         # Layer 3: Anti-stuck — random legal action if stuck too long
         if self.preprocessor.stuck_steps >= 10:
@@ -128,6 +130,7 @@ class Agent(BaseAgent):
                     )
                 ]
 
+        # RL normal decision
         legal_arr = np.array(filtered_legal, dtype=np.float32)
         prob = self._legal_soft_max(logits, legal_arr)
         action = self._legal_sample(prob, use_max=False)
