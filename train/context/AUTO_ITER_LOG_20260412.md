@@ -496,3 +496,18 @@ cd D:/TcKaiwuFinal/train && docker compose -p kaiwu-train -f .docker-compose.yam
 - BETA=0.007修改保留(作为保险), 但当前entropy 0.35-0.45完全健康, 不紧迫.
 - 唯一关注点: value_loss从136→185, 如果继续上升则需分析原因.
 
+### 09:33 — 快照报告 (ALL-TIME BEST 865!)
+
+```
+[快照 09:33] ep:1735 | avg_score:259 | FAIL:93% | avg_invalid:0.35 | charge:0/interval
+```
+
+**趋势**: Prev30=196 → Last30=**259** (+32%!!)
+**Top 5**: **865**(0.065,map9), **565**(0.068,map10 WIN), **549**(0.185,map6), **543**(0.134,map6), **531**(0.053,map10)
+**WIN**: 2/30 (ep:1693 map:6, ep:1699 map:10) | 灾难局: 3/30
+**ALL-TIME BEST: 865** (ep:1709, map:9, broad, inv=0.065, 865/6505=13.3%!)
+
+**Entropy**: 5-avg = **0.402** (非常健康!)
+
+**决策**: 训练处于巅峰状态. **不做任何调整.**
+
