@@ -56,3 +56,6 @@ class Config:
     KEEP_EPISODE_RESUME_SNAPSHOTS = 8
     KEEP_TIME_RESUME_SNAPSHOTS = 6
     KEEP_BEST_RESUME_SNAPSHOTS = 5
+
+    # Resume control: None = train from scratch; filename = resume from that checkpoint
+    RESUME_CHECKPOINT = None  # e.g. "model.ckpt-resume.pkl"

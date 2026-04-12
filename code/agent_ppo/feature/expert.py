@@ -137,14 +137,14 @@ class ExpertPolicy:
         self._prev_pos = cur
 
     # ------------------------------------------------------------------
-    # Layer 2: Battery emergency override with hysteresis
+    # Layer 2: Battery charging evaluation (shared logic)
     # ------------------------------------------------------------------
 
-    def get_override(self, prep, legal_action, last_action=-1):
-        """Override for battery emergency with A* path distance + hysteresis.
+    def _evaluate_return(self, prep, legal_action, last_action=-1):
+        """Shared charging evaluation logic.
 
-        Returns (should_override, expert_action).
-        Once return_mode is activated, it persists until battery >= 95% AND on charger.
+        Returns (should_return, expert_action, charger_dist, margin).
+        Used by both get_override() and get_logit_bias().
         """
         self.update_chargers(prep)
         self.update_blocked(prep, last_action)
@@ -176,31 +176,80 @@ class ExpertPolicy:
             or battery_ratio <= self.LOW_BATTERY_RATIO
         )
 
-        if should_return:
-            self.return_mode = True
+        if not should_return:
+            return False, None, charger_dist, margin
 
-            # Already on charger — don't override, charging happens automatically
-            if on_charger and battery_ratio < self.EXIT_RETURN_RATIO:
-                return False, None
+        self.return_mode = True
 
-            # If we have a cached path, use it
-            if charger_path and len(charger_path) >= 2:
-                act = self._path_to_action(hx, hz, charger_path[1])
-                if act is not None and legal_action[act]:
-                    return True, act
+        # Already on charger — don't need to navigate
+        if on_charger and battery_ratio < self.EXIT_RETURN_RATIO:
+            return True, None, charger_dist, margin
 
-            # Fall back to A* planner (3-level NPC avoidance)
-            act = self._plan_to_charger(prep)
-            if act is not None and legal_action[act]:
-                return True, act
+        # Find best action via multi-level fallback
+        expert_action = None
 
-            # Last resort: move toward charger greedily
+        # 1. Cached path
+        if charger_path and len(charger_path) >= 2:
+            expert_action = self._path_to_action(hx, hz, charger_path[1])
+            if expert_action is not None and not legal_action[expert_action]:
+                expert_action = None
+
+        # 2. A* planner (3-level NPC avoidance)
+        if expert_action is None:
+            expert_action = self._plan_to_charger(prep)
+            if expert_action is not None and not legal_action[expert_action]:
+                expert_action = None
+
+        # 3. Greedy toward charger
+        if expert_action is None:
             if prep.nearest_charger_dx != 0 or prep.nearest_charger_dz != 0:
-                best_act = self._greedy_toward_charger(prep, legal_action)
-                if best_act is not None:
-                    return True, best_act
+                expert_action = self._greedy_toward_charger(prep, legal_action)
 
+        return True, expert_action, charger_dist, margin
+
+    # ------------------------------------------------------------------
+    # Layer 2a: Hard override (for evaluation/exploit mode)
+    # ------------------------------------------------------------------
+
+    def get_override(self, prep, legal_action, last_action=-1):
+        """Hard override for battery emergency — used in evaluation mode.
+
+        Returns (should_override, expert_action).
+        Once return_mode is activated, it persists until battery >= 95% AND on charger.
+        """
+        should_return, expert_action, _, _ = self._evaluate_return(
+            prep, legal_action, last_action
+        )
+        if should_return and expert_action is not None:
+            return True, expert_action
         return False, None
+
+    # ------------------------------------------------------------------
+    # Layer 2b: Soft logit bias (for training mode)
+    # ------------------------------------------------------------------
+
+    def get_logit_bias(self, prep, legal_action, last_action=-1):
+        """Soft logit bias for charging — replaces hard override during training.
+
+        Returns np.ndarray[8] with bias values.
+        Urgency-based scaling: emergency → bias=100 (hard override equivalent),
+        non-emergency → bias=3-8 (strong guidance but RL can deviate).
+        """
+        bias = np.zeros(8, dtype=np.float32)
+        should_return, expert_action, charger_dist, margin = self._evaluate_return(
+            prep, legal_action, last_action
+        )
+
+        if should_return and expert_action is not None:
+            slack = prep.battery - charger_dist
+            urgency = float(np.clip(1 - slack / max(margin, 1), 0.2, 1.0))
+
+            if slack <= 3 or (prep.battery / max(prep.battery_max, 1)) <= 0.10:
+                bias[expert_action] = 100.0     # Emergency: near-equivalent to hard override
+            else:
+                bias[expert_action] = 3.0 + 5.0 * urgency  # Soft bias [3.0, 8.0]
+
+        return bias
 
     def _greedy_toward_charger(self, prep, legal_action):
         """Fallback: pick legal action that moves closest to nearest charger."""

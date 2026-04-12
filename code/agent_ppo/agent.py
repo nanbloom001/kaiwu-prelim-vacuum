@@ -52,25 +52,24 @@ class Agent(BaseAgent):
             "checkpoint_id": None,
         }
 
-        # Auto-load resume checkpoint if available (for fine-tuning)
-        # Check multiple paths: learner uses /data/projects/, aisrv uses /workspace/code/
-        _resume_candidates = [
-            os.path.join(os.path.dirname(__file__), "..", "model.ckpt-resume.pkl"),
-            "/workspace/code/model.ckpt-resume.pkl",
-        ]
-        for _resume_path in _resume_candidates:
-            if os.path.isfile(_resume_path):
-                try:
-                    state_dict = torch.load(_resume_path, map_location=self.device)
-                    self.model.load_state_dict(state_dict)
-                    import sys
-                    print(f"[RESUME] Loaded checkpoint from {_resume_path}", file=sys.stderr, flush=True)
-                    self.logger and self.logger.info(f"[RESUME] Loaded checkpoint from {_resume_path}")
-                    break
-                except Exception as e:
-                    import sys
-                    print(f"[RESUME] Failed to load from {_resume_path}: {e}", file=sys.stderr, flush=True)
-                    self.logger and self.logger.info(f"[RESUME] Failed to load from {_resume_path}: {e}")
+        # Resume from checkpoint if configured in conf.py
+        if Config.RESUME_CHECKPOINT:
+            _resume_candidates = [
+                os.path.join(os.path.dirname(__file__), "..", Config.RESUME_CHECKPOINT),
+                os.path.join("/workspace/code", Config.RESUME_CHECKPOINT),
+            ]
+            for _resume_path in _resume_candidates:
+                if os.path.isfile(_resume_path):
+                    try:
+                        state_dict = torch.load(_resume_path, map_location=self.device)
+                        self.model.load_state_dict(state_dict)
+                        import sys
+                        print(f"[RESUME] Loaded from {_resume_path}", file=sys.stderr, flush=True)
+                        self.logger and self.logger.info(f"[RESUME] Loaded from {_resume_path}")
+                        break
+                    except Exception as e:
+                        import sys
+                        print(f"[RESUME] Failed: {e}", file=sys.stderr, flush=True)
 
         super().__init__(agent_type, device, logger, monitor)
 
@@ -108,11 +107,11 @@ class Agent(BaseAgent):
         self.last_action = int(action[0])
         return self.last_action
 
-    def predict(self, list_obs_data):
+    def predict(self, list_obs_data, use_hard_override=False):
         """Stochastic inference for training (exploration).
 
-        Layer order: NPC Filter → Expert → Anti-stuck → RL
-        Expert uses model's softmax probability (not uniform) for correct PPO ratio.
+        Training mode: Expert Logit Bias — soft guidance with correct PPO ratio.
+        Evaluation mode (use_hard_override=True): Expert hard override for max survival.
         """
         obs_data = list_obs_data[0]
         feature = obs_data.feature
@@ -124,24 +123,32 @@ class Agent(BaseAgent):
         # Layer 1: NPC safety filter — block moves toward nearby NPCs (first!)
         filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
 
-        # Layer 2: Expert strategic override (charging) — uses filtered mask
-        should_override, expert_action = expert.get_override(
-            self.preprocessor, filtered_legal, last_action=self.last_action
-        )
-        if should_override:
-            legal_arr = np.array(filtered_legal, dtype=np.float32)
-            prob = self._legal_soft_max(logits, legal_arr)
-            return [
-                ActData(
-                    action=[expert_action],
-                    d_action=[expert_action],
-                    prob=list(prob),
-                    value=value,
-                )
-            ]
+        if use_hard_override:
+            # Evaluation mode: hard expert override for max survival
+            should_override, expert_action = expert.get_override(
+                self.preprocessor, filtered_legal, last_action=self.last_action
+            )
+            if should_override:
+                legal_arr = np.array(filtered_legal, dtype=np.float32)
+                prob = self._legal_soft_max(logits, legal_arr)
+                return [
+                    ActData(
+                        action=[expert_action],
+                        d_action=[expert_action],
+                        prob=list(prob),
+                        value=value,
+                    )
+                ]
+        else:
+            # Training mode: soft expert logit bias — correct PPO ratio
+            expert_bias = expert.get_logit_bias(
+                self.preprocessor, filtered_legal, last_action=self.last_action
+            )
+            logits = logits + np.array(expert_bias, dtype=np.float32)
 
-        # Layer 3: Anti-stuck — random legal action if stuck too long
-        if self.preprocessor.stuck_steps >= 10:
+        # Layer 2: Anti-stuck — random legal action if stuck too long
+        # Skip anti-stuck during expert return_mode (Expert handles stuck via blocked cells + A*)
+        if self.preprocessor.stuck_steps >= 10 and not expert.return_mode:
             legal_indices = [i for i, l in enumerate(filtered_legal) if l]
             if legal_indices:
                 random_action = int(np.random.choice(legal_indices))
@@ -155,7 +162,7 @@ class Agent(BaseAgent):
                     )
                 ]
 
-        # RL normal decision
+        # RL decision (with biased logits in training mode)
         legal_arr = np.array(filtered_legal, dtype=np.float32)
         prob = self._legal_soft_max(logits, legal_arr)
         action = self._legal_sample(prob, use_max=False)
@@ -173,10 +180,10 @@ class Agent(BaseAgent):
     def exploit(self, env_obs):
         """Greedy inference for evaluation.
 
-        评估时推理（贪心）。
+        评估时推理（贪心）。使用 Expert 硬覆盖保证最大存活率。
         """
         obs_data, _ = self.observation_process(env_obs)
-        act_data = self.predict([obs_data])[0]
+        act_data = self.predict([obs_data], use_hard_override=True)[0]
         return self.action_process(act_data, is_stochastic=False)
 
     def learn(self, list_sample_data):

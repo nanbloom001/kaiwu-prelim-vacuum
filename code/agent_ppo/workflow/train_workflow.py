@@ -54,16 +54,6 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         },
     )
 
-    shared_code_dir = resolve_shared_code_dir()
-    resume_ckpt = shared_code_dir / "model.ckpt-resume.pkl"
-    if resume_ckpt.exists():
-        try:
-            state_dict = torch.load(resume_ckpt, map_location=agent.device, weights_only=True)
-            agent.model.load_state_dict(state_dict)
-            logger.info(f"[RESUME] Loaded checkpoint from {resume_ckpt}")
-        except Exception as exc:
-            logger.warning(f"[RESUME] Failed to load checkpoint: {exc}")
-
     episode_runner = EpisodeRunner(
         env=env,
         agent=agent,
@@ -564,10 +554,10 @@ class EpisodeRunner:
         outcome_bonus = {
             "completed": 1.5,
             "battery": -2.5,
-            "collision": -4.0,
+            "collision": -6.0,
             "unknown": -3.0,
         }.get(fail_reason, -3.0)
-        efficiency_bonus = 0.6 * cleaning_ratio + 0.3 * min(clean_score / max(step, 1), 1.5)
+        efficiency_bonus = 0.5 * cleaning_ratio + 0.5 * min(clean_score / max(step, 1), 1.0)
         final_reward = outcome_bonus + efficiency_bonus
         result_str = "WIN" if fail_reason == "completed" else "FAIL"
 

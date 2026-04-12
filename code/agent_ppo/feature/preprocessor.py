@@ -125,6 +125,10 @@ class Preprocessor:
         self.visit_count = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
         self.npc_cleaned = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
 
+        self._cps_ema = 0.5
+        self._last_action = -1
+        self._charge_events = []
+
     def pb2struct(self, env_obs, last_action):
         observation = env_obs.get("observation") or {}
         frame_state = observation.get("frame_state") or {}
@@ -558,6 +562,7 @@ class Preprocessor:
         return result
 
     def feature_process(self, env_obs, last_action):
+        self._last_action = last_action
         self.pb2struct(env_obs, last_action)
 
         local_map = self._get_local_map_feature()
@@ -578,14 +583,14 @@ class Preprocessor:
         streak_bonus = 0.15 * min(float(self.cleaned_this_step > 0), 1.0) * min(self.consecutive_clean_steps, 5)
 
         # Edge-following bonus: reward walking along walls and dirty boundaries
-        edge_bonus = 0.08 * min(self.wall_adjacent, 2) + 0.12 * min(self.dirty_adjacent / 2.0, 1.0)
+        edge_bonus = 0.02 * min(self.wall_adjacent, 2) + 0.08 * min(self.dirty_adjacent / 2.0, 1.0)
 
         # Exploration reward
         explore_reward = 0.05 * float(min(self.new_explored_cells, 6))
 
-        # Frontier reward: no decay, scales with cleaning progress
+        # Frontier reward: scales with cleaning progress
         clean_ratio = _norm(self.dirt_cleaned, self.total_dirt)
-        frontier_reward = 0.10 * self.local_frontier_density * (0.3 + 0.7 * clean_ratio)
+        frontier_reward = 0.15 * self.local_frontier_density * (0.5 + 0.5 * clean_ratio)
 
         # Charger approach reward (3x stronger)
         charge_pressure = float(np.clip((8.0 - self.charger_slack) / 8.0, 0.0, 1.0))
@@ -606,25 +611,55 @@ class Preprocessor:
                 # Reward proportional to how much closer we got + explored new cells
                 charger_path_explore = 0.12 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
 
-        # Charging direct bonus
-        charge_bonus = 1.0 * self.just_charged
+        # Charging reward: efficiency-based (base + need + frequency penalty)
+        if self.just_charged:
+            battery_ratio = self.battery / max(self.battery_max, 1)
+            charge_base = 0.3
+            need = max(0.0, 1.0 - battery_ratio)
+            charge_eff = 0.4 * need
+            self._charge_events.append(self.step_no)
+            self._charge_events = [s for s in self._charge_events if self.step_no - s < 300]
+            total_recent = len(self._charge_events)
+            freq_penalty = -0.15 * max(total_recent - 3, 0)
+            charge_reward = max(charge_base + charge_eff + freq_penalty, -0.3)
+        else:
+            charge_reward = 0.0
 
-        # NPC avoidance: quadratic penalty
-        npc_risk = float(np.clip((6.0 - self.nearest_npc_dist) / 6.0, 0.0, 1.0))
-        npc_penalty = -0.5 * npc_risk ** 2
+        # NPC avoidance: strong quadratic penalty (range 8, coeff 1.5)
+        npc_risk = float(np.clip((8.0 - self.nearest_npc_dist) / 8.0, 0.0, 1.0))
+        npc_penalty = -1.5 * npc_risk ** 2
 
-        # Frontier-aware revisit penalty
+        # NPC-cleaned cell penalty: discourage wasting time on NPC-cleaned areas
+        hx, hz = self.cur_pos
+        npc_cleaned_here = float(self.npc_cleaned[hx, hz]) if (
+            0 <= hx < self.GRID_SIZE and 0 <= hz < self.GRID_SIZE
+        ) else 0.0
+        npc_cleaned_penalty = -0.3 * npc_cleaned_here
+
+        # Frontier-aware revisit penalty (increased to outweigh edge bonus)
         is_on_frontier = (self.local_dirt_density > 0.02) or (self.local_frontier_density > 0.08)
         if is_on_frontier:
-            revisit_penalty = -0.05 * float(np.clip(self.cur_visit_count - 1, 0.0, 2.0))
+            revisit_penalty = -0.10 * float(np.clip(self.cur_visit_count - 1, 0.0, 2.0))
         else:
-            revisit_penalty = -0.08 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
+            revisit_penalty = -0.15 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
 
         # Stuck penalty: escalating with duration
         stuck_penalty = -0.5 * self.last_move_invalid - 0.25 * _norm(self.stuck_steps, 10)
 
         # Idle penalty
         idle_penalty = -0.1 * float(np.clip(self.no_progress_steps / 15.0, 0.0, 1.0))
+
+        # Directional dirty approach reward: guide toward dirty-dense directions
+        dirty_approach_reward = 0.0
+        if self._last_action >= 0 and self._last_action < 8 and np.max(self.directional_dirty) > 0.01:
+            dirty_approach_reward = 0.10 * self.directional_dirty[self._last_action]
+
+        # CPS EMA efficiency reward: per-step CPS signal
+        if self.cleaned_this_step > 0:
+            self._cps_ema = 0.95 * self._cps_ema + 0.05 * 1.0
+        else:
+            self._cps_ema = 0.95 * self._cps_ema + 0.05 * 0.0
+        efficiency_reward = 0.3 * max(self._cps_ema - 0.75, 0)
 
         reward = (
             cleaning_reward
@@ -634,10 +669,13 @@ class Preprocessor:
             + frontier_reward
             + charger_reward
             + charger_path_explore
-            + charge_bonus
+            + charge_reward
             + npc_penalty
+            + npc_cleaned_penalty
             + revisit_penalty
             + stuck_penalty
             + idle_penalty
+            + dirty_approach_reward
+            + efficiency_reward
         )
         return float(np.clip(reward, -3.0, 4.0))
