@@ -541,3 +541,29 @@ cd D:/TcKaiwuFinal/train && docker compose -p kaiwu-train -f .docker-compose.yam
 
 **决策**: 不做调整. 虽然Last30均值下降21%，但这是map组合方差所致. 新纪录1063证明模型仍在进步. Entropy 0.32-0.47完全健康. BETA=0.007保留待重启.
 
+### 10:02 — 快照报告
+
+```
+[快照 10:02] ep:916 | avg_score:165 | FAIL:83% | avg_charge:0.1 | charge_nonzero:2/30
+```
+
+**趋势**: Prev30=253 → Last30=165 (-35%)
+**MAP_STATS** (last30):
+- 强图: map5(267), map7(259), map8(228), map4(156)
+- 弱图: map6(14), map9(38), map10(120)
+**Top 5**: 798(map5), 534(map4), 369(map1), 332(map7), 324(map10)
+**Battery FAIL**: 25/30 | **Completed**: 4/30
+
+**训练算法metrics** (global_step: 26896):
+- value_loss: 66-182 (波动，最低降至66)
+- entropy_loss: 0.318-0.494 (10-avg=**0.390**, 健康✓)
+- policy_loss: -2.6~+1.1 (正常)
+
+**分析**: Last30均值-35%下降幅度较大，但考虑:
+1. 弱图集中(map6仅1局=14, map9仅2局avg=38)拉低均值
+2. Prev30=253含1063/775两个特大分，是异常高点
+3. 798仍是新的Top 4级别得分，模型并未退步
+4. Entropy 0.39健康，无收敛风险
+
+**决策**: 不做调整. 下降主要由map组合方差和Prev30含特大分所致. 训练metrics健康，模型能力未退化. 继续监控.
+
