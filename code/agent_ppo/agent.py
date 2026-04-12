@@ -53,14 +53,24 @@ class Agent(BaseAgent):
         }
 
         # Auto-load resume checkpoint if available (for fine-tuning)
-        _resume_path = os.path.join(os.path.dirname(__file__), "..", "model.ckpt-resume.pkl")
-        if os.path.isfile(_resume_path):
-            try:
-                state_dict = torch.load(_resume_path, map_location=self.device)
-                self.model.load_state_dict(state_dict)
-                self.logger and self.logger.info(f"Loaded resume checkpoint from {_resume_path}")
-            except Exception as e:
-                self.logger and self.logger.info(f"Failed to load resume checkpoint: {e}")
+        # Check multiple paths: learner uses /data/projects/, aisrv uses /workspace/code/
+        _resume_candidates = [
+            os.path.join(os.path.dirname(__file__), "..", "model.ckpt-resume.pkl"),
+            "/workspace/code/model.ckpt-resume.pkl",
+        ]
+        for _resume_path in _resume_candidates:
+            if os.path.isfile(_resume_path):
+                try:
+                    state_dict = torch.load(_resume_path, map_location=self.device)
+                    self.model.load_state_dict(state_dict)
+                    import sys
+                    print(f"[RESUME] Loaded checkpoint from {_resume_path}", file=sys.stderr, flush=True)
+                    self.logger and self.logger.info(f"[RESUME] Loaded checkpoint from {_resume_path}")
+                    break
+                except Exception as e:
+                    import sys
+                    print(f"[RESUME] Failed to load from {_resume_path}: {e}", file=sys.stderr, flush=True)
+                    self.logger and self.logger.info(f"[RESUME] Failed to load from {_resume_path}: {e}")
 
         super().__init__(agent_type, device, logger, monitor)
 
