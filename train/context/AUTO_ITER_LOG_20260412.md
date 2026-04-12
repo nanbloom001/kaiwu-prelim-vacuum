@@ -441,3 +441,15 @@ cd D:/TcKaiwuFinal/train && docker compose -p kaiwu-train -f .docker-compose.yam
 
 **决策**: 不做调整. 分数183仍处于高位(历史前25%). Entropy 0.30完全健康. BETA fix保留待重启.
 
+### 09:03 — 快照报告 (持续稳定)
+
+```
+[快照 09:03] ep:1538 | avg_score:196 | FAIL:97% | avg_invalid:0.30 | charge:0/interval
+```
+
+**趋势**: Prev30=183 → Last30=196 (+7%)
+**Top 5**: 365(map3), 354(map8 WIN!), 343(map7), 271(map2), 260(map1)
+**WIN**: 1/30 (ep:1500 map:8) | 灾难局: 2/30 (7%) | Entropy 5-avg: 0.274
+
+**决策**: 训练持续稳定在190+高位, entropy健康. 不做调整.
+
