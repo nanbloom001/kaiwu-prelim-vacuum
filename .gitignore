@@ -58,3 +58,6 @@ auto_monitor.sh
 # 系统文件
 .DS_Store
 Thumbs.db
+code_WK/
+log-extracted/
+log-*.zip

@@ -10,6 +10,8 @@ Robot Vacuum Agent.
 清扫大作战 Agent 主类。
 """
 
+import os
+
 import torch
 
 torch.set_num_threads(1)
@@ -50,6 +52,16 @@ class Agent(BaseAgent):
             "checkpoint_id": None,
         }
 
+        # Auto-load resume checkpoint if available (for fine-tuning)
+        _resume_path = os.path.join(os.path.dirname(__file__), "..", "model.ckpt-resume.pkl")
+        if os.path.isfile(_resume_path):
+            try:
+                state_dict = torch.load(_resume_path, map_location=self.device)
+                self.model.load_state_dict(state_dict)
+                self.logger and self.logger.info(f"Loaded resume checkpoint from {_resume_path}")
+            except Exception as e:
+                self.logger and self.logger.info(f"Failed to load resume checkpoint: {e}")
+
         super().__init__(agent_type, device, logger, monitor)
 
     def reset(self, env_obs):
@@ -58,6 +70,7 @@ class Agent(BaseAgent):
         每局开始时重置 Agent 内部状态。
         """
         self.preprocessor = Preprocessor()
+        self.preprocessor.expert.reset()
         self.last_action = -1
         self.last_reward = 0.0
 
@@ -102,7 +115,9 @@ class Agent(BaseAgent):
         filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
 
         # Layer 2: Expert strategic override (charging) — uses filtered mask
-        should_override, expert_action = expert.get_override(self.preprocessor, filtered_legal)
+        should_override, expert_action = expert.get_override(
+            self.preprocessor, filtered_legal, last_action=self.last_action
+        )
         if should_override:
             legal_arr = np.array(filtered_legal, dtype=np.float32)
             prob = self._legal_soft_max(logits, legal_arr)

@@ -123,6 +123,7 @@ class Preprocessor:
         self.passable_map = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
         self.dirty_memory = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
         self.visit_count = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
+        self.npc_cleaned = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
 
     def pb2struct(self, env_obs, last_action):
         observation = env_obs.get("observation") or {}
@@ -283,11 +284,15 @@ class Preprocessor:
                     new_cells += 1
                 self.explored_map[gx, gz] = 1.0
                 cell = int(self._view_map[row, col])
+                prev_dirty = self.dirty_memory[gx, gz]
                 self.passable_map[gx, gz] = 1.0 if cell != 0 else 0.0
                 if cell == 2:
                     self.dirty_memory[gx, gz] = 1.0
                 elif cell == 1:
                     self.dirty_memory[gx, gz] = 0.0
+                    # NPC cleaned: was dirty, now clean, hero was NOT at this position
+                    if prev_dirty > 0.5 and not (gx == hx and gz == hz):
+                        self.npc_cleaned[gx, gz] = 1.0
         return new_cells
 
     def _calc_nearest_dirt_dist(self):
