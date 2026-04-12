@@ -425,3 +425,19 @@ cd D:/TcKaiwuFinal/train && docker compose -p kaiwu-train -f .docker-compose.yam
 - 当前entropy 0.27已回到安全区, 不紧迫.
 - 让训练继续运行, 等待更多突破.
 
+### 08:33 — 快照报告 (稳定高分期)
+
+```
+[快照 08:33] ep:1299 | avg_score:183 | FAIL:93% | avg_invalid:0.36 | charge:0/interval
+```
+
+**趋势**: Prev30=210 → Last30=183 (-13%, 正常波动, 仍高于早期Q3 peak 179)
+**Top 5**: **490**(0.001,map4 WIN!), 463(0.094,map8), 434(0.091,map3), 430(0.130,map1), 385(0.235,map2)
+**WIN**: 2/30 (ep:1278 map:4 score=**490**, ep:1258 map:1 score=151) | 灾难局: 4/30 (13%)
+
+**训练算法metrics** (global_step: ~17400):
+- entropy_loss: 0.27~0.35 (10次均值=**0.299**, 健康✓)
+- value_loss: 122-136 (稳定✓)
+
+**决策**: 不做调整. 分数183仍处于高位(历史前25%). Entropy 0.30完全健康. BETA fix保留待重启.
+
