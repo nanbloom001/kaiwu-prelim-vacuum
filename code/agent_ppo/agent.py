@@ -162,6 +162,25 @@ class Agent(BaseAgent):
         self._model_load_reload_count = 0
         self._model_load_cache_hit_count = 0
 
+        # Resume from checkpoint if configured in conf.py
+        if Config.RESUME_CHECKPOINT:
+            _resume_candidates = [
+                os.path.join(os.path.dirname(__file__), "..", Config.RESUME_CHECKPOINT),
+                os.path.join("/workspace/code", Config.RESUME_CHECKPOINT),
+            ]
+            for _resume_path in _resume_candidates:
+                if os.path.isfile(_resume_path):
+                    try:
+                        state_dict = torch.load(_resume_path, map_location=self.device)
+                        self.model.load_state_dict(state_dict)
+                        import sys
+                        print(f"[RESUME] Loaded from {_resume_path}", file=sys.stderr, flush=True)
+                        self.logger and self.logger.info(f"[RESUME] Loaded from {_resume_path}")
+                        break
+                    except Exception as e:
+                        import sys
+                        print(f"[RESUME] Failed: {e}", file=sys.stderr, flush=True)
+
         super().__init__(agent_type, device, logger, monitor)
 
     def reset(self, env_obs):
@@ -170,6 +189,7 @@ class Agent(BaseAgent):
         每局开始时重置 Agent 内部状态。
         """
         self.preprocessor = Preprocessor()
+        self.preprocessor.expert.reset()
         self.last_action = -1
         self.last_reward = 0.0
 
@@ -197,19 +217,63 @@ class Agent(BaseAgent):
         self.last_action = int(action[0])
         return self.last_action
 
-    def predict(self, list_obs_data):
+    def predict(self, list_obs_data, use_hard_override=False):
         """Stochastic inference for training (exploration).
 
-        训练时推理（随机采样动作）。
+        Training mode: Expert Logit Bias — soft guidance with correct PPO ratio.
+        Evaluation mode (use_hard_override=True): Expert hard override for max survival.
         """
         obs_data = list_obs_data[0]
         feature = obs_data.feature
         legal_action = obs_data.legal_action
 
         logits, value = self._run_model(feature)
-        logits = self._blend_policy_logits(logits)
+        expert = self.preprocessor.expert
 
-        legal_arr = np.array(legal_action, dtype=np.float32)
+        # Layer 1: NPC safety filter — block moves toward nearby NPCs (first!)
+        filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
+
+        if use_hard_override:
+            # Evaluation mode: hard expert override for max survival
+            should_override, expert_action = expert.get_override(
+                self.preprocessor, filtered_legal, last_action=self.last_action
+            )
+            if should_override:
+                legal_arr = np.array(filtered_legal, dtype=np.float32)
+                prob = self._legal_soft_max(logits, legal_arr)
+                return [
+                    ActData(
+                        action=[expert_action],
+                        d_action=[expert_action],
+                        prob=list(prob),
+                        value=value,
+                    )
+                ]
+        else:
+            # Training mode: soft expert logit bias — correct PPO ratio
+            expert_bias = expert.get_logit_bias(
+                self.preprocessor, filtered_legal, last_action=self.last_action
+            )
+            logits = logits + np.array(expert_bias, dtype=np.float32)
+
+        # Layer 2: Anti-stuck — random legal action if stuck too long
+        # Skip anti-stuck during expert return_mode (Expert handles stuck via blocked cells + A*)
+        if self.preprocessor.stuck_steps >= 10 and not expert.return_mode:
+            legal_indices = [i for i, l in enumerate(filtered_legal) if l]
+            if legal_indices:
+                random_action = int(np.random.choice(legal_indices))
+                prob = self._uniform_over_legal(filtered_legal)
+                return [
+                    ActData(
+                        action=[random_action],
+                        d_action=[random_action],
+                        prob=prob,
+                        value=value,
+                    )
+                ]
+
+        # RL decision (with biased logits in training mode)
+        legal_arr = np.array(filtered_legal, dtype=np.float32)
         prob = self._legal_soft_max(logits, legal_arr)
         action = self._legal_sample(prob, use_max=False)
         d_action = self._legal_sample(prob, use_max=True)
@@ -226,10 +290,10 @@ class Agent(BaseAgent):
     def exploit(self, env_obs):
         """Greedy inference for evaluation.
 
-        评估时推理（贪心）。
+        评估时推理（贪心）。使用 Expert 硬覆盖保证最大存活率。
         """
         obs_data, _ = self.observation_process(env_obs)
-        act_data = self.predict([obs_data])[0]
+        act_data = self.predict([obs_data], use_hard_override=True)[0]
         return self.action_process(act_data, is_stochastic=False)
 
     def learn(self, list_sample_data):
@@ -342,25 +406,10 @@ class Agent(BaseAgent):
         value = rst[1].cpu().numpy()[0]
         return logits, value
 
-    def _blend_policy_logits(self, logits):
-        biases = self.preprocessor.get_action_biases()
-        if biases is None:
-            return logits
-
-        mode = getattr(self.preprocessor, "current_mode", Config.MODE_NUM)
-        if mode == self.preprocessor.MODE_CHARGE:
-            bias_scale = 1.15
-        elif mode == self.preprocessor.MODE_EVADE:
-            bias_scale = 1.35
-        else:
-            bias_scale = 0.75
-
-        invalid_pressure = float(np.clip(getattr(self.preprocessor, "invalid_move_ema", 0.0), 0.0, 1.0))
-        revisit_pressure = float(
-            np.clip((getattr(self.preprocessor, "cur_visit_count", 1) - 1) / 6.0, 0.0, 1.0)
-        )
-        adaptive_scale = bias_scale + 0.4 * invalid_pressure + 0.2 * revisit_pressure
-        return logits + adaptive_scale * biases
+    def _uniform_over_legal(self, legal_action):
+        """Uniform distribution over legal actions (for stable PPO ratio)."""
+        n = max(sum(legal_action), 1)
+        return [1.0 / n if x else 0.0 for x in legal_action]
 
     def _legal_soft_max(self, logits, legal_action):
         """Softmax with legal action masking.

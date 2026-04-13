@@ -2,7 +2,8 @@
 # Maps used for training. Customize by keeping only desired map IDs, e.g. [1, 2] for maps 1 and 2.
 # 训练使用的地图。可自定义选择期望用来训练的地图，如只期望使用1、2号地图训练数组内仅保留[1,2]即可。
 # 方案B Phase2: 提高电量到300, 让agent有足够步数探索并学会使用充电桩
-map = [1, 2, 3]
+# 使用全部10张公开地图训练，避免泛化失败
+map = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 # Whether to randomly select maps. Boolean.
 # true = randomly pick one from configured maps per episode, false = used sequentially.

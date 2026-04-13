@@ -18,6 +18,7 @@ code/*.meta.json
 !code/model.ckpt-resume.meta.json
 code/resume_snapshots/
 code/manual_checkpoints/
+code/session_best/
 
 license.dat
 dev/

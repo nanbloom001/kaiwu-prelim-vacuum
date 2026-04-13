@@ -81,16 +81,6 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         },
     )
 
-    shared_code_dir = resolve_shared_code_dir()
-    resume_ckpt = shared_code_dir / "model.ckpt-resume.pkl"
-    if resume_ckpt.exists():
-        try:
-            state_dict = torch.load(resume_ckpt, map_location=agent.device, weights_only=True)
-            agent.model.load_state_dict(state_dict)
-            logger.info(f"[RESUME] Loaded checkpoint from {resume_ckpt}")
-        except Exception as exc:
-            logger.warning(f"[RESUME] Failed to load checkpoint: {exc}")
-
     episode_runner = EpisodeRunner(
         env=env,
         agent=agent,
@@ -276,8 +266,14 @@ class EpisodeRunner:
         self.best_robust_score = float("-inf")
         self.last_clean_score = 0.0
         self.is_new_best = False
+        self.per_map_scores: dict[str, list[float]] = {}
         self.code_path = resolve_shared_code_dir()
         self.code_dir = str(self.code_path)
+        self.session_id = time.strftime("%Y%m%d-%H%M%S")
+        self.session_dir = self.code_path / "session_best" / self.session_id
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.best_score_file = self.session_dir / "best_score.json"
+        self.logger.info(f"[SESSION] New training session: {self.session_id}")
         self.resume_snapshot_dir = self.code_path / "resume_snapshots"
         self.resume_snapshot_dir.mkdir(parents=True, exist_ok=True)
         self.resume_latest_path = self.code_path / "model.ckpt-resume.pkl"
@@ -302,12 +298,45 @@ class EpisodeRunner:
         self.keep_time_snapshots = Config.KEEP_TIME_RESUME_SNAPSHOTS
         self.keep_best_snapshots = Config.KEEP_BEST_RESUME_SNAPSHOTS
 
+    def _persist_best_score(self):
+        data = {
+            "best_robust_score": self.best_robust_score,
+            "best_avg_score": self.best_avg_score,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "episode_cnt": self.episode_cnt,
+        }
+        tmp = self.best_score_file.parent / f".{self.best_score_file.name}.{os.getpid()}.{time.time_ns()}.tmp"
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=True, indent=2)
+        os.replace(tmp, self.best_score_file)
+
+    def _update_manifest(self):
+        manifest_path = self.code_path / "session_best" / "manifest.json"
+        entries = {}
+        if manifest_path.exists():
+            try:
+                entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                entries = {}
+        entries[self.session_id] = {
+            "best_robust_score": round(self.best_robust_score, 4),
+            "best_avg_score": round(self.best_avg_score, 4),
+            "episode_cnt": self.episode_cnt,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        tmp = manifest_path.parent / f".manifest.{os.getpid()}.{time.time_ns()}.tmp"
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=True, indent=2)
+        os.replace(tmp, manifest_path)
+
     def _save_best_model(self, clean_score):
-        best_path = os.path.join(self.code_dir, "best_model.pkl")
+        best_path = self.session_dir / "best_model.pkl"
         state_dict = {k: v.clone().cpu() for k, v in self.agent.model.state_dict().items()}
         torch.save(state_dict, best_path)
+        self._persist_best_score()
+        self._update_manifest()
         self.logger.info(
-            f"[BEST] ep={self.episode_cnt} avg={self.best_avg_score:.2f} "
+            f"[BEST] session={self.session_id} ep={self.episode_cnt} avg={self.best_avg_score:.2f} "
             f"robust={self.best_robust_score:.2f} score={clean_score:.1f} saved to {best_path}"
         )
 
@@ -355,14 +384,28 @@ class EpisodeRunner:
         )
 
         if with_named_snapshot:
+            if trigger == "best":
+                snapshot_name = f"best-ep{self.episode_cnt:06d}-score{int(round(clean_score)):05d}.pkl"
+                snapshot_path = self.session_dir / snapshot_name
+                self._write_state_dict(snapshot_path, state_dict)
+                self.archive.log_event(
+                    "resume_snapshot_saved",
+                    {
+                        "trigger": trigger,
+                        "episode_cnt": self.episode_cnt,
+                        "clean_score": round(float(clean_score), 4),
+                        "path": str(snapshot_path),
+                    },
+                )
+                self.logger.info(
+                    f"[SNAPSHOT] trigger={trigger} ep={self.episode_cnt} "
+                    f"score={clean_score:.1f} path={snapshot_path}"
+                )
+                return
             if trigger == "episode":
                 snapshot_name = f"resume-episode-ep{self.episode_cnt:06d}.pkl"
                 keep_count = self.keep_episode_snapshots
                 prune_prefix = "resume-episode"
-            elif trigger == "best":
-                snapshot_name = f"resume-best-ep{self.episode_cnt:06d}-score{int(round(clean_score)):05d}.pkl"
-                keep_count = self.keep_best_snapshots
-                prune_prefix = "resume-best"
             else:
                 snapshot_name = f"resume-time-{time.strftime('%Y%m%d-%H%M%S')}.pkl"
                 keep_count = self.keep_time_snapshots
@@ -416,6 +459,7 @@ class EpisodeRunner:
                             continue
                         for key, value in group_metrics.items():
                             window_payload[f"{group_name}_{key}"] = value
+                    self.archive.log_train_window(window_payload)
                     if now - self.last_perf_stat_time >= _env_int(
                         "KAIWU_PERF_STAT_WINDOW_SECONDS", Config.PERF_STAT_WINDOW_SECONDS
                     ):
@@ -424,7 +468,6 @@ class EpisodeRunner:
                         for key, value in runtime_metrics.items():
                             window_payload[f"agent_{key}"] = value
                         self.last_perf_stat_time = now
-                    self.archive.log_train_window(window_payload)
 
             sampled_usr_conf, sampled_meta = self.config_sampler.sample(self.episode_cnt + 1)
             sampled_env_conf = deepcopy(sampled_meta["env_conf"])
@@ -441,8 +484,9 @@ class EpisodeRunner:
                 )
                 continue
 
-            load_begin = time.perf_counter()
             self.agent.reset(env_obs)
+
+            load_begin = time.perf_counter()
             self.agent.load_model(id="latest")
             self.perf_window.add("load_model", (time.perf_counter() - load_begin) * 1000.0)
 
@@ -585,10 +629,10 @@ class EpisodeRunner:
         outcome_bonus = {
             "completed": 1.5,
             "battery": -2.5,
-            "collision": -4.0,
+            "collision": -6.0,
             "unknown": -3.0,
         }.get(fail_reason, -3.0)
-        efficiency_bonus = 0.4 * cleaning_ratio + 0.2 * min(clean_score / max(step, 1), 1.5)
+        efficiency_bonus = 0.5 * cleaning_ratio + 0.5 * min(clean_score / max(step, 1), 1.0)
         final_reward = outcome_bonus + efficiency_bonus
         result_str = "WIN" if fail_reason == "completed" else "FAIL"
 
@@ -610,19 +654,46 @@ class EpisodeRunner:
         self.rolling_charge_efficiency_total += charge_efficiency
         self.rolling_clean_per_step_total += clean_per_step
 
+        map_id = extra_info.get("map_id") or extra_info.get("map_code") or "?"
+        actual_robot_count = int(env_info.get("npc_count", sampled_env_conf.get("robot_count", 1)))
+        actual_charger_count = int(env_info.get("total_charger", sampled_env_conf.get("charger_count", 4)))
         self.logger.info(
             f"[GAMEOVER] ep:{self.episode_cnt} steps:{step} "
             f"result:{result_str} final_bonus:{final_reward:.2f} "
             f"total_reward:{total_reward:.3f} clean_score:{clean_score:.1f} "
             f"dirt_cleaned:{fm.dirt_cleaned}/{fm.total_dirt} "
             f"invalid_move_rate:{invalid_move_rate:.3f} "
-            f"profile:{sampled_meta['profile']}"
+            f"profile:{sampled_meta['profile']} "
+            f"map:{map_id} chargers:{actual_charger_count} robots:{actual_robot_count}"
         )
 
         self.score_window.append(clean_score)
         if len(self.score_window) > 30:
             self.score_window.pop(0)
         self.is_new_best = False
+
+        # Per-map score tracking for generalization monitoring
+        if map_id != "?":
+            self.per_map_scores.setdefault(str(map_id), []).append(clean_score)
+            if len(self.per_map_scores[str(map_id)]) > 30:
+                self.per_map_scores[str(map_id)] = self.per_map_scores[str(map_id)][-30:]
+
+        # Log cross-map variance every 10 episodes
+        if self.episode_cnt % 10 == 0 and len(self.per_map_scores) >= 3:
+            map_avgs = {}
+            for mid, scores in sorted(self.per_map_scores.items()):
+                if len(scores) >= 3:
+                    map_avgs[mid] = round(sum(scores[-10:]) / len(scores[-10:]), 1)
+            if len(map_avgs) >= 3:
+                avg_vals = list(map_avgs.values())
+                variance = float(np.std(avg_vals))
+                min_avg = min(avg_vals)
+                spread = max(avg_vals) - min_avg
+                self.logger.info(
+                    f"[MAP_STATS] maps:{map_avgs} "
+                    f"variance:{variance:.1f} min_avg:{min_avg:.1f} spread:{spread:.1f}"
+                )
+
         if len(self.score_window) >= 20:
             rolling_avg = sum(self.score_window) / len(self.score_window)
             robust_score = (
@@ -639,8 +710,6 @@ class EpisodeRunner:
                 self.is_new_best = True
 
         checkpoint_ref = getattr(self.agent, "current_model_ref", {}) or {}
-        actual_robot_count = int(env_info.get("npc_count", sampled_env_conf.get("robot_count", 1)))
-        actual_charger_count = int(env_info.get("total_charger", sampled_env_conf.get("charger_count", 4)))
         actual_battery_max = int(hero.get("battery_max", env_info.get("battery_max", sampled_env_conf.get("battery_max", 200))))
         actual_max_step = int(env_info.get("max_step", sampled_env_conf.get("max_step", step)))
         episode_payload = {

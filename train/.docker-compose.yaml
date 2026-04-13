@@ -52,14 +52,18 @@ x-kaiwu-client:
     KAIWU_EXPERIMENT_DUMP_MODEL_FREQ: ${KAIWU_EXPERIMENT_DUMP_MODEL_FREQ}
     KAIWU_EXPERIMENT_REPLAY_BUFFER_CACHE_MULTIPLIER: ${KAIWU_EXPERIMENT_REPLAY_BUFFER_CACHE_MULTIPLIER}
     KAIWU_EXPERIMENT_REVERB_RATE_LIMITER: ${KAIWU_EXPERIMENT_REVERB_RATE_LIMITER}
+    KAIWU_EXPERIMENT_REVERB_SAMPLER: ${KAIWU_EXPERIMENT_REVERB_SAMPLER}
+    KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE: ${KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE}
     KAIWU_PERF_STAT_WINDOW_SECONDS: ${KAIWU_PERF_STAT_WINDOW_SECONDS}
+    KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE: ${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE}
+    KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE: ${KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE}
 
 services:
   # ==================== Learner 学习器 ====================
   learner:
     image: 'kaiwu-pub.tencentcloudcr.com/project/${KAIWU_PROJECT_CODE}/edu/win_gpu:${KAIWU_PROJECT_VERSION}'
     volumes:
-      - shared_volume_model:/workspace/train/backup_model
+      - '${KAIWU_BACKUP_MODEL}:/workspace/train/backup_model'
       - shared_volume_train:/workspace/train
       - '${KAIWU_TRAIN_LOG}:/workspace/log'
       - '${KAIWU_CODE_FILE}:/workspace/code'
@@ -235,10 +239,28 @@ services:
             text = text.replace(old, new, 1)
             model_file_common_target.write_text(text)
 
+        # Model signer V2 lives in the mounted code directory (code/agent_ppo/utils/model_signer.py).
+        # It processes tar.gz files created by after_save_model() into signed zips.
+        # V1 injection removed — the file is maintained in the repo and auto-mounted.
+        signer_path = Path("/workspace/code/agent_ppo/utils/model_signer.py")
+        if not signer_path.exists():
+            raise SystemExit(f"Model signer not found at {signer_path}")
+        signer_marker = "# MODEL_SIGNER_V2"
+        signer_text = signer_path.read_text()
+        if signer_marker not in signer_text:
+            raise SystemExit(f"Model signer at {signer_path} is not V2, expected {signer_marker}")
+
+        # Patch trainer.py: use ModelSignerThread instead of skipping model_file_saver
         trainer_target = root / "kaiwudrl/server/learner/trainer.py"
         text = trainer_target.read_text()
         trainer_marker = 'self.logger.info("train skip model_file_saver process because push_to_cos is disabled")'
         if trainer_marker not in text:
+            import_line = "from agent_ppo.utils.model_signer import ModelSignerThread\n"
+            if "ModelSignerThread" not in text:
+                text = text.replace(
+                    "from common_python.worker.worker import Worker, WorkerConfig\n",
+                    "from common_python.worker.worker import Worker, WorkerConfig\n" + import_line,
+                )
             old = "\n".join([
                 "        if self.agent_wrapper.is_chief:",
                 "            # model_file_saver, 用于保存模型文件到持久化设备, 比如COS, 采用单独的进程处理, 只有主learner进程才会执行",
@@ -249,17 +271,16 @@ services:
             new = "\n".join([
                 "        self.model_file_saver = None",
                 "        if self.agent_wrapper.is_chief:",
-                "            # 独立 Linux 训练且未开启 COS 时，跳过额外 fork 的 model_file_saver 进程。",
-                "            if int(CONFIG.push_to_cos):",
-                "                self.model_file_saver = ModelFileSave()",
-                "                self.model_file_saver.start()",
-                "            else:",
-                '                self.logger.info("train skip model_file_saver process because push_to_cos is disabled")',
+                "            # Linux: threading-based signer replaces fork-based ModelFileSave",
+                "            self.model_file_saver = ModelSignerThread(self.logger)",
+                "            self.model_file_saver.start()",
                 "",
             ])
             if old not in text:
                 raise SystemExit(f"Failed to patch {trainer_target}: model_file_saver anchor not found")
             text = text.replace(old, new, 1)
+            trainer_target.write_text(text)
+
         debug_marker = 'self.logger.info("train debug milestone after_alloc_utils")'
         if debug_marker not in text:
             replacements = [
@@ -509,12 +530,88 @@ services:
             "KAIWU_REVERB_NUM_WORKERS_PER_ITERATOR",
         )
 
-        app_conf_target = root / "conf/configure_app.toml"
-        replace_toml_key(app_conf_target, "train_batch_size", "KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE")
-        replace_toml_key(app_conf_target, "dump_model_freq", "KAIWU_EXPERIMENT_DUMP_MODEL_FREQ")
-        replace_toml_key(app_conf_target, "reverb_rate_limiter", "KAIWU_EXPERIMENT_REVERB_RATE_LIMITER")
+        # ---- Phase 2: Patch configure.toml for predict_batch_size ----
+        configure_toml = root / "kaiwudrl/conf/kaiwudrl/configure.toml"
+        replace_toml_key(configure_toml, "predict_batch_size", "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE")
+        replace_toml_key(configure_toml, "proxy_batch_size", "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE")
+
+        # Write post-init patcher that runs AFTER start_train_client.sh
+        # (init_code.sh in start_train_client.sh copies code/conf/ over project conf/,
+        #  overwriting any patches applied before it)
+        import tempfile
+        patcher = root / "kaiwudrl/post_init_patch.py"
+        patcher.write_text(
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "\n"
+            "def format_toml_value(value):\n"
+            "    try:\n"
+            "        int(value)\n"
+            "        return value\n"
+            "    except ValueError:\n"
+            "        return f'\"{value}\"'\n"
+            "\n"
+            "def replace_toml_key(target, key, env_name):\n"
+            "    env_value = os.environ.get(env_name)\n"
+            "    if env_value in (None, ''):\n"
+            "        return\n"
+            "    text = target.read_text()\n"
+            "    lines = text.splitlines()\n"
+            "    replacement = f'{key} = {format_toml_value(env_value)}'\n"
+            "    filtered = [line for line in lines if line.strip().split('=', 1)[0].strip() != key]\n"
+            "    updated = '\\n'.join(filtered)\n"
+            "    if updated:\n"
+            "        updated = f'{updated}\\n{replacement}\\n'\n"
+            "    else:\n"
+            "        updated = f'{replacement}\\n'\n"
+            "    if updated != text:\n"
+            "        target.write_text(updated)\n"
+            "        print(f'[post-init] {key} = {env_value}')\n"
+            "\n"
+            "project = os.environ.get('KAIWU_PROJECT_CODE', 'robot_vacuum')\n"
+            "root = Path(f'/data/projects/{project}')\n"
+            "app_conf = root / 'conf/configure_app.toml'\n"
+            "learner_conf = root / 'kaiwudrl/conf/kaiwudrl/learner.toml'\n"
+            "\n"
+            "replace_toml_key(learner_conf, 'pytorch_read_data_from_reverb_type', 'KAIWU_PYTORCH_READ_DATA_FROM_REVERB_TYPE')\n"
+            "replace_toml_key(learner_conf, 'replay_buffer_cache_multiplier', 'KAIWU_EXPERIMENT_REPLAY_BUFFER_CACHE_MULTIPLIER')\n"
+            "replace_toml_key(learner_conf, 'reverb_num_workers_per_iterator', 'KAIWU_REVERB_NUM_WORKERS_PER_ITERATOR')\n"
+            "replace_toml_key(app_conf, 'train_batch_size', 'KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE')\n"
+            "replace_toml_key(app_conf, 'dump_model_freq', 'KAIWU_EXPERIMENT_DUMP_MODEL_FREQ')\n"
+            "replace_toml_key(app_conf, 'reverb_rate_limiter', 'KAIWU_EXPERIMENT_REVERB_RATE_LIMITER')\n"
+            "replace_toml_key(app_conf, 'reverb_sampler', 'KAIWU_EXPERIMENT_REVERB_SAMPLER')\n"
+            "replace_toml_key(app_conf, 'send_sample_size', 'KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE')\n"
+        )
+        print(f"Wrote post-init patcher to {patcher}")
         PY
-        bash /root/tools/start_train_client.sh learner
+        if [ -n "${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE:-}" ]; then
+          sed -i "s|sh tools/change_sample_server.sh reverb|sh tools/change_sample_server.sh ${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE}|g" /root/tools/common.sh
+          echo "[learner-sed] Patched common.sh to use ${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE}"
+        fi
+        COORD_SLEEP="${KAIWU_EXPERIMENT_COORDINATOR_SLEEP:-}"
+        if [ -n "$$COORD_SLEEP" ]; then
+          V1_FILE="/data/projects/robot_vacuum/kaiwudrl/common/replay_buffer/reverb_dataset_v1.py"
+          sed -i "s/time\.sleep(0\.3)/time.sleep($${COORD_SLEEP})/" "$$V1_FILE"
+          echo "[learner-sed] Patched V1 coordinator sleep to $${COORD_SLEEP}s"
+        fi
+        FILL_WORKERS="${KAIWU_EXPERIMENT_FILL_WORKERS:-}"
+        if [ -n "$$FILL_WORKERS" ]; then
+          V1_FILE="/data/projects/robot_vacuum/kaiwudrl/common/replay_buffer/reverb_dataset_v1.py"
+          sed -i "s/for _ in range(3):/for _ in range($${FILL_WORKERS}):/" "$$V1_FILE"
+          echo "[learner-sed] Patched V1 fill workers to $${FILL_WORKERS}"
+        fi
+        FILL_FETCH="${KAIWU_EXPERIMENT_FILL_FETCH_SIZE:-}"
+        if [ -n "$$FILL_FETCH" ]; then
+          V1_FILE="/data/projects/robot_vacuum/kaiwudrl/common/replay_buffer/reverb_dataset_v1.py"
+          sed -i "s/num_samples=CONFIG.train_batch_size)/num_samples=$${FILL_FETCH})/" "$$V1_FILE"
+          echo "[learner-sed] Patched V1 fill fetch size to $${FILL_FETCH}"
+        fi
+        V1_OPT="/workspace/code/reverb_dataset_v1_optimized.py"
+        if [ -f "$$V1_OPT" ]; then
+          cp "$$V1_OPT" /data/projects/robot_vacuum/kaiwudrl/common/replay_buffer/reverb_dataset_v1.py
+          echo "[learner-cp] Replaced V1 with optimized version (MT-fill + pin_memory + fixed locking)"
+        fi
+        bash -c '/root/tools/start_train_client.sh learner & sleep 10 && python3 /data/projects/robot_vacuum/kaiwudrl/post_init_patch.py && wait'
     deploy:
       resources:
         reservations:
@@ -530,7 +627,7 @@ services:
   aisrv:
     image: 'kaiwu-pub.tencentcloudcr.com/project/${KAIWU_PROJECT_CODE}/edu/win_gpu:${KAIWU_PROJECT_VERSION}'
     volumes:
-      - shared_volume_model:/workspace/train/backup_model
+      - '${KAIWU_BACKUP_MODEL}:/workspace/train/backup_model'
       - shared_volume_train:/workspace/train
       - '${KAIWU_TRAIN_LOG}:/workspace/log'
       - '${KAIWU_CODE_FILE}:/workspace/code'
@@ -865,8 +962,79 @@ services:
                 raise SystemExit(f"Failed to patch {off_policy_target}: cleanup anchor not found")
             text = text.replace(old, new, 1)
         off_policy_target.write_text(text)
+
+        def format_toml_value(value):
+            if value.lower() in {"true", "false"}:
+                return value.lower()
+            try:
+                int(value)
+                return value
+            except ValueError:
+                return f'"{value}"'
+
+        def replace_toml_key(target, key, env_name):
+            env_value = os.environ.get(env_name)
+            if env_value in (None, ""):
+                return
+            text = target.read_text()
+            lines = text.splitlines()
+            replacement = f"{key} = {format_toml_value(env_value)}"
+            filtered = [line for line in lines if line.strip().split("=", 1)[0].strip() != key]
+            updated = "\n".join(filtered)
+            if updated:
+                updated = f"{updated}\n{replacement}\n"
+            else:
+                updated = f"{replacement}\n"
+            if updated != text:
+                target.write_text(updated)
+
+        # ---- Phase 2: Patch configure.toml for predict_batch_size (aisrv side) ----
+        configure_toml = root / "kaiwudrl/conf/kaiwudrl/configure.toml"
+        replace_toml_key(configure_toml, "predict_batch_size", "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE")
+        replace_toml_key(configure_toml, "proxy_batch_size", "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE")
+
+        # Write aisrv post-init patcher (runs after start_train_client.sh
+        # because init_code.sh copies code/conf/ over project conf/)
+        patcher = root / "kaiwudrl/aisrv_post_init_patch.py"
+        patcher.write_text(
+            "import os\n"
+            "from pathlib import Path\n"
+            "\n"
+            "def format_toml_value(value):\n"
+            "    try:\n"
+            "        int(value)\n"
+            "        return value\n"
+            "    except ValueError:\n"
+            "        return f'\"{value}\"'\n"
+            "\n"
+            "def replace_toml_key(target, key, env_name):\n"
+            "    env_value = os.environ.get(env_name)\n"
+            "    if env_value in (None, ''):\n"
+            "        return\n"
+            "    text = target.read_text()\n"
+            "    lines = text.splitlines()\n"
+            "    replacement = f'{key} = {format_toml_value(env_value)}'\n"
+            "    filtered = [line for line in lines if line.strip().split('=', 1)[0].strip() != key]\n"
+            "    updated = '\\n'.join(filtered)\n"
+            "    if updated:\n"
+            "        updated = f'{updated}\\n{replacement}\\n'\n"
+            "    else:\n"
+            "        updated = f'{replacement}\\n'\n"
+            "    if updated != text:\n"
+            "        target.write_text(updated)\n"
+            "        print(f'[aisrv-post-init] {key} = {env_value}')\n"
+            "\n"
+            "project = os.environ.get('KAIWU_PROJECT_CODE', 'robot_vacuum')\n"
+            "root = Path(f'/data/projects/{project}')\n"
+            "app_conf = root / 'conf/configure_app.toml'\n"
+            "replace_toml_key(app_conf, 'send_sample_size', 'KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE')\n"
+        )
         PY
-        bash /root/tools/start_train_client.sh aisrv
+        if [ -n "${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE:-}" ]; then
+          sed -i "s|sh tools/change_sample_server.sh reverb|sh tools/change_sample_server.sh ${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE}|g" /root/tools/common.sh
+          echo "[aisrv-sed] Patched common.sh to use ${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE}"
+        fi
+        bash -c '/root/tools/start_train_client.sh aisrv & sleep 10 && python3 /data/projects/robot_vacuum/kaiwudrl/aisrv_post_init_patch.py && wait'
     scale: ${KAIWU_AISRV_NUM}
     profiles:
       - distributed
@@ -912,7 +1080,7 @@ services:
     image: 'kaiwu-pub.tencentcloudcr.com/client/exp-service:master-b3e704f9-0202'
     restart: always
     volumes:
-      - shared_volume_model:/workspace/train/backup_model
+      - '${KAIWU_BACKUP_MODEL}:/workspace/train/backup_model'
       - '${KAIWU_BACKUP_MODEL}:/workspace/train/sign_model'
     environment:
       <<: *env
@@ -1010,5 +1178,4 @@ services:
         condition: service_started
 
 volumes:
-  shared_volume_model:
   shared_volume_train:
