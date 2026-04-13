@@ -19,6 +19,7 @@ code/*.meta.json
 code/resume_snapshots/
 code/manual_checkpoints/
 code/session_best/
+# saved_models/ 为手选优秀模型，需要 git 跟踪
 code/*.tmp
 
 # 打包临时/提交目录
