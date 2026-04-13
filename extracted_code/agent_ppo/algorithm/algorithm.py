@@ -19,7 +19,6 @@ import time
 import torch
 
 from agent_ppo.conf.conf import Config
-from agent_ppo.utils.experiment_archive import ExperimentArchive
 
 
 class Algorithm:
@@ -35,7 +34,6 @@ class Algorithm:
         self.vf_coef = Config.VF_COEF
         self.var_beta = Config.BETA_START
         self.label_size = Config.ACTION_NUM
-        self.archive = ExperimentArchive(service_name=os.getenv("KAIWU_SERVICE_NAME") or "learner")
 
         self.train_step = 0
         self.last_report_time = 0
@@ -89,23 +87,11 @@ class Algorithm:
             results["policy_loss"] = round(info["policy_loss"], 4)
             results["entropy_loss"] = round(info["entropy_loss"], 4)
             results["reward"] = round(reward.mean().item(), 4)
-            results["train_step"] = self.train_step
 
             self.logger.info(
                 f"policy_loss: {results['policy_loss']}, "
                 f"value_loss: {results['value_loss']}, "
                 f"entropy_loss: {results['entropy_loss']}"
-            )
-            self.archive.log_train_window(
-                {
-                    "record_type": "algorithm_window",
-                    "train_step": self.train_step,
-                    "total_loss": results["total_loss"],
-                    "policy_loss": results["policy_loss"],
-                    "value_loss": results["value_loss"],
-                    "entropy_loss": results["entropy_loss"],
-                    "reward_mean": results["reward"],
-                }
             )
             if self.monitor:
                 self.monitor.put_data({os.getpid(): results})
@@ -153,15 +139,9 @@ class Algorithm:
             -ratio.clamp(1 - self.clip_param, 1 + self.clip_param) * adv,
         ).mean()
 
-        # Total loss with adaptive entropy floor
-        # 总损失（含自适应 entropy 下限保护）
-        entropy_val = entropy_loss.item()
-        effective_beta = self.var_beta
-        if entropy_val < Config.ENTROPY_FLOOR:
-            floor_gap = Config.ENTROPY_FLOOR - entropy_val
-            effective_beta = self.var_beta + Config.ENTROPY_FLOOR_COEF * floor_gap
-
-        total_loss = self.vf_coef * value_loss + policy_loss - effective_beta * entropy_loss
+        # Total loss
+        # 总损失
+        total_loss = self.vf_coef * value_loss + policy_loss - self.var_beta * entropy_loss
 
         return total_loss, {
             "value_loss": value_loss.item(),

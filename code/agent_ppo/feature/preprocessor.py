@@ -74,6 +74,7 @@ class Preprocessor:
         self.charge_count = 0
         self.last_charge_count = 0
         self.just_charged = 0.0
+        self.pre_charge_battery = 200
 
         self.cleaned_this_step = 0
         self.new_explored_cells = 0
@@ -127,7 +128,6 @@ class Preprocessor:
 
         self._cps_ema = 0.5
         self._last_action = -1
-        self._charge_events = []
 
     def pb2struct(self, env_obs, last_action):
         observation = env_obs.get("observation") or {}
@@ -147,6 +147,7 @@ class Preprocessor:
             int((hero.get("pos") or {}).get("z", 0)),
         )
 
+        self.pre_charge_battery = self.battery
         self.battery = int(hero.get("battery", env_info.get("remaining_charge", self.battery)))
         self.battery_max = max(int(hero.get("battery_max", env_info.get("battery_max", self.battery_max))), 1)
 
@@ -592,14 +593,14 @@ class Preprocessor:
         clean_ratio = _norm(self.dirt_cleaned, self.total_dirt)
         frontier_reward = 0.15 * self.local_frontier_density * (0.5 + 0.5 * clean_ratio)
 
-        # Charger approach reward (3x stronger)
+        # Charger approach reward
         charge_pressure = float(np.clip((8.0 - self.charger_slack) / 8.0, 0.0, 1.0))
         delta_charger_slack = np.clip(
             (self.charger_slack - self.last_charger_slack) / max(self.battery_max, 1),
             -1.0,
             1.0,
         )
-        charger_reward = 0.15 * charge_pressure * float(delta_charger_slack)
+        charger_reward = 0.40 * charge_pressure * float(delta_charger_slack)
 
         # Charger path exploration: reward exploring toward known charger
         # Encourages lighting up the path to charger when area is unexplored
@@ -611,17 +612,11 @@ class Preprocessor:
                 # Reward proportional to how much closer we got + explored new cells
                 charger_path_explore = 0.12 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
 
-        # Charging reward: efficiency-based (base + need + frequency penalty)
+        # Charging reward: efficiency-based — actual charge received / battery capacity
         if self.just_charged:
-            battery_ratio = self.battery / max(self.battery_max, 1)
-            charge_base = 0.3
-            need = max(0.0, 1.0 - battery_ratio)
-            charge_eff = 0.4 * need
-            self._charge_events.append(self.step_no)
-            self._charge_events = [s for s in self._charge_events if self.step_no - s < 300]
-            total_recent = len(self._charge_events)
-            freq_penalty = -0.15 * max(total_recent - 3, 0)
-            charge_reward = max(charge_base + charge_eff + freq_penalty, -0.3)
+            charge_received = max(0.0, float(self.battery - self.pre_charge_battery + 1))
+            efficiency = charge_received / max(self.battery_max, 1)
+            charge_reward = 3.0 * efficiency  # [0, 3.0], scales with actual charge
         else:
             charge_reward = 0.0
 
@@ -661,6 +656,11 @@ class Preprocessor:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 0.0
         efficiency_reward = 0.3 * max(self._cps_ema - 0.75, 0)
 
+        # Urgency penalty: local signal when battery can't reach charger
+        urgency_penalty = 0.0
+        if self.charger_slack < 0 and not self.just_charged:
+            urgency_penalty = -0.4 * min(float(-self.charger_slack) / 8.0, 1.0)
+
         reward = (
             cleaning_reward
             + streak_bonus
@@ -677,5 +677,6 @@ class Preprocessor:
             + idle_penalty
             + dirty_approach_reward
             + efficiency_reward
+            + urgency_penalty
         )
-        return float(np.clip(reward, -3.0, 4.0))
+        return float(np.clip(reward, -5.0, 5.0))

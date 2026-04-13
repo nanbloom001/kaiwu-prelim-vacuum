@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-13
+
+~20:30 | 撤销步数对齐保存（框架签名 .zip 不受我们代码控制），改为将 RESUME_TIME_SNAPSHOT_INTERVAL 从 15 分钟缩短到 10 分钟。
+~20:05 | 手动保存最佳 checkpoint：v51-step4900。选择理由：CC=7.0（充电策略最佳）、Entropy=0.37（健康）、CompRate=1.00、CS=1035。在 10 个候选点中 balanced score 排名第 2（1553），仅次于 ckpt-1000（早期不稳定）。保存至 code/saved_models/v51-step4900/。
+~17:30 | v5.1 充电效率修复（仅改 preprocessor.py）。(1) 新增 pre_charge_battery 追踪充电前电量；(2) charge_reward 替换为效率公式 3.0*(charge_received/battery_max)，消除"充满后 reward 恒 2.0"的 bug；(3) 新增 urgency_penalty：charger_slack<0 时 -0.4*min(-slack/8,1)，强化本地紧急信号替代依赖 GAE 传播的弱死亡惩罚。
+~16:35 | v5 优化实施完成（基于外部 AI 专家方案 + 3-agent 验证团队核查）。4 文件修改：(1) agent.py predict() 修复 prob 存储——biased采样+clean存储，消除 PPO 梯度对抗；(2) preprocessor.py charge_reward 0.3→2.0+1.5*need, charger_approach 0.15→0.40, 删除 freq_penalty, clip [-3,4]→[-5,5];(3) algorithm.py 加 adaptive entropy floor;(4) conf.py BETA=0.012, CLIP=0.15, LR=5e-5, ENTROPY_FLOOR=0.5, COEF=0.1, RESUME_CHECKPOINT 启用。Resume 从 v5-step4300。详见 V5_OPTIMIZATION_ANALYSIS.md。
+~12:00 | v4 训练深度分析完成。核心发现：Expert Logit Bias 机制失败——soft bias 与 PPO 梯度对抗，模型学会"充电不好"。Entropy 2.0→0.08 塌缩。推荐新方案：Hard Override + PPO 梯度隔离（override 时不参与 policy loss）+ Entropy floor。详细分析见 DIAGNOSIS_v4_analysis.md。
+~11:50 | 选定 resume checkpoint：resume-episode-ep000200 (step~4300, CPS=0.862, comp=100%)，迁移至 saved_models/v5-step4300/。
+~04:15 | v4 训练停止（step 7606, 2736 ep）。趋势：CPS 0.29→0.89 但 comp rate 100%→68%，entropy 2.0→0.08 塌缩，charge_count 14→1。
+
 ## 2026-04-12
 
 ~23:30 | Fix resume control: add RESUME_CHECKPOINT config in conf.py (None=fresh, filename=resume). Replace agent.py hardcoded auto-resume with config-driven logic. Remove redundant resume in train_workflow.py. Root cause: model.ckpt-resume.pkl always existed → every platform start triggered resume.
