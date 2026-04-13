@@ -1,0 +1,156 @@
+========== 2026-04-11 16:56:38 Starting run_server ==========
+override config with args: {'app': 'robot_vacuum', 'use_alloc': False, 'use_prometheus': False, 'train_or_eval': 'eval', 'eval_game_id': '409173_1_1', 'exam_random_seed': 'default'}
+2026-04-11 16:56:40.867 | INFO | PID:489 | env_core.init_data_handler:132 - env timeit enabled: False
+2026-04-11 16:56:41.130 | INFO | PID:489 | env_core.init_data_handler:139 - env KaiwuDataHandler init success, KaiwuDataHandler class is environments.robot_vacuum.data_handler.KaiwuDataHandler
+2026-04-11 16:56:41.130 | INFO | PID:489 | env_core.init_env_adapter:46 - env timeit enabled: False
+Current working directory: /data/projects/kaiwu_arena/robot_vacuum/lib
+Env client config path: /data/projects/kaiwu_arena/robot_vacuum/lib/conf/env_client_setting.toml
+config_path: /data/projects/kaiwu_arena/robot_vacuum/lib/conf/env_client_setting.toml
+Current working directory: /data/projects/kaiwu_arena/robot_vacuum/lib
+Simulators config path: /data/projects/kaiwu_arena/robot_vacuum/lib/conf/simulators.toml
+Loading simulators config from: /data/projects/kaiwu_arena/robot_vacuum/lib/conf/simulators.toml
+2026-04-11 16:56:41 [DEBUG] (1) kaiwu_log::kaiwu_log: === 日志系统初始化成功 ===
+2026-04-11 16:56:41 [DEBUG] (1) kaiwu_log::kaiwu_log: 日志级别: debug
+2026-04-11 16:56:41 [DEBUG] (1) kaiwu_log::kaiwu_log: 日志文件: logs/app.log
+2026-04-11 16:56:41 [DEBUG] (1) kaiwu_log::kaiwu_log: 最大文件大小: 100 MB (注意: 当前未实现自动轮转)
+2026-04-11 16:56:41 [ INFO] === 日志系统初始化成功 ===
+2026-04-11 16:56:41 [ INFO] === 🚀 libenv_client_manager 模块初始化 ===
+2026-04-11 16:56:41 [ INFO] 📋 配置模式: 本地
+2026-04-11 16:56:41 [ INFO] ✅ 设置为本地模式
+2026-04-11 16:56:41 [ INFO] 💡 提示：环境注册将在导入具体环境模块（如 gorge_walk）时自动完成
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] make() 函数开始执行
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 环境名称: robot_vacuum
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 配置实例获取成功
+2026-04-11 16:56:41 [ INFO] === 🔄 自动模式创建客户端：make ===
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 检查环境 'robot_vacuum' 的 client_mode 配置...
+2026-04-11 16:56:41 [ INFO] 📋 环境 'robot_vacuum' 的 client_mode: ''
+2026-04-11 16:56:41 [ INFO] 📋 配置模式: 本地
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 创建 handle_struct...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 调用 make_local()...
+2026-04-11 16:56:41 [ INFO] === 🏠 本地模式创建客户端：make_local ===
+2026-04-11 16:56:41 [ INFO] 🏷️  Environment name: robot_vacuum
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] ensure_env_registered() 开始
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 检查环境: robot_vacuum
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 获取已注册环境列表...
+2026-04-11 16:56:41 [ INFO] 📋 当前已注册的环境: []
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 已注册环境数量: 0
+2026-04-11 16:56:41 [ INFO] ⚠️  环境 'robot_vacuum' 未注册，尝试自动导入 Python 模块...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 获取配置实例...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 配置实例获取成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 尝试导入 Python 模块: robot_vacuum
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 添加模块搜索路径到 sys.path
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 📁 添加路径: /data/projects/kaiwu_arena
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] import_bound() 调用完成
+2026-04-11 16:56:41 [ INFO] ✅ 成功导入 Python 模块: robot_vacuum
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 获取模块 __file__ 属性...
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] getattr(__file__) 调用完成
+2026-04-11 16:56:41 [ INFO] 📄 模块文件路径: /data/projects/kaiwu_arena/robot_vacuum/__init__.py
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 处理模块文件路径...
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 提取文件路径字符串...
+2026-04-11 16:56:41 [ INFO] 调用的python脚本路径: /data/projects/kaiwu_arena/robot_vacuum/__init__.py
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 文件路径提取成功
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 获取适配器模块路径...
+Current working directory: /data/projects/kaiwu_arena/robot_vacuum/lib
+Current working directory: /data/projects/kaiwu_arena/robot_vacuum/lib/conf
+Adapter config path: /data/projects/kaiwu_arena/robot_vacuum/lib/conf/simulator_server_setting.toml
+Simulators config path: /data/projects/kaiwu_arena/robot_vacuum/lib/conf/simulators.toml
+Loading simulators config from: /data/projects/kaiwu_arena/robot_vacuum/lib/conf/simulators.toml
+2026-04-11 16:56:41 [DEBUG] (1) config::app_config::common_config: dir_abspath:/data/projects/kaiwu_arena/robot_vacuum/lib
+2026-04-11 16:56:41 [DEBUG] (1) config::app_config::common_config: adapter_module_path:/data/projects/build/robot_vacuum
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 适配器模块路径: /data/projects/build/robot_vacuum
+2026-04-11 16:56:41 [ INFO] 📂 模块目录路径: /data/projects/build/robot_vacuum
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 检查路径是否存在: false
+2026-04-11 16:56:41 [ INFO] 📂 模块路径: /data/projects/kaiwu_arena/robot_vacuum
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 调用 register_local()...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] register_local() 开始
+2026-04-11 16:56:41 [ INFO] === 📝 本地模式注册：register_local ===
+2026-04-11 16:56:41 [ INFO] 📂 Module path: /data/projects/kaiwu_arena/robot_vacuum
+2026-04-11 16:56:41 [ INFO] 🏷️  Environment name: robot_vacuum
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 导入 sys 模块...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 获取 sys.path...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] sys.path 获取成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 规范化模块路径...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 规范化后的路径: /data/projects/kaiwu_arena/robot_vacuum
+2026-04-11 16:56:41 [ INFO] ✅ 添加模块路径到 sys.path: /data/projects/kaiwu_arena/robot_vacuum
+2026-04-11 16:56:41 [ INFO] ✅ 添加规范化父目录到 sys.path: /data/projects/kaiwu_arena
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 获取模块名称...
+2026-04-11 16:56:41 [ INFO] 📦 导入 Python 模块: robot_vacuum
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 模块名称: robot_vacuum
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 导入 importlib.util...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 创建 spec_from_file_location...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] spec 创建成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 从 spec 创建模块...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 获取 sys.modules...
+2026-04-11 16:56:41 [ WARN] ⚠️  模块 'robot_vacuum' 已存在，将重新加载
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 执行模块加载 exec_module...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 调用 loader.exec_module()...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] exec_module 执行完成
+2026-04-11 16:56:41 [ INFO] ✅ 模块导入成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 模块对象获取成功
+2026-04-11 16:56:41 [ INFO] 🔧 创建 EnvAdapter 实例...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 调用 Py::new(EnvAdapter::new())...
+2026-04-11 16:56:41 [ INFO] ✅ EnvAdapter 实例创建成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] EnvAdapter 包装完成
+2026-04-11 16:56:41 [ INFO] 📝 调用 Python 的 register 函数: _initialize_with_rust_env_adapter
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 获取 _initialize_with_rust_env_adapter 函数...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 调用 init_func.call1()...
+register:"robot_vacuum"
+2026-04-11 16:56:41 [ INFO] ✅ Python register 调用成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] _initialize_with_rust_env_adapter 执行完成
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 验证注册结果...
+2026-04-11 16:56:41 [ INFO] 📋 当前已注册的环境: ["robot_vacuum"]
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 已注册环境数量: 1
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 设置为本地模式...
+2026-04-11 16:56:41 [ INFO] ✅ 设置为本地模式
+2026-04-11 16:56:41 [ INFO] ✅ 环境 'robot_vacuum' 注册完成
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] register_local() 完成
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] register_local() 返回成功
+2026-04-11 16:56:41 [ INFO] ✅ 自动注册成功
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 验证注册结果...
+2026-04-11 16:56:41 [ INFO] 🔵 [TRACE] 注册后的环境列表: ["robot_vacuum"]
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] ensure_env_registered() 完成
+2026-04-11 16:56:41 [ INFO] 📋 Environment: robot_vacuum, Mode: Auto (Python Adapter)
+2026-04-11 16:56:41 [ INFO] 🐍 Creating Python adapter client for: robot_vacuum
+2026-04-11 16:56:41 [ INFO] ✅ EnvLocalClientItem 创建成功: handle=0
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] make_local() 返回成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] handle_struct 创建成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 包装为 Python 对象...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] Python 对象包装成功
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] 转换为 PyObject...
+2026-04-11 16:56:41 [DEBUG] (1) env_client_manager: 🔵 [TRACE] make() 函数执行完成
+sys.version_info(major=3, minor=11, micro=6, releaselevel='final', serial=0)
+3.11
+📂 Project root: /data/projects/kaiwu_arena/robot_vacuum
+📂 Python sys.path[0]: /data/projects/kaiwu_arena/robot_vacuum
+✅ 执行了 __init__.py
+✅ BaseEnvironmentAdapter imported
+✅ ResultCode imported
+📂 Project root: /data/projects/kaiwu_arena/robot_vacuum/adapter
+📂 Python sys.path[0]: /data/projects/kaiwu_arena/robot_vacuum/adapter
+✅ 执行了 ConcreteEnvironmentAdapter
+✅ ConcreteEnvironmentAdapter imported successfully
+Adapter package v1.0.0 initialized successfully
+sys.version_info(major=3, minor=11, micro=6, releaselevel='final', serial=0)
+3.11
+📂 Project root: /data/projects/kaiwu_arena/robot_vacuum
+📂 Python sys.path[0]: /data/projects/kaiwu_arena/robot_vacuum
+✅ 执行了 __init__.py
+✅ BaseEnvironmentAdapter imported
+✅ ResultCode imported
+✅ ConcreteEnvironmentAdapter imported successfully
+Adapter package v1.0.0 initialized successfully
+📦 Received EnvAdapter instance from Rust: <builtins.EnvAdapter object at 0x7faf0c0899d0>
+   Type: <class 'builtins.EnvAdapter'>
+✅ Registered 'robot_vacuum' adapter using Rust EnvAdapter instance
+✅ Successfully verified 'robot_vacuum' adapter registration
+📋 All registered environments: ['robot_vacuum']
+2026-04-11 16:56:41.142 | INFO | PID:489 | env_core.init_env_adapter:53 - env EnvAdapter init success, EnvAdapter class is environments.robot_vacuum.env_adapter.EnvAdapter
+2026-04-11 16:56:41.142 | INFO | PID:489 | inter_process_communication.create_server:61 - env DuplexPosixChannel env <--> aisrv, start at out:10.20.14.188_5567_aisrv, in:aisrv_10.20.14.188_5567 success
+2026-04-11 16:56:45.240 | INFO | PID:489 | remote_env_server.run_once:282 - env env recv reset message
+2026-04-11 16:56:45.242 | INFO | PID:489 | data_handler.handle_usr_conf:121 - env Evaluation mode map: map_id=1
+2026-04-11 16:56:45 [DEBUG] (1) env_client_manager::python_interface::env_client_handle: [EnvClientHandle] GC 回收了 20 个对象 (handle_id=0)
+[Python] ⏰ 达到最大步数
+[Python] ⏰ 达到最大步数
+2026-04-11 16:58:02.851 | INFO | PID:489 | result_helper.finish:233 - env save_game_stat success, file_path is /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.json
+2026-04-11 16:58:02.852 | INFO | PID:489 | data_handler.finish:189 - env data_handler finish success
+2026-04-11 16:58:02.852 | INFO | PID:489 | remote_env_server.run_once:298 - env env run once episode done, process_run_count is 1001

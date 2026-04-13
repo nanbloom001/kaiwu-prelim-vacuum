@@ -1,0 +1,1343 @@
++++ dirname /root/tools/start_eval.sh
+++ cd /root/tools
+++ pwd
++ shell_dir=/root/tools
++ . /root/tools/common.sh
+++++ dirname /root/tools/common.sh
++++ cd /root/tools
++++ pwd
+++ tools_dir=/root/tools
+++ . /root/tools/constant.sh
++++ app=robot_vacuum
++++ algo=diy
++++ parallel_env_per_aisrv=1
++++ env_num=
++++ aisrv_num=
++++ task_id=409173
++++ max_step=2000
++++ owner_type=battle
++++ aisrv_env_ipc_method=shared_memory
++++ ROLE_BATTLE_SERVER=1
++++ ROLE_LEARNER=4
++++ ROLE_MASTER_LEARNER=5
++++ ide_language=zh-cn
++++ scale_type=small
++++ training_mode=
++++ task_uuid=
++++ set_index=
++++ set_cnt=
++++ task_id=409173
++++ round_index=1
++++ owner_id=0
++++ have_abs=no
++++ quick_review_data_type=frame
++++ declare -A project_algorithm_list
++++ project_algorithm_list["back_to_the_realm_v2"]='agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["back_to_the_realm"]='agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["gorge_walk"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["gorge_walk_v2"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["intelligent_traffic_lights"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["intelligent_traffic_lights_v2"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["infinity_valley"]='agent_policy_gradient agent_a2c agent_diy agent_ppo'
++++ project_algorithm_list["hok1v1"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok3v3_collaboration"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok5v5_dld"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_locomotion_control"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_sim2real_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_competition_26"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone_delivery"]='agent_diy agent_ppo'
++++ project_algorithm_list["robot_vacuum"]='agent_diy agent_ppo'
++++ project_algorithm_list["gorge_chase"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone"]='agent_diy agent_ppo agent_a2c agent_target_dqn agent_dqn isaac_env'
++++ project_algorithm_list["drone_obstacle_nav"]='agent_diy agent_ppo isaac_env'
++++ project_algorithm_list["truss"]='agent_target_dqn agent_dqn agent_diy agent_ppo truss_env'
++++ [[ -n '' ]]
++++ user_save_mode_max_counts["back_to_the_realm_v2"]=200
++++ user_save_mode_max_counts["back_to_the_realm"]=200
++++ user_save_mode_max_counts["gorge_walk"]=200
++++ user_save_mode_max_counts["gorge_walk_v2"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights_v2"]=200
++++ user_save_mode_max_counts["infinity_valley"]=200
++++ user_save_mode_max_counts["hok1v1"]=200
++++ user_save_mode_max_counts["hok3v3_collaboration"]=200
++++ user_save_mode_max_counts["hok5v5_dld"]=200
++++ user_save_mode_max_counts["legged_robot_locomotion_control"]=200
++++ user_save_mode_max_counts["legged_robot_exp"]=200
++++ user_save_mode_max_counts["legged_robot_sim2real_exp"]=200
++++ user_save_mode_max_counts["legged_robot_competition_26"]=200
++++ user_save_mode_max_counts["drone_delivery"]=200
++++ user_save_mode_max_counts["robot_vacuum"]=200
++++ user_save_mode_max_counts["gorge_chase"]=200
++++ user_save_mode_max_counts["drone"]=200
++++ user_save_mode_max_counts["drone_obstacle_nav"]=200
++++ user_save_mode_max_counts["truss"]=200
++++ user_save_model_max_frequency_per_mins["back_to_the_realm_v2"]=2
++++ user_save_model_max_frequency_per_mins["back_to_the_realm"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk_v2"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights_v2"]=2
++++ user_save_model_max_frequency_per_mins["infinity_valley"]=2
++++ user_save_model_max_frequency_per_mins["hok1v1"]=2
++++ user_save_model_max_frequency_per_mins["hok3v3_collaboration"]=2
++++ user_save_model_max_frequency_per_mins["hok5v5_dld"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_locomotion_control"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_sim2real_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_competition_26"]=2
++++ user_save_model_max_frequency_per_mins["drone_delivery"]=2
++++ user_save_model_max_frequency_per_mins["robot_vacuum"]=2
++++ user_save_model_max_frequency_per_mins["gorge_chase"]=2
++++ user_save_model_max_frequency_per_mins["drone"]=2
++++ user_save_model_max_frequency_per_mins["drone_obstacle_nav"]=2
++++ user_save_model_max_frequency_per_mins["truss"]=2
+++ project_dir=/data/projects/robot_vacuum
+++ mkdir -p /data/projects/robot_vacuum
+++ host_ip=get_host_ip
++ . /root/tools/constant.sh
+++ app=robot_vacuum
+++ algo=diy
+++ parallel_env_per_aisrv=1
+++ env_num=
+++ aisrv_num=
+++ task_id=409173
+++ max_step=2000
+++ owner_type=battle
+++ aisrv_env_ipc_method=shared_memory
+++ ROLE_BATTLE_SERVER=1
+++ ROLE_LEARNER=4
+++ ROLE_MASTER_LEARNER=5
+++ ide_language=zh-cn
+++ scale_type=small
+++ training_mode=
+++ task_uuid=
+++ set_index=
+++ set_cnt=
+++ task_id=409173
+++ round_index=1
+++ owner_id=0
+++ have_abs=no
+++ quick_review_data_type=frame
+++ declare -A project_algorithm_list
+++ project_algorithm_list["back_to_the_realm_v2"]='agent_target_dqn agent_dqn agent_diy agent_ppo'
+++ project_algorithm_list["back_to_the_realm"]='agent_target_dqn agent_dqn agent_diy'
+++ project_algorithm_list["gorge_walk"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
+++ project_algorithm_list["gorge_walk_v2"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
+++ project_algorithm_list["intelligent_traffic_lights"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy agent_ppo'
+++ project_algorithm_list["intelligent_traffic_lights_v2"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy'
+++ project_algorithm_list["infinity_valley"]='agent_policy_gradient agent_a2c agent_diy agent_ppo'
+++ project_algorithm_list["hok1v1"]='agent_diy agent_ppo'
+++ project_algorithm_list["hok3v3_collaboration"]='agent_diy agent_ppo'
+++ project_algorithm_list["hok5v5_dld"]='agent_diy agent_ppo'
+++ project_algorithm_list["legged_robot_locomotion_control"]='agent_diy agent_ppo'
+++ project_algorithm_list["legged_robot_exp"]='agent_diy agent_ppo'
+++ project_algorithm_list["legged_robot_sim2real_exp"]='agent_diy agent_ppo'
+++ project_algorithm_list["legged_robot_competition_26"]='agent_diy agent_ppo'
+++ project_algorithm_list["drone_delivery"]='agent_diy agent_ppo'
+++ project_algorithm_list["robot_vacuum"]='agent_diy agent_ppo'
+++ project_algorithm_list["gorge_chase"]='agent_diy agent_ppo'
+++ project_algorithm_list["drone"]='agent_diy agent_ppo agent_a2c agent_target_dqn agent_dqn isaac_env'
+++ project_algorithm_list["drone_obstacle_nav"]='agent_diy agent_ppo isaac_env'
+++ project_algorithm_list["truss"]='agent_target_dqn agent_dqn agent_diy agent_ppo truss_env'
+++ [[ -n '' ]]
+++ user_save_mode_max_counts["back_to_the_realm_v2"]=200
+++ user_save_mode_max_counts["back_to_the_realm"]=200
+++ user_save_mode_max_counts["gorge_walk"]=200
+++ user_save_mode_max_counts["gorge_walk_v2"]=200
+++ user_save_mode_max_counts["intelligent_traffic_lights"]=200
+++ user_save_mode_max_counts["intelligent_traffic_lights_v2"]=200
+++ user_save_mode_max_counts["infinity_valley"]=200
+++ user_save_mode_max_counts["hok1v1"]=200
+++ user_save_mode_max_counts["hok3v3_collaboration"]=200
+++ user_save_mode_max_counts["hok5v5_dld"]=200
+++ user_save_mode_max_counts["legged_robot_locomotion_control"]=200
+++ user_save_mode_max_counts["legged_robot_exp"]=200
+++ user_save_mode_max_counts["legged_robot_sim2real_exp"]=200
+++ user_save_mode_max_counts["legged_robot_competition_26"]=200
+++ user_save_mode_max_counts["drone_delivery"]=200
+++ user_save_mode_max_counts["robot_vacuum"]=200
+++ user_save_mode_max_counts["gorge_chase"]=200
+++ user_save_mode_max_counts["drone"]=200
+++ user_save_mode_max_counts["drone_obstacle_nav"]=200
+++ user_save_mode_max_counts["truss"]=200
+++ user_save_model_max_frequency_per_mins["back_to_the_realm_v2"]=2
+++ user_save_model_max_frequency_per_mins["back_to_the_realm"]=2
+++ user_save_model_max_frequency_per_mins["gorge_walk"]=2
+++ user_save_model_max_frequency_per_mins["gorge_walk_v2"]=2
+++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights"]=2
+++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights_v2"]=2
+++ user_save_model_max_frequency_per_mins["infinity_valley"]=2
+++ user_save_model_max_frequency_per_mins["hok1v1"]=2
+++ user_save_model_max_frequency_per_mins["hok3v3_collaboration"]=2
+++ user_save_model_max_frequency_per_mins["hok5v5_dld"]=2
+++ user_save_model_max_frequency_per_mins["legged_robot_locomotion_control"]=2
+++ user_save_model_max_frequency_per_mins["legged_robot_exp"]=2
+++ user_save_model_max_frequency_per_mins["legged_robot_sim2real_exp"]=2
+++ user_save_model_max_frequency_per_mins["legged_robot_competition_26"]=2
+++ user_save_model_max_frequency_per_mins["drone_delivery"]=2
+++ user_save_model_max_frequency_per_mins["robot_vacuum"]=2
+++ user_save_model_max_frequency_per_mins["gorge_chase"]=2
+++ user_save_model_max_frequency_per_mins["drone"]=2
+++ user_save_model_max_frequency_per_mins["drone_obstacle_nav"]=2
+++ user_save_model_max_frequency_per_mins["truss"]=2
++ battle_dir=/workspace/battle
++ log_dir=/workspace/log
++ task_id=409173
++ owner_type=battle
++ round_index=1
++ export use_alloc=false
++ use_alloc=false
++ export START_MODELPOOL=false
++ START_MODELPOOL=false
++ export LD_PRELOAD=/lib64/libstdc++.so.6
++ LD_PRELOAD=/lib64/libstdc++.so.6
++ export TIMEOUT=900
++ TIMEOUT=900
++ eval_dir=/workspace/log/eval_game
++ export EVAL_DIR=/workspace/log/eval_game
++ EVAL_DIR=/workspace/log/eval_game
++ games_dir=/workspace/log/eval_game/games
++ mkdir -p /workspace/log/eval_game /workspace/log/eval_game/games
++ map_codes=1,2,3,4,5,6,7,8,9,10
++ [[ -z 1,2,3,4,5,6,7,8,9,10 ]]
++ IFS=,
++ read -ra MAP_CODE_ARRAY
++ map_count=10
++ log_info '检测到 10 个地图代码: 1 2 3 4 5 6 7 8 9 10'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 检测到 10 个地图代码: 1 2 3 4 5 6 7 8 9 10'
+[32m[INFO] [2026-04-11 16:56:38][0m 检测到 10 个地图代码: 1 2 3 4 5 6 7 8 9 10
++ set_name=robot_vacuum_409173
++ app_file=/data/projects/robot_vacuum/conf/configure_app.toml
++ project_log_root_dir=/data/projects/robot_vacuum/log
++ mkdir -p /data/projects/robot_vacuum/log /workspace/log /workspace/battle
++ mkdir -p /workspace/log/tmp /workspace/battle/tmp
++ trap handle_error ERR
++ fn=start_mmpve_aisrv
++ log_info '调用函数: start_mmpve_aisrv'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 调用函数: start_mmpve_aisrv'
+[32m[INFO] [2026-04-11 16:56:38][0m 调用函数: start_mmpve_aisrv
++ start_mmpve_aisrv
++ sh /root/tools/init_code.sh battle
++++ dirname /root/tools/init_code.sh
+++ cd /root/tools
+++ pwd
++ shell_dir=/root/tools
++ . /root/tools/common.sh
+++++ dirname /root/tools/common.sh
++++ cd /root/tools
++++ pwd
+++ tools_dir=/root/tools
+++ . /root/tools/constant.sh
++++ app=robot_vacuum
++++ algo=diy
++++ parallel_env_per_aisrv=1
++++ env_num=
++++ aisrv_num=
++++ task_id=409173
++++ max_step=2000
++++ owner_type=battle
++++ aisrv_env_ipc_method=shared_memory
++++ ROLE_BATTLE_SERVER=1
++++ ROLE_LEARNER=4
++++ ROLE_MASTER_LEARNER=5
++++ ide_language=zh-cn
++++ scale_type=small
++++ training_mode=
++++ task_uuid=
++++ set_index=
++++ set_cnt=
++++ task_id=409173
++++ round_index=1
++++ owner_id=0
++++ have_abs=no
++++ quick_review_data_type=frame
++++ declare -A project_algorithm_list
++++ project_algorithm_list["back_to_the_realm_v2"]='agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["back_to_the_realm"]='agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["gorge_walk"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["gorge_walk_v2"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["intelligent_traffic_lights"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["intelligent_traffic_lights_v2"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["infinity_valley"]='agent_policy_gradient agent_a2c agent_diy agent_ppo'
++++ project_algorithm_list["hok1v1"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok3v3_collaboration"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok5v5_dld"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_locomotion_control"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_sim2real_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_competition_26"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone_delivery"]='agent_diy agent_ppo'
++++ project_algorithm_list["robot_vacuum"]='agent_diy agent_ppo'
++++ project_algorithm_list["gorge_chase"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone"]='agent_diy agent_ppo agent_a2c agent_target_dqn agent_dqn isaac_env'
++++ project_algorithm_list["drone_obstacle_nav"]='agent_diy agent_ppo isaac_env'
++++ project_algorithm_list["truss"]='agent_target_dqn agent_dqn agent_diy agent_ppo truss_env'
++++ [[ -n '' ]]
++++ user_save_mode_max_counts["back_to_the_realm_v2"]=200
++++ user_save_mode_max_counts["back_to_the_realm"]=200
++++ user_save_mode_max_counts["gorge_walk"]=200
++++ user_save_mode_max_counts["gorge_walk_v2"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights_v2"]=200
++++ user_save_mode_max_counts["infinity_valley"]=200
++++ user_save_mode_max_counts["hok1v1"]=200
++++ user_save_mode_max_counts["hok3v3_collaboration"]=200
++++ user_save_mode_max_counts["hok5v5_dld"]=200
++++ user_save_mode_max_counts["legged_robot_locomotion_control"]=200
++++ user_save_mode_max_counts["legged_robot_exp"]=200
++++ user_save_mode_max_counts["legged_robot_sim2real_exp"]=200
++++ user_save_mode_max_counts["legged_robot_competition_26"]=200
++++ user_save_mode_max_counts["drone_delivery"]=200
++++ user_save_mode_max_counts["robot_vacuum"]=200
++++ user_save_mode_max_counts["gorge_chase"]=200
++++ user_save_mode_max_counts["drone"]=200
++++ user_save_mode_max_counts["drone_obstacle_nav"]=200
++++ user_save_mode_max_counts["truss"]=200
++++ user_save_model_max_frequency_per_mins["back_to_the_realm_v2"]=2
++++ user_save_model_max_frequency_per_mins["back_to_the_realm"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk_v2"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights_v2"]=2
++++ user_save_model_max_frequency_per_mins["infinity_valley"]=2
++++ user_save_model_max_frequency_per_mins["hok1v1"]=2
++++ user_save_model_max_frequency_per_mins["hok3v3_collaboration"]=2
++++ user_save_model_max_frequency_per_mins["hok5v5_dld"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_locomotion_control"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_sim2real_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_competition_26"]=2
++++ user_save_model_max_frequency_per_mins["drone_delivery"]=2
++++ user_save_model_max_frequency_per_mins["robot_vacuum"]=2
++++ user_save_model_max_frequency_per_mins["gorge_chase"]=2
++++ user_save_model_max_frequency_per_mins["drone"]=2
++++ user_save_model_max_frequency_per_mins["drone_obstacle_nav"]=2
++++ user_save_model_max_frequency_per_mins["truss"]=2
+++ project_dir=/data/projects/robot_vacuum
+++ mkdir -p /data/projects/robot_vacuum
+++ host_ip=get_host_ip
++ work_mode=battle
++ code_file=/workspace/code
++ restore_dirs=('conf/kaiwudrl' 'kaiwudrl/conf/kaiwudrl')
++ IFS=' '
++ read -r -a algorithm_array
++ user_code_dirs=("${algorithm_array[@]}" 'conf' '.vscode' "ckpt")
++ user_files=('train_test.py')
++ backup_dir=/tmp/backup
++ mkdir -p /tmp/backup
++ for dir in "${restore_dirs[@]}"
+++ dirname /tmp/backup/conf/kaiwudrl
++ dest_dir=/tmp/backup/conf
++ mkdir -p /tmp/backup/conf
++ '[' -d /data/projects/robot_vacuum/conf/kaiwudrl ']'
++ log_info 'skip backup conf/kaiwudrl (not exist)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m skip backup conf/kaiwudrl (not exist)'
+[32m[INFO] [2026-04-11 16:56:38][0m skip backup conf/kaiwudrl (not exist)
++ for dir in "${restore_dirs[@]}"
+++ dirname /tmp/backup/kaiwudrl/conf/kaiwudrl
++ dest_dir=/tmp/backup/kaiwudrl/conf
++ mkdir -p /tmp/backup/kaiwudrl/conf
++ '[' -d /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl ']'
++ cp -rf /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl /tmp/backup/kaiwudrl/conf
++ log_info 'backup kaiwudrl/conf/kaiwudrl success'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m backup kaiwudrl/conf/kaiwudrl success'
+[32m[INFO] [2026-04-11 16:56:38][0m backup kaiwudrl/conf/kaiwudrl success
++ for dir in "${user_code_dirs[@]}"
++ src=/workspace/code/agent_diy
++ dest=/data/projects/robot_vacuum/agent_diy
++ '[' '!' -d /workspace/code/agent_diy ']'
++ '[' -d /data/projects/robot_vacuum/agent_diy ']'
++ rm -rf /data/projects/robot_vacuum/agent_diy
++ [[ battle != dev* ]]
++ cp -r /workspace/code/agent_diy /data/projects/robot_vacuum/agent_diy
++ log_info 'use agent_diy success'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m use agent_diy success'
+[32m[INFO] [2026-04-11 16:56:38][0m use agent_diy success
++ for dir in "${user_code_dirs[@]}"
++ src=/workspace/code/agent_ppo
++ dest=/data/projects/robot_vacuum/agent_ppo
++ '[' '!' -d /workspace/code/agent_ppo ']'
++ '[' -d /data/projects/robot_vacuum/agent_ppo ']'
++ rm -rf /data/projects/robot_vacuum/agent_ppo
++ [[ battle != dev* ]]
++ cp -r /workspace/code/agent_ppo /data/projects/robot_vacuum/agent_ppo
++ log_info 'use agent_ppo success'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m use agent_ppo success'
+[32m[INFO] [2026-04-11 16:56:38][0m use agent_ppo success
++ for dir in "${user_code_dirs[@]}"
++ src=/workspace/code/conf
++ dest=/data/projects/robot_vacuum/conf
++ '[' '!' -d /workspace/code/conf ']'
++ '[' -d /data/projects/robot_vacuum/conf ']'
++ rm -rf /data/projects/robot_vacuum/conf
++ [[ battle != dev* ]]
++ cp -r /workspace/code/conf /data/projects/robot_vacuum/conf
++ log_info 'use conf success'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m use conf success'
+[32m[INFO] [2026-04-11 16:56:38][0m use conf success
++ for dir in "${user_code_dirs[@]}"
++ src=/workspace/code/.vscode
++ dest=/data/projects/robot_vacuum/.vscode
++ '[' '!' -d /workspace/code/.vscode ']'
++ mkdir -p /workspace/code/.vscode
++ echo '/workspace/code/.vscode not exist, please check code file!'
+/workspace/code/.vscode not exist, please check code file!
++ '[' -d /data/projects/robot_vacuum/.vscode ']'
++ rm -rf /data/projects/robot_vacuum/.vscode
++ [[ battle != dev* ]]
++ cp -r /workspace/code/.vscode /data/projects/robot_vacuum/.vscode
++ log_info 'use .vscode success'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m use .vscode success'
+[32m[INFO] [2026-04-11 16:56:38][0m use .vscode success
++ for dir in "${user_code_dirs[@]}"
++ src=/workspace/code/ckpt
++ dest=/data/projects/robot_vacuum/ckpt
++ '[' '!' -d /workspace/code/ckpt ']'
++ '[' -d /data/projects/robot_vacuum/ckpt ']'
++ [[ battle != dev* ]]
++ cp -r /workspace/code/ckpt /data/projects/robot_vacuum/ckpt
++ log_info 'use ckpt success'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m use ckpt success'
+[32m[INFO] [2026-04-11 16:56:38][0m use ckpt success
++ src=/workspace/code/kaiwu.json
++ dest=/data/projects/robot_vacuum/kaiwu.json
++ [[ battle != dev* ]]
++ cp -r /workspace/code/kaiwu.json /data/projects/robot_vacuum/kaiwu.json
+cp: cannot stat '/workspace/code/kaiwu.json': 没有那个文件或目录
++ log_info 'use /workspace/code/kaiwu.json success'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m use /workspace/code/kaiwu.json success'
+[32m[INFO] [2026-04-11 16:56:38][0m use /workspace/code/kaiwu.json success
++ for dir in "${restore_dirs[@]}"
+++ dirname /data/projects/robot_vacuum/conf/kaiwudrl
++ dest_dir=/data/projects/robot_vacuum/conf
++ mkdir -p /data/projects/robot_vacuum/conf
++ '[' -d /tmp/backup/conf/kaiwudrl ']'
++ log_info 'skip restore conf/kaiwudrl (backup not exist)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m skip restore conf/kaiwudrl (backup not exist)'
+[32m[INFO] [2026-04-11 16:56:38][0m skip restore conf/kaiwudrl (backup not exist)
++ for dir in "${restore_dirs[@]}"
+++ dirname /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl
++ dest_dir=/data/projects/robot_vacuum/kaiwudrl/conf
++ mkdir -p /data/projects/robot_vacuum/kaiwudrl/conf
++ '[' -d /tmp/backup/kaiwudrl/conf/kaiwudrl ']'
++ cp -rf /tmp/backup/kaiwudrl/conf/kaiwudrl /data/projects/robot_vacuum/kaiwudrl/conf
++ log_info 'restore kaiwudrl/conf/kaiwudrl success'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m restore kaiwudrl/conf/kaiwudrl success'
+[32m[INFO] [2026-04-11 16:56:38][0m restore kaiwudrl/conf/kaiwudrl success
++ [[ battle-409173-1-job-gpxmn == *\b\a\t\t\l\e* ]]
++ exit
++ sh /root/tools/init_config.sh eval
+[32m[INFO] [2026-04-11 16:56:38][0m will init kaiwudrl config
+[32m[INFO] [2026-04-11 16:56:38][0m will merge config /root/tools/eval/configure_app.toml to /root/tools/conf/project_default.toml
++ sh /root/tools/check_eval_model_and_algo_valid.sh
++++ dirname /root/tools/check_eval_model_and_algo_valid.sh
+++ cd /root/tools
+++ pwd
++ shell_dir=/root/tools
++ . /root/tools/common.sh
+++++ dirname /root/tools/common.sh
++++ cd /root/tools
++++ pwd
+++ tools_dir=/root/tools
+++ . /root/tools/constant.sh
++++ app=robot_vacuum
++++ algo=diy
++++ parallel_env_per_aisrv=1
++++ env_num=
++++ aisrv_num=
++++ task_id=409173
++++ max_step=2000
++++ owner_type=battle
++++ aisrv_env_ipc_method=shared_memory
++++ ROLE_BATTLE_SERVER=1
++++ ROLE_LEARNER=4
++++ ROLE_MASTER_LEARNER=5
++++ ide_language=zh-cn
++++ scale_type=small
++++ training_mode=
++++ task_uuid=
++++ set_index=
++++ set_cnt=
++++ task_id=409173
++++ round_index=1
++++ owner_id=0
++++ have_abs=no
++++ quick_review_data_type=frame
++++ declare -A project_algorithm_list
++++ project_algorithm_list["back_to_the_realm_v2"]='agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["back_to_the_realm"]='agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["gorge_walk"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["gorge_walk_v2"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["intelligent_traffic_lights"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["intelligent_traffic_lights_v2"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["infinity_valley"]='agent_policy_gradient agent_a2c agent_diy agent_ppo'
++++ project_algorithm_list["hok1v1"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok3v3_collaboration"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok5v5_dld"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_locomotion_control"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_sim2real_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_competition_26"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone_delivery"]='agent_diy agent_ppo'
++++ project_algorithm_list["robot_vacuum"]='agent_diy agent_ppo'
++++ project_algorithm_list["gorge_chase"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone"]='agent_diy agent_ppo agent_a2c agent_target_dqn agent_dqn isaac_env'
++++ project_algorithm_list["drone_obstacle_nav"]='agent_diy agent_ppo isaac_env'
++++ project_algorithm_list["truss"]='agent_target_dqn agent_dqn agent_diy agent_ppo truss_env'
++++ [[ -n '' ]]
++++ user_save_mode_max_counts["back_to_the_realm_v2"]=200
++++ user_save_mode_max_counts["back_to_the_realm"]=200
++++ user_save_mode_max_counts["gorge_walk"]=200
++++ user_save_mode_max_counts["gorge_walk_v2"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights_v2"]=200
++++ user_save_mode_max_counts["infinity_valley"]=200
++++ user_save_mode_max_counts["hok1v1"]=200
++++ user_save_mode_max_counts["hok3v3_collaboration"]=200
++++ user_save_mode_max_counts["hok5v5_dld"]=200
++++ user_save_mode_max_counts["legged_robot_locomotion_control"]=200
++++ user_save_mode_max_counts["legged_robot_exp"]=200
++++ user_save_mode_max_counts["legged_robot_sim2real_exp"]=200
++++ user_save_mode_max_counts["legged_robot_competition_26"]=200
++++ user_save_mode_max_counts["drone_delivery"]=200
++++ user_save_mode_max_counts["robot_vacuum"]=200
++++ user_save_mode_max_counts["gorge_chase"]=200
++++ user_save_mode_max_counts["drone"]=200
++++ user_save_mode_max_counts["drone_obstacle_nav"]=200
++++ user_save_mode_max_counts["truss"]=200
++++ user_save_model_max_frequency_per_mins["back_to_the_realm_v2"]=2
++++ user_save_model_max_frequency_per_mins["back_to_the_realm"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk_v2"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights_v2"]=2
++++ user_save_model_max_frequency_per_mins["infinity_valley"]=2
++++ user_save_model_max_frequency_per_mins["hok1v1"]=2
++++ user_save_model_max_frequency_per_mins["hok3v3_collaboration"]=2
++++ user_save_model_max_frequency_per_mins["hok5v5_dld"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_locomotion_control"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_sim2real_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_competition_26"]=2
++++ user_save_model_max_frequency_per_mins["drone_delivery"]=2
++++ user_save_model_max_frequency_per_mins["robot_vacuum"]=2
++++ user_save_model_max_frequency_per_mins["gorge_chase"]=2
++++ user_save_model_max_frequency_per_mins["drone"]=2
++++ user_save_model_max_frequency_per_mins["drone_obstacle_nav"]=2
++++ user_save_model_max_frequency_per_mins["truss"]=2
+++ project_dir=/data/projects/robot_vacuum
+++ mkdir -p /data/projects/robot_vacuum
+++ host_ip=get_host_ip
++ kaiwu_json=/data/projects/robot_vacuum/ckpt/kaiwu.json
++ '[' '!' -f /data/projects/robot_vacuum/ckpt/kaiwu.json ']'
+++ jq -r .project_code /data/projects/robot_vacuum/ckpt/kaiwu.json
++ json_project_code=robot_vacuum
+++ jq -r .algorithm /data/projects/robot_vacuum/ckpt/kaiwu.json
++ json_algorithm=diy
++ '[' -z robot_vacuum ']'
++ '[' robot_vacuum == null ']'
++ '[' -z diy ']'
++ '[' diy == null ']'
++ '[' robot_vacuum '!=' robot_vacuum ']'
++ '[' diy '!=' diy ']'
++ log_info 'check passed: project_code='\''robot_vacuum'\'', algorithm='\''diy'\'''
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m check passed: project_code='\''robot_vacuum'\'', algorithm='\''diy'\'''
+[32m[INFO] [2026-04-11 16:56:38][0m check passed: project_code='robot_vacuum', algorithm='diy'
++ '[' 0 -ne 0 ']'
++ log_info 'fix eval workflow entries via /root/tools/change_nature_algo.py (algo=diy)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m fix eval workflow entries via /root/tools/change_nature_algo.py (algo=diy)'
+[32m[INFO] [2026-04-11 16:56:38][0m fix eval workflow entries via /root/tools/change_nature_algo.py (algo=diy)
++ python3 /root/tools/change_nature_algo.py diy
++ sh /root/tools/change_algorithm_all.sh diy
++++ dirname /root/tools/change_algorithm_all.sh
+++ cd /root/tools
+++ pwd
++ shell_dir=/root/tools
++ . /root/tools/common.sh
+++++ dirname /root/tools/common.sh
++++ cd /root/tools
++++ pwd
+++ tools_dir=/root/tools
+++ . /root/tools/constant.sh
++++ app=robot_vacuum
++++ algo=diy
++++ parallel_env_per_aisrv=1
++++ env_num=
++++ aisrv_num=
++++ task_id=409173
++++ max_step=2000
++++ owner_type=battle
++++ aisrv_env_ipc_method=shared_memory
++++ ROLE_BATTLE_SERVER=1
++++ ROLE_LEARNER=4
++++ ROLE_MASTER_LEARNER=5
++++ ide_language=zh-cn
++++ scale_type=small
++++ training_mode=
++++ task_uuid=
++++ set_index=
++++ set_cnt=
++++ task_id=409173
++++ round_index=1
++++ owner_id=0
++++ have_abs=no
++++ quick_review_data_type=frame
++++ declare -A project_algorithm_list
++++ project_algorithm_list["back_to_the_realm_v2"]='agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["back_to_the_realm"]='agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["gorge_walk"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["gorge_walk_v2"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["intelligent_traffic_lights"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["intelligent_traffic_lights_v2"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["infinity_valley"]='agent_policy_gradient agent_a2c agent_diy agent_ppo'
++++ project_algorithm_list["hok1v1"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok3v3_collaboration"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok5v5_dld"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_locomotion_control"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_sim2real_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_competition_26"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone_delivery"]='agent_diy agent_ppo'
++++ project_algorithm_list["robot_vacuum"]='agent_diy agent_ppo'
++++ project_algorithm_list["gorge_chase"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone"]='agent_diy agent_ppo agent_a2c agent_target_dqn agent_dqn isaac_env'
++++ project_algorithm_list["drone_obstacle_nav"]='agent_diy agent_ppo isaac_env'
++++ project_algorithm_list["truss"]='agent_target_dqn agent_dqn agent_diy agent_ppo truss_env'
++++ [[ -n '' ]]
++++ user_save_mode_max_counts["back_to_the_realm_v2"]=200
++++ user_save_mode_max_counts["back_to_the_realm"]=200
++++ user_save_mode_max_counts["gorge_walk"]=200
++++ user_save_mode_max_counts["gorge_walk_v2"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights_v2"]=200
++++ user_save_mode_max_counts["infinity_valley"]=200
++++ user_save_mode_max_counts["hok1v1"]=200
++++ user_save_mode_max_counts["hok3v3_collaboration"]=200
++++ user_save_mode_max_counts["hok5v5_dld"]=200
++++ user_save_mode_max_counts["legged_robot_locomotion_control"]=200
++++ user_save_mode_max_counts["legged_robot_exp"]=200
++++ user_save_mode_max_counts["legged_robot_sim2real_exp"]=200
++++ user_save_mode_max_counts["legged_robot_competition_26"]=200
++++ user_save_mode_max_counts["drone_delivery"]=200
++++ user_save_mode_max_counts["robot_vacuum"]=200
++++ user_save_mode_max_counts["gorge_chase"]=200
++++ user_save_mode_max_counts["drone"]=200
++++ user_save_mode_max_counts["drone_obstacle_nav"]=200
++++ user_save_mode_max_counts["truss"]=200
++++ user_save_model_max_frequency_per_mins["back_to_the_realm_v2"]=2
++++ user_save_model_max_frequency_per_mins["back_to_the_realm"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk_v2"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights_v2"]=2
++++ user_save_model_max_frequency_per_mins["infinity_valley"]=2
++++ user_save_model_max_frequency_per_mins["hok1v1"]=2
++++ user_save_model_max_frequency_per_mins["hok3v3_collaboration"]=2
++++ user_save_model_max_frequency_per_mins["hok5v5_dld"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_locomotion_control"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_sim2real_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_competition_26"]=2
++++ user_save_model_max_frequency_per_mins["drone_delivery"]=2
++++ user_save_model_max_frequency_per_mins["robot_vacuum"]=2
++++ user_save_model_max_frequency_per_mins["gorge_chase"]=2
++++ user_save_model_max_frequency_per_mins["drone"]=2
++++ user_save_model_max_frequency_per_mins["drone_obstacle_nav"]=2
++++ user_save_model_max_frequency_per_mins["truss"]=2
+++ project_dir=/data/projects/robot_vacuum
+++ mkdir -p /data/projects/robot_vacuum
+++ host_ip=get_host_ip
++ IFS=' '
++ read -r -a algorithm_array
++ '[' 1 -ne 1 ']'
++ algorithm_name=diy
++ is_supported=false
++ for algo in "${algorithm_array[@]}"
++ [[ agent_diy == \a\g\e\n\t\_* ]]
++ is_supported=true
++ break
++ true
++ echo -e '\033[32m algorithm_name is diy \033[0m'
+[32m algorithm_name is diy [0m
++ kaiwudrl_configure_file=conf/kaiwudrl/configure.toml
++ '[' -f conf/kaiwudrl/configure.toml ']'
++ kaiwudrl_configure_file_v2=kaiwudrl/conf/kaiwudrl/configure.toml
++ '[' -f kaiwudrl/conf/kaiwudrl/configure.toml ']'
++ sed -i 's/user_save_mode_max_count = .*/user_save_mode_max_count = 200/' kaiwudrl/conf/kaiwudrl/configure.toml
++ sed -i 's/user_save_model_max_frequency_per_min = .*/user_save_model_max_frequency_per_min = 2/' kaiwudrl/conf/kaiwudrl/configure.toml
++ sed -i 's/algo = .*/algo = "diy"/' kaiwudrl/conf/kaiwudrl/configure.toml
++ judge_success_or_fail 0 'change kaiwudrl/conf/kaiwudrl/configure.toml diy'
++ result=0
++ message='change kaiwudrl/conf/kaiwudrl/configure.toml diy'
++ '[' 0 -ne 0 ']'
++ echo -e '\033[32m change kaiwudrl/conf/kaiwudrl/configure.toml diy success \033[0m'
+[32m change kaiwudrl/conf/kaiwudrl/configure.toml diy success [0m
++ project_default_configure_file=/root/tools/conf/project_default.toml
++ '[' -f /root/tools/conf/project_default.toml ']'
++ sed -i 's/algo = .*/algo = "diy"/' /root/tools/conf/project_default.toml
++ judge_success_or_fail 0 'change /root/tools/conf/project_default.toml diy'
++ result=0
++ message='change /root/tools/conf/project_default.toml diy'
++ '[' 0 -ne 0 ']'
++ echo -e '\033[32m change /root/tools/conf/project_default.toml diy success \033[0m'
+[32m change /root/tools/conf/project_default.toml diy success [0m
++ app_configure_file_v1=conf/configure_app.toml
++ '[' -f conf/configure_app.toml ']'
++ sed -i 's/algo = .*/algo = "diy"/' conf/configure_app.toml
++ judge_success_or_fail 0 'change conf/configure_app.toml diy'
++ result=0
++ message='change conf/configure_app.toml diy'
++ '[' 0 -ne 0 ']'
++ echo -e '\033[32m change conf/configure_app.toml diy success \033[0m'
+[32m change conf/configure_app.toml diy success [0m
++ app_configure_file_v2=conf/app_conf_robot_vacuum.toml
++ '[' -f conf/app_conf_robot_vacuum.toml ']'
++ sed -i 's/algo = .*/algo = "diy"/' conf/app_conf_robot_vacuum.toml
++ judge_success_or_fail 0 'change conf/app_conf_robot_vacuum.toml diy'
++ result=0
++ message='change conf/app_conf_robot_vacuum.toml diy'
++ '[' 0 -ne 0 ']'
++ echo -e '\033[32m change conf/app_conf_robot_vacuum.toml diy success \033[0m'
+[32m change conf/app_conf_robot_vacuum.toml diy success [0m
++ (( i=0 ))
++ (( i<map_count ))
++ map_code=1
++ cur_index=1
++ start_mmpve_aisrv_once 1 1
++ local map_code=1
++ local cur_index=1
++ init_game_context 1 1
++ local map_code=1
++ local cur_index=1
++ [[ -z 1 ]]
++ game_index=1
++ game_map_code=1
++ game_name=409173_1_1
+++ date -u +%Y-%m-%dT%H:%M:%S.%6NZ
++ start_time=2026-04-11T08:56:38.691919Z
++ game_result_dir=/workspace/battle/409173_1_1
++ game_log_dir=/workspace/log/409173_1_1
++ aisrv_tmp_dir=/workspace/log/tmp/409173_1_1
++ battle_tmp_dir=/workspace/battle/tmp/409173_1_1
++ env_log_root_dir=/data/projects/kaiwu_arena/log
++ env_log_dir=/data/projects/kaiwu_arena/log/409173_1_1
++ result_dir=/data/projects/kaiwu_arena/log/409173_1_1/game_data
++ project_log_dir=/data/projects/robot_vacuum/log/409173_1_1
+++ game_dir 1
+++ local idx=1
+++ echo /workspace/log/eval_game/games/1
++ cur_game_dir=/workspace/log/eval_game/games/1
++ mkdir -p /workspace/log/eval_game/games/1
++ mkdir -p /workspace/battle/409173_1_1 /workspace/log/409173_1_1 /workspace/log/tmp/409173_1_1 /workspace/battle/tmp/409173_1_1 /data/projects/kaiwu_arena/log/409173_1_1 /data/projects/kaiwu_arena/log/409173_1_1/game_data
++ '[' '!' -e /data/projects/robot_vacuum/log/409173_1_1 ']'
++ ln -s /workspace/log/409173_1_1 /data/projects/robot_vacuum/log/409173_1_1
++ kaiwu_arena_game_conf=/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
++ '[' -f /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml ']'
++ export KAIWU_MAP_CODE=1
++ KAIWU_MAP_CODE=1
++ export GAME_ID=409173_1_1
++ GAME_ID=409173_1_1
++ python3 /root/tools/toml_replace.py
+配置文件已合并并写回到 /data/projects/robot_vacuum/tools/eval/conf/eval_env_conf.toml
++ change_aisrv_env_ipc_method shared_memory
++ aisrv_env_ipc_method=shared_memory
++ kaiwu_env_configure_file=/data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml
++ '[' -f /data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml ']'
++ kaiwudrl_configure_file=/data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml
++ '[' -f /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml ']'
++ change_config_in_file aisrv_env_ipc_method shared_memory /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml str
++ key=aisrv_env_ipc_method
++ val=shared_memory
++ file=/data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml
++ type=str
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^aisrv_env_ipc_method/d' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml
++ [[ str == \s\t\r ]]
++ new_line='aisrv_env_ipc_method = "shared_memory"'
+++ wc -l
++ line_count=298
++ ((  line_count >= 1  ))
++ sed -i '5i aisrv_env_ipc_method = "shared_memory"' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml
++ sed -i '/^$/N;/^\n$/D' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml
++ local host_ip
+++ hostname -i
+++ awk '{print $1}'
++ host_ip=10.20.14.188
+++ gen_kaiwu_env_addrs 5566 10.20.14.188 1
+++ base_port=5566
+++ env_ip=10.20.14.188
+++ index=1
+++ offset=1
+++ start_port=5567
+++ addrs=10.20.14.188:5567
+++ (( i=1 ))
+++ (( i<parallel_env_per_aisrv ))
+++ echo 10.20.14.188:5567
++ env_addrs=10.20.14.188:5567
++ first_env_addr=10.20.14.188:5567
++ log_info 'computed env_addrs=10.20.14.188:5567 (first=10.20.14.188:5567)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m computed env_addrs=10.20.14.188:5567 (first=10.20.14.188:5567)'
+[32m[INFO] [2026-04-11 16:56:38][0m computed env_addrs=10.20.14.188:5567 (first=10.20.14.188:5567)
++ project_default_configure_file=/root/tools/conf/project_default.toml
++ change_config_in_file kaiwu_env_default_address 10.20.14.188:5567 /root/tools/conf/project_default.toml str
++ key=kaiwu_env_default_address
++ val=10.20.14.188:5567
++ file=/root/tools/conf/project_default.toml
++ type=str
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^kaiwu_env_default_address/d' /root/tools/conf/project_default.toml
++ [[ str == \s\t\r ]]
++ new_line='kaiwu_env_default_address = "10.20.14.188:5567"'
+++ wc -l
++ line_count=38
++ ((  line_count >= 1  ))
++ sed -i '5i kaiwu_env_default_address = "10.20.14.188:5567"' /root/tools/conf/project_default.toml
++ sed -i '/^$/N;/^\n$/D' /root/tools/conf/project_default.toml
++ call_eval_plugin_file
++ plugin_dir=tools/plugin/eval/
++ call_plugin_file_common tools/plugin/eval/
++ plugin_dir=tools/plugin/eval/
++ '[' -d tools/plugin/eval/ ']'
++ main_script=tools/plugin/eval//main.sh
++ '[' -f tools/plugin/eval//main.sh ']'
++ . tools/plugin/eval//main.sh
+++ set +e
+++ GAME_CONFIG_FILE=/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ ENV_KEY=KAIWU_ASSESS_MAP_CODES
+++ main tools/plugin/eval/
+++ local raw_codes=1,2,3,4,5,6,7,8,9,10
+++ '[' -z 1,2,3,4,5,6,7,8,9,10 ']'
+++ log '检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10'
+++ local 'msg=检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10'
+++ type log_info
+++ log_info '检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10'
++++ date '+%Y-%m-%d %H:%M:%S'
+++ now='2026-04-11 16:56:38'
+++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10'
+[32m[INFO] [2026-04-11 16:56:38][0m 检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10
+++ local yaml_list
++++ parse_map_codes_to_yaml_list 1,2,3,4,5,6,7,8,9,10
++++ local raw=1,2,3,4,5,6,7,8,9,10
++++ raw=1,2,3,4,5,6,7,8,9,10
++++ '[' -z 1,2,3,4,5,6,7,8,9,10 ']'
++++ parts=()
++++ local -a parts
++++ maps=()
++++ local -a maps
++++ local part
++++ IFS=,
++++ read -r -a parts
++++ for part in "${parts[@]}"
++++ '[' -z 1 ']'
++++ [[ ! 1 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 2 ']'
++++ [[ ! 2 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 3 ']'
++++ [[ ! 3 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 4 ']'
++++ [[ ! 4 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 5 ']'
++++ [[ ! 5 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 6 ']'
++++ [[ ! 6 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 7 ']'
++++ [[ ! 7 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 8 ']'
++++ [[ ! 8 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 9 ']'
++++ [[ ! 9 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 10 ']'
++++ [[ ! 10 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ '[' 10 -eq 0 ']'
++++ local 'yaml_list=[1'
++++ local i
++++ (( i = 1 ))
++++ (( i < 10 ))
++++ yaml_list+=', 2'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 3'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 4'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 5'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 6'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 7'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 8'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 9'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 10'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=']'
++++ echo '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
++++ return 0
+++ yaml_list='[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+++ '[' 0 -ne 0 ']'
+++ '[' -z '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]' ']'
+++ log '解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+++ local 'msg=解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+++ type log_info
+++ log_info '解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
++++ date '+%Y-%m-%d %H:%M:%S'
+++ now='2026-04-11 16:56:38'
+++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+[32m[INFO] [2026-04-11 16:56:38][0m 解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ update_available_maps /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+++ local config_file=/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ local 'yaml_list=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+++ '[' '!' -f /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml ']'
+++ log 配置文件不存在，跳过更新：/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ local msg=配置文件不存在，跳过更新：/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ type log_info
+++ log_info 配置文件不存在，跳过更新：/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
++++ date '+%Y-%m-%d %H:%M:%S'
+++ now='2026-04-11 16:56:38'
+++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 配置文件不存在，跳过更新：/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+[32m[INFO] [2026-04-11 16:56:38][0m 配置文件不存在，跳过更新：/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ return 0
+++ log 'Eval plugin 执行完成'
+++ local 'msg=Eval plugin 执行完成'
+++ type log_info
+++ log_info 'Eval plugin 执行完成'
++++ date '+%Y-%m-%d %H:%M:%S'
+++ now='2026-04-11 16:56:38'
+++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m Eval plugin 执行完成'
+[32m[INFO] [2026-04-11 16:56:38][0m Eval plugin 执行完成
+++ return 0
++ aisrv_toml=/data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ change_config_in_file game_index 1 /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ key=game_index
++ val=1
++ file=/data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ type=
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^game_index/d' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ [[ '' == \s\t\r ]]
++ new_line='game_index = 1'
+++ wc -l
++ line_count=58
++ ((  line_count >= 1  ))
++ sed -i '5i game_index = 1' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ sed -i '/^$/N;/^\n$/D' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ change_config_in_file kaiwu_env_default_address 10.20.14.188:5567 /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml str
++ key=kaiwu_env_default_address
++ val=10.20.14.188:5567
++ file=/data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ type=str
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^kaiwu_env_default_address/d' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ [[ str == \s\t\r ]]
++ new_line='kaiwu_env_default_address = "10.20.14.188:5567"'
+++ wc -l
++ line_count=59
++ ((  line_count >= 1  ))
++ sed -i '5i kaiwu_env_default_address = "10.20.14.188:5567"' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ sed -i '/^$/N;/^\n$/D' /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/aisrv.toml
++ export LOG_DIR=/data/projects/robot_vacuum/log/409173_1_1
++ LOG_DIR=/data/projects/robot_vacuum/log/409173_1_1
++ '[' '!' -f /data/projects/robot_vacuum/conf/configure_app.toml ']'
++ sed -i 's|log_dir = .*|log_dir = "/data/projects/robot_vacuum/log/409173_1_1"|' /data/projects/robot_vacuum/conf/configure_app.toml
++ '[' 1 -eq 1 ']'
++ sh tools/start.sh learner 127.0.0.1
+[32m change_tcp_parameter success [0m
+[32m machine architecture information: x86_64  [0m
+eth1: error fetching interface information: Device not found
+[32m learner produce config success [0m
+Skipping start_modelpool command
+[32m learner cluster release start success [0m
++ sh tools/start.sh aisrv 127.0.0.1 409173_1_1
+[32m change_tcp_parameter success [0m
+eth1: error fetching interface information: Device not found
+[32m aisrv produce config success [0m
+[32m aisrv start success [0m
++ check_battle_result
++ local origin_dir
++ local pids
+++ pwd
++ origin_dir=/data/projects/robot_vacuum
++ cd /workspace/log/tmp/409173_1_1
++ local check_timeout=900
++ local check_elapsed=0
++ local game_dir_path
+++ game_dir 1
+++ local idx=1
+++ echo /workspace/log/eval_game/games/1
++ game_dir_path=/workspace/log/eval_game/games/1
++ sleep 20
++ check_elapsed=20
+++ ps aux
+++ grep 'game_id=\b409173_1_1\b'
+++ grep -v grep
+++ awk '{print $2}'
++ pids='335
+424
+489
+491
+504
+506
+508'
++ log_info 'the pids of 409173_1_1 are 335
+424
+489
+491
+504
+506
+508'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:59'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:59]\033[0m the pids of 409173_1_1 are 335
+424
+489
+491
+504
+506
+508'
+[32m[INFO] [2026-04-11 16:56:59][0m the pids of 409173_1_1 are 335
+424
+489
+491
+504
+506
+508
++ '[' -z '335
+424
+489
+491
+504
+506
+508' ']'
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 20 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=20s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:59'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:59]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=20s)'
+[32m[INFO] [2026-04-11 16:56:59][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=20s)
++ sleep 5
++ check_elapsed=25
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 25 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=25s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:04'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:04]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=25s)'
+[32m[INFO] [2026-04-11 16:57:04][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=25s)
++ sleep 5
++ check_elapsed=30
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 30 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=30s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:09'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:09]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=30s)'
+[32m[INFO] [2026-04-11 16:57:09][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=30s)
++ sleep 5
++ check_elapsed=35
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 35 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=35s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:14'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:14]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=35s)'
+[32m[INFO] [2026-04-11 16:57:14][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=35s)
++ sleep 5
++ check_elapsed=40
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 40 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=40s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:19'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:19]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=40s)'
+[32m[INFO] [2026-04-11 16:57:19][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=40s)
++ sleep 5
++ check_elapsed=45
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 45 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=45s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:24'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:24]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=45s)'
+[32m[INFO] [2026-04-11 16:57:24][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=45s)
++ sleep 5
++ check_elapsed=50
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 50 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=50s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:29'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:29]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=50s)'
+[32m[INFO] [2026-04-11 16:57:29][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=50s)
++ sleep 5
++ check_elapsed=55
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 55 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=55s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:34'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:34]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=55s)'
+[32m[INFO] [2026-04-11 16:57:34][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=55s)
++ sleep 5
++ check_elapsed=60
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 60 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=60s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:39'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:39]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=60s)'
+[32m[INFO] [2026-04-11 16:57:39][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=60s)
++ sleep 5
++ check_elapsed=65
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 65 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=65s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:44'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:44]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=65s)'
+[32m[INFO] [2026-04-11 16:57:44][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=65s)
++ sleep 5
++ check_elapsed=70
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 70 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=70s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:49'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:49]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=70s)'
+[32m[INFO] [2026-04-11 16:57:49][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=70s)
++ sleep 5
++ check_elapsed=75
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 75 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=75s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:54'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:54]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=75s)'
+[32m[INFO] [2026-04-11 16:57:54][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=75s)
++ sleep 5
++ check_elapsed=80
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ '[' 80 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=80s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:59'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:59]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=80s)'
+[32m[INFO] [2026-04-11 16:57:59][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=80s)
++ sleep 5
+已终止
++ check_elapsed=85
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ log_info 'game 1 workflow_done detected, waiting for gamecore final status'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:58:05'
++ echo -e '\033[32m[INFO] [2026-04-11 16:58:05]\033[0m game 1 workflow_done detected, waiting for gamecore final status'
+[32m[INFO] [2026-04-11 16:58:05][0m game 1 workflow_done detected, waiting for gamecore final status
++ '[' 85 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=85s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:58:05'
++ echo -e '\033[32m[INFO] [2026-04-11 16:58:05]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=85s)'
+[32m[INFO] [2026-04-11 16:58:05][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=85s)
++ sleep 5
++ check_elapsed=90
++ continue
++ true
++ grep -qi 'out of memory' /var/log/syslog
++ local workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
++ local workflow_done_file=/workspace/log/eval_game/games/1/workflow_done
++ '[' -f /workspace/log/eval_game/games/1/workflow_done ']'
++ log_info 'game 1 workflow_done detected, waiting for gamecore final status'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:58:10'
++ echo -e '\033[32m[INFO] [2026-04-11 16:58:10]\033[0m game 1 workflow_done detected, waiting for gamecore final status'
+[32m[INFO] [2026-04-11 16:58:10][0m game 1 workflow_done detected, waiting for gamecore final status
++ '[' 90 -ge 900 ']'
++ done_file=/workspace/log/409173_1_1/409173_1_1.done
++ [[ ! -f /workspace/log/409173_1_1/409173_1_1.done ]]
++ log_info 'done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=90s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:58:10'
++ echo -e '\033[32m[INFO] [2026-04-11 16:58:10]\033[0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=90s)'
+[32m[INFO] [2026-04-11 16:58:10][0m done file is not exist in /workspace/log, 409173_1_1 is still running (elapsed=90s)
++ sleep 5

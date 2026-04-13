@@ -1,0 +1,678 @@
++++ dirname /root/tools/start_eval.sh
+++ cd /root/tools
+++ pwd
++ shell_dir=/root/tools
++ . /root/tools/common.sh
+++++ dirname /root/tools/common.sh
++++ cd /root/tools
++++ pwd
+++ tools_dir=/root/tools
+++ . /root/tools/constant.sh
++++ app=robot_vacuum
++++ algo=diy
++++ parallel_env_per_aisrv=1
++++ env_num=
++++ aisrv_num=
++++ task_id=409173
++++ max_step=2000
++++ owner_type=battle
++++ aisrv_env_ipc_method=shared_memory
++++ ROLE_BATTLE_SERVER=1
++++ ROLE_LEARNER=4
++++ ROLE_MASTER_LEARNER=5
++++ ide_language=zh-cn
++++ scale_type=small
++++ training_mode=
++++ task_uuid=
++++ set_index=
++++ set_cnt=
++++ task_id=409173
++++ round_index=1
++++ owner_id=0
++++ have_abs=no
++++ quick_review_data_type=frame
++++ declare -A project_algorithm_list
++++ project_algorithm_list["back_to_the_realm_v2"]='agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["back_to_the_realm"]='agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["gorge_walk"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["gorge_walk_v2"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
++++ project_algorithm_list["intelligent_traffic_lights"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy agent_ppo'
++++ project_algorithm_list["intelligent_traffic_lights_v2"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy'
++++ project_algorithm_list["infinity_valley"]='agent_policy_gradient agent_a2c agent_diy agent_ppo'
++++ project_algorithm_list["hok1v1"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok3v3_collaboration"]='agent_diy agent_ppo'
++++ project_algorithm_list["hok5v5_dld"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_locomotion_control"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_sim2real_exp"]='agent_diy agent_ppo'
++++ project_algorithm_list["legged_robot_competition_26"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone_delivery"]='agent_diy agent_ppo'
++++ project_algorithm_list["robot_vacuum"]='agent_diy agent_ppo'
++++ project_algorithm_list["gorge_chase"]='agent_diy agent_ppo'
++++ project_algorithm_list["drone"]='agent_diy agent_ppo agent_a2c agent_target_dqn agent_dqn isaac_env'
++++ project_algorithm_list["drone_obstacle_nav"]='agent_diy agent_ppo isaac_env'
++++ project_algorithm_list["truss"]='agent_target_dqn agent_dqn agent_diy agent_ppo truss_env'
++++ [[ -n '' ]]
++++ user_save_mode_max_counts["back_to_the_realm_v2"]=200
++++ user_save_mode_max_counts["back_to_the_realm"]=200
++++ user_save_mode_max_counts["gorge_walk"]=200
++++ user_save_mode_max_counts["gorge_walk_v2"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights"]=200
++++ user_save_mode_max_counts["intelligent_traffic_lights_v2"]=200
++++ user_save_mode_max_counts["infinity_valley"]=200
++++ user_save_mode_max_counts["hok1v1"]=200
++++ user_save_mode_max_counts["hok3v3_collaboration"]=200
++++ user_save_mode_max_counts["hok5v5_dld"]=200
++++ user_save_mode_max_counts["legged_robot_locomotion_control"]=200
++++ user_save_mode_max_counts["legged_robot_exp"]=200
++++ user_save_mode_max_counts["legged_robot_sim2real_exp"]=200
++++ user_save_mode_max_counts["legged_robot_competition_26"]=200
++++ user_save_mode_max_counts["drone_delivery"]=200
++++ user_save_mode_max_counts["robot_vacuum"]=200
++++ user_save_mode_max_counts["gorge_chase"]=200
++++ user_save_mode_max_counts["drone"]=200
++++ user_save_mode_max_counts["drone_obstacle_nav"]=200
++++ user_save_mode_max_counts["truss"]=200
++++ user_save_model_max_frequency_per_mins["back_to_the_realm_v2"]=2
++++ user_save_model_max_frequency_per_mins["back_to_the_realm"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk"]=2
++++ user_save_model_max_frequency_per_mins["gorge_walk_v2"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights"]=2
++++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights_v2"]=2
++++ user_save_model_max_frequency_per_mins["infinity_valley"]=2
++++ user_save_model_max_frequency_per_mins["hok1v1"]=2
++++ user_save_model_max_frequency_per_mins["hok3v3_collaboration"]=2
++++ user_save_model_max_frequency_per_mins["hok5v5_dld"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_locomotion_control"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_sim2real_exp"]=2
++++ user_save_model_max_frequency_per_mins["legged_robot_competition_26"]=2
++++ user_save_model_max_frequency_per_mins["drone_delivery"]=2
++++ user_save_model_max_frequency_per_mins["robot_vacuum"]=2
++++ user_save_model_max_frequency_per_mins["gorge_chase"]=2
++++ user_save_model_max_frequency_per_mins["drone"]=2
++++ user_save_model_max_frequency_per_mins["drone_obstacle_nav"]=2
++++ user_save_model_max_frequency_per_mins["truss"]=2
+++ project_dir=/data/projects/robot_vacuum
+++ mkdir -p /data/projects/robot_vacuum
+++ host_ip=get_host_ip
++ . /root/tools/constant.sh
+++ app=robot_vacuum
+++ algo=diy
+++ parallel_env_per_aisrv=1
+++ env_num=
+++ aisrv_num=
+++ task_id=409173
+++ max_step=2000
+++ owner_type=battle
+++ aisrv_env_ipc_method=shared_memory
+++ ROLE_BATTLE_SERVER=1
+++ ROLE_LEARNER=4
+++ ROLE_MASTER_LEARNER=5
+++ ide_language=zh-cn
+++ scale_type=small
+++ training_mode=
+++ task_uuid=
+++ set_index=
+++ set_cnt=
+++ task_id=409173
+++ round_index=1
+++ owner_id=0
+++ have_abs=no
+++ quick_review_data_type=frame
+++ declare -A project_algorithm_list
+++ project_algorithm_list["back_to_the_realm_v2"]='agent_target_dqn agent_dqn agent_diy agent_ppo'
+++ project_algorithm_list["back_to_the_realm"]='agent_target_dqn agent_dqn agent_diy'
+++ project_algorithm_list["gorge_walk"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
+++ project_algorithm_list["gorge_walk_v2"]='agent_dynamic_programming agent_diy agent_sarsa agent_q_learning agent_monte_carlo'
+++ project_algorithm_list["intelligent_traffic_lights"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy agent_ppo'
+++ project_algorithm_list["intelligent_traffic_lights_v2"]='agent_dynamic_webster agent_target_dqn agent_dqn agent_diy'
+++ project_algorithm_list["infinity_valley"]='agent_policy_gradient agent_a2c agent_diy agent_ppo'
+++ project_algorithm_list["hok1v1"]='agent_diy agent_ppo'
+++ project_algorithm_list["hok3v3_collaboration"]='agent_diy agent_ppo'
+++ project_algorithm_list["hok5v5_dld"]='agent_diy agent_ppo'
+++ project_algorithm_list["legged_robot_locomotion_control"]='agent_diy agent_ppo'
+++ project_algorithm_list["legged_robot_exp"]='agent_diy agent_ppo'
+++ project_algorithm_list["legged_robot_sim2real_exp"]='agent_diy agent_ppo'
+++ project_algorithm_list["legged_robot_competition_26"]='agent_diy agent_ppo'
+++ project_algorithm_list["drone_delivery"]='agent_diy agent_ppo'
+++ project_algorithm_list["robot_vacuum"]='agent_diy agent_ppo'
+++ project_algorithm_list["gorge_chase"]='agent_diy agent_ppo'
+++ project_algorithm_list["drone"]='agent_diy agent_ppo agent_a2c agent_target_dqn agent_dqn isaac_env'
+++ project_algorithm_list["drone_obstacle_nav"]='agent_diy agent_ppo isaac_env'
+++ project_algorithm_list["truss"]='agent_target_dqn agent_dqn agent_diy agent_ppo truss_env'
+++ [[ -n '' ]]
+++ user_save_mode_max_counts["back_to_the_realm_v2"]=200
+++ user_save_mode_max_counts["back_to_the_realm"]=200
+++ user_save_mode_max_counts["gorge_walk"]=200
+++ user_save_mode_max_counts["gorge_walk_v2"]=200
+++ user_save_mode_max_counts["intelligent_traffic_lights"]=200
+++ user_save_mode_max_counts["intelligent_traffic_lights_v2"]=200
+++ user_save_mode_max_counts["infinity_valley"]=200
+++ user_save_mode_max_counts["hok1v1"]=200
+++ user_save_mode_max_counts["hok3v3_collaboration"]=200
+++ user_save_mode_max_counts["hok5v5_dld"]=200
+++ user_save_mode_max_counts["legged_robot_locomotion_control"]=200
+++ user_save_mode_max_counts["legged_robot_exp"]=200
+++ user_save_mode_max_counts["legged_robot_sim2real_exp"]=200
+++ user_save_mode_max_counts["legged_robot_competition_26"]=200
+++ user_save_mode_max_counts["drone_delivery"]=200
+++ user_save_mode_max_counts["robot_vacuum"]=200
+++ user_save_mode_max_counts["gorge_chase"]=200
+++ user_save_mode_max_counts["drone"]=200
+++ user_save_mode_max_counts["drone_obstacle_nav"]=200
+++ user_save_mode_max_counts["truss"]=200
+++ user_save_model_max_frequency_per_mins["back_to_the_realm_v2"]=2
+++ user_save_model_max_frequency_per_mins["back_to_the_realm"]=2
+++ user_save_model_max_frequency_per_mins["gorge_walk"]=2
+++ user_save_model_max_frequency_per_mins["gorge_walk_v2"]=2
+++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights"]=2
+++ user_save_model_max_frequency_per_mins["intelligent_traffic_lights_v2"]=2
+++ user_save_model_max_frequency_per_mins["infinity_valley"]=2
+++ user_save_model_max_frequency_per_mins["hok1v1"]=2
+++ user_save_model_max_frequency_per_mins["hok3v3_collaboration"]=2
+++ user_save_model_max_frequency_per_mins["hok5v5_dld"]=2
+++ user_save_model_max_frequency_per_mins["legged_robot_locomotion_control"]=2
+++ user_save_model_max_frequency_per_mins["legged_robot_exp"]=2
+++ user_save_model_max_frequency_per_mins["legged_robot_sim2real_exp"]=2
+++ user_save_model_max_frequency_per_mins["legged_robot_competition_26"]=2
+++ user_save_model_max_frequency_per_mins["drone_delivery"]=2
+++ user_save_model_max_frequency_per_mins["robot_vacuum"]=2
+++ user_save_model_max_frequency_per_mins["gorge_chase"]=2
+++ user_save_model_max_frequency_per_mins["drone"]=2
+++ user_save_model_max_frequency_per_mins["drone_obstacle_nav"]=2
+++ user_save_model_max_frequency_per_mins["truss"]=2
++ battle_dir=/workspace/battle
++ log_dir=/workspace/log
++ task_id=409173
++ owner_type=battle
++ round_index=1
++ export use_alloc=false
++ use_alloc=false
++ export START_MODELPOOL=false
++ START_MODELPOOL=false
++ export LD_PRELOAD=/lib64/libstdc++.so.6
++ LD_PRELOAD=/lib64/libstdc++.so.6
++ export TIMEOUT=900
++ TIMEOUT=900
++ eval_dir=/workspace/log/eval_game
++ export EVAL_DIR=/workspace/log/eval_game
++ EVAL_DIR=/workspace/log/eval_game
++ games_dir=/workspace/log/eval_game/games
++ mkdir -p /workspace/log/eval_game /workspace/log/eval_game/games
++ map_codes=1,2,3,4,5,6,7,8,9,10
++ [[ -z 1,2,3,4,5,6,7,8,9,10 ]]
++ IFS=,
++ read -ra MAP_CODE_ARRAY
++ map_count=10
++ log_info '检测到 10 个地图代码: 1 2 3 4 5 6 7 8 9 10'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 检测到 10 个地图代码: 1 2 3 4 5 6 7 8 9 10'
+[32m[INFO] [2026-04-11 16:56:38][0m 检测到 10 个地图代码: 1 2 3 4 5 6 7 8 9 10
++ set_name=robot_vacuum_409173
++ app_file=/data/projects/robot_vacuum/conf/configure_app.toml
++ project_log_root_dir=/data/projects/robot_vacuum/log
++ mkdir -p /data/projects/robot_vacuum/log /workspace/log /workspace/battle
++ mkdir -p /workspace/log/tmp /workspace/battle/tmp
++ trap handle_error ERR
++ fn=start_mmpve_gamecore
++ log_info '调用函数: start_mmpve_gamecore'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 调用函数: start_mmpve_gamecore'
+[32m[INFO] [2026-04-11 16:56:38][0m 调用函数: start_mmpve_gamecore
++ start_mmpve_gamecore
++ toml_file=kaiwu_env/conf/configure_system.toml
++ echo ''
++ change_config_in_file set_name robot_vacuum_409173 kaiwu_env/conf/configure_system.toml str
++ key=set_name
++ val=robot_vacuum_409173
++ file=kaiwu_env/conf/configure_system.toml
++ type=str
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^set_name/d' kaiwu_env/conf/configure_system.toml
++ [[ str == \s\t\r ]]
++ new_line='set_name = "robot_vacuum_409173"'
+++ wc -l
++ line_count=117
++ ((  line_count >= 1  ))
++ sed -i '5i set_name = "robot_vacuum_409173"' kaiwu_env/conf/configure_system.toml
++ sed -i '/^$/N;/^\n$/D' kaiwu_env/conf/configure_system.toml
++ change_config_in_file task_id 409173 kaiwu_env/conf/configure_system.toml str
++ key=task_id
++ val=409173
++ file=kaiwu_env/conf/configure_system.toml
++ type=str
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^task_id/d' kaiwu_env/conf/configure_system.toml
++ [[ str == \s\t\r ]]
++ new_line='task_id = "409173"'
+++ wc -l
++ line_count=117
++ ((  line_count >= 1  ))
++ sed -i '5i task_id = "409173"' kaiwu_env/conf/configure_system.toml
++ sed -i '/^$/N;/^\n$/D' kaiwu_env/conf/configure_system.toml
++ change_config_in_file use_rainbow false kaiwu_env/conf/configure_system.toml
++ key=use_rainbow
++ val=false
++ file=kaiwu_env/conf/configure_system.toml
++ type=
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^use_rainbow/d' kaiwu_env/conf/configure_system.toml
++ [[ '' == \s\t\r ]]
++ new_line='use_rainbow = false'
+++ wc -l
++ line_count=117
++ ((  line_count >= 1  ))
++ sed -i '5i use_rainbow = false' kaiwu_env/conf/configure_system.toml
++ sed -i '/^$/N;/^\n$/D' kaiwu_env/conf/configure_system.toml
++ change_config_in_file use_alloc false kaiwu_env/conf/configure_system.toml
++ key=use_alloc
++ val=false
++ file=kaiwu_env/conf/configure_system.toml
++ type=
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^use_alloc/d' kaiwu_env/conf/configure_system.toml
++ [[ '' == \s\t\r ]]
++ new_line='use_alloc = false'
+++ wc -l
++ line_count=117
++ ((  line_count >= 1  ))
++ sed -i '5i use_alloc = false' kaiwu_env/conf/configure_system.toml
++ sed -i '/^$/N;/^\n$/D' kaiwu_env/conf/configure_system.toml
++ change_config_in_file log_dir /data/projects/kaiwu_arena/log kaiwu_env/conf/configure_system.toml str
++ key=log_dir
++ val=/data/projects/kaiwu_arena/log
++ file=kaiwu_env/conf/configure_system.toml
++ type=str
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^log_dir/d' kaiwu_env/conf/configure_system.toml
++ [[ str == \s\t\r ]]
++ new_line='log_dir = "/data/projects/kaiwu_arena/log"'
+++ wc -l
++ line_count=117
++ ((  line_count >= 1  ))
++ sed -i '5i log_dir = "/data/projects/kaiwu_arena/log"' kaiwu_env/conf/configure_system.toml
++ sed -i '/^$/N;/^\n$/D' kaiwu_env/conf/configure_system.toml
++ export START_PROCESS_CHECK=false
++ START_PROCESS_CHECK=false
++ (( i=0 ))
++ (( i<map_count ))
++ map_code=1
++ cur_index=1
++ start_mmpve_gamecore_once 1 1
++ local map_code=1
++ local cur_index=1
++ init_game_context 1 1
++ local map_code=1
++ local cur_index=1
++ [[ -z 1 ]]
++ game_index=1
++ game_map_code=1
++ game_name=409173_1_1
+++ date -u +%Y-%m-%dT%H:%M:%S.%6NZ
++ start_time=2026-04-11T08:56:38.559565Z
++ game_result_dir=/workspace/battle/409173_1_1
++ game_log_dir=/workspace/log/409173_1_1
++ aisrv_tmp_dir=/workspace/log/tmp/409173_1_1
++ battle_tmp_dir=/workspace/battle/tmp/409173_1_1
++ env_log_root_dir=/data/projects/kaiwu_arena/log
++ env_log_dir=/data/projects/kaiwu_arena/log/409173_1_1
++ result_dir=/data/projects/kaiwu_arena/log/409173_1_1/game_data
++ project_log_dir=/data/projects/robot_vacuum/log/409173_1_1
+++ game_dir 1
+++ local idx=1
+++ echo /workspace/log/eval_game/games/1
++ cur_game_dir=/workspace/log/eval_game/games/1
++ mkdir -p /workspace/log/eval_game/games/1
++ mkdir -p /workspace/battle/409173_1_1 /workspace/log/409173_1_1 /workspace/log/tmp/409173_1_1 /workspace/battle/tmp/409173_1_1 /data/projects/kaiwu_arena/log/409173_1_1 /data/projects/kaiwu_arena/log/409173_1_1/game_data
++ '[' '!' -e /data/projects/robot_vacuum/log/409173_1_1 ']'
++ ln -s /workspace/log/409173_1_1 /data/projects/robot_vacuum/log/409173_1_1
++ kaiwu_arena_game_conf=/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
++ '[' -f /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml ']'
++ change_config_in_file eval_map_id 1 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
++ key=eval_map_id
++ val=1
++ file=/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
++ type=
++ file_type=yaml
++ echo ''
++ [[ yaml == \y\a\m\l ]]
++ sed -i '/^eval_map_id:/d' /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
++ echo 'eval_map_id: 1'
++ sed -i '/^$/N;/^\n$/D' /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
++ log_info 'set eval_map_id to 1 in /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:38'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m set eval_map_id to 1 in /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+[32m[INFO] [2026-04-11 16:56:38][0m set eval_map_id to 1 in /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
++ python3 /root/tools/change_kaiwu_env_port.py 5566 5888 1
+---succeed to update configure_system.toml---
+---succeed to change the ports of kaiwu_env---
++ change_aisrv_env_ipc_method shared_memory
++ aisrv_env_ipc_method=shared_memory
++ kaiwu_env_configure_file=/data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml
++ '[' -f /data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml ']'
++ change_config_in_file aisrv_env_ipc_method shared_memory /data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml str
++ key=aisrv_env_ipc_method
++ val=shared_memory
++ file=/data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml
++ type=str
++ file_type=toml
++ echo ''
++ [[ toml == \y\a\m\l ]]
++ sed -i '/^aisrv_env_ipc_method/d' /data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml
++ [[ str == \s\t\r ]]
++ new_line='aisrv_env_ipc_method = "shared_memory"'
+++ wc -l
++ line_count=24
++ ((  line_count >= 1  ))
++ sed -i '5i aisrv_env_ipc_method = "shared_memory"' /data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml
++ sed -i '/^$/N;/^\n$/D' /data/projects/kaiwu_arena/kaiwu_env/conf/kaiwu_env.toml
++ kaiwudrl_configure_file=/data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml
++ '[' -f /data/projects/robot_vacuum/kaiwudrl/conf/kaiwudrl/configure.toml ']'
++ call_eval_plugin_file
++ plugin_dir=tools/plugin/eval/
++ call_plugin_file_common tools/plugin/eval/
++ plugin_dir=tools/plugin/eval/
++ '[' -d tools/plugin/eval/ ']'
++ main_script=tools/plugin/eval//main.sh
++ '[' -f tools/plugin/eval//main.sh ']'
++ . tools/plugin/eval//main.sh
+++ set +e
+++ GAME_CONFIG_FILE=/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ ENV_KEY=KAIWU_ASSESS_MAP_CODES
+++ main tools/plugin/eval/
+++ local raw_codes=1,2,3,4,5,6,7,8,9,10
+++ '[' -z 1,2,3,4,5,6,7,8,9,10 ']'
+++ log '检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10'
+++ local 'msg=检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10'
+++ type log_info
+++ log_info '检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10'
++++ date '+%Y-%m-%d %H:%M:%S'
+++ now='2026-04-11 16:56:38'
+++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10'
+[32m[INFO] [2026-04-11 16:56:38][0m 检测到环境变量 KAIWU_ASSESS_MAP_CODES=1,2,3,4,5,6,7,8,9,10
+++ local yaml_list
++++ parse_map_codes_to_yaml_list 1,2,3,4,5,6,7,8,9,10
++++ local raw=1,2,3,4,5,6,7,8,9,10
++++ raw=1,2,3,4,5,6,7,8,9,10
++++ '[' -z 1,2,3,4,5,6,7,8,9,10 ']'
++++ parts=()
++++ local -a parts
++++ maps=()
++++ local -a maps
++++ local part
++++ IFS=,
++++ read -r -a parts
++++ for part in "${parts[@]}"
++++ '[' -z 1 ']'
++++ [[ ! 1 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 2 ']'
++++ [[ ! 2 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 3 ']'
++++ [[ ! 3 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 4 ']'
++++ [[ ! 4 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 5 ']'
++++ [[ ! 5 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 6 ']'
++++ [[ ! 6 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 7 ']'
++++ [[ ! 7 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 8 ']'
++++ [[ ! 8 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 9 ']'
++++ [[ ! 9 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ for part in "${parts[@]}"
++++ '[' -z 10 ']'
++++ [[ ! 10 =~ ^[0-9]+$ ]]
++++ maps+=("$part")
++++ '[' 10 -eq 0 ']'
++++ local 'yaml_list=[1'
++++ local i
++++ (( i = 1 ))
++++ (( i < 10 ))
++++ yaml_list+=', 2'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 3'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 4'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 5'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 6'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 7'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 8'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 9'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=', 10'
++++ (( i++ ))
++++ (( i < 10 ))
++++ yaml_list+=']'
++++ echo '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
++++ return 0
+++ yaml_list='[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+++ '[' 0 -ne 0 ']'
+++ '[' -z '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]' ']'
+++ log '解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+++ local 'msg=解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+++ type log_info
+++ log_info '解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
++++ date '+%Y-%m-%d %H:%M:%S'
+++ now='2026-04-11 16:56:38'
+++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m 解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml'
+[32m[INFO] [2026-04-11 16:56:38][0m 解析 KAIWU_ASSESS_MAP_CODES -> [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]，准备更新 /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ update_available_maps /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+++ local config_file=/data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ local 'yaml_list=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+++ '[' '!' -f /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml ']'
+++ grep -qE '^[[:space:]]*available_maps:' /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ sed -i -E 's|^([[:space:]]*)available_maps:.*$|\1available_maps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]|g' /data/projects/kaiwu_arena/environments/robot_vacuum/conf/game.yaml
+++ log '✓ 已更新 available_maps 为 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+++ local 'msg=✓ 已更新 available_maps 为 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+++ type log_info
+++ log_info '✓ 已更新 available_maps 为 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
++++ date '+%Y-%m-%d %H:%M:%S'
+++ now='2026-04-11 16:56:38'
+++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m ✓ 已更新 available_maps 为 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
+[32m[INFO] [2026-04-11 16:56:38][0m ✓ 已更新 available_maps 为 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+++ return 0
+++ log 'Eval plugin 执行完成'
+++ local 'msg=Eval plugin 执行完成'
+++ type log_info
+++ log_info 'Eval plugin 执行完成'
++++ date '+%Y-%m-%d %H:%M:%S'
+++ now='2026-04-11 16:56:38'
+++ echo -e '\033[32m[INFO] [2026-04-11 16:56:38]\033[0m Eval plugin 执行完成'
+[32m[INFO] [2026-04-11 16:56:38][0m Eval plugin 执行完成
+++ return 0
++ export PLATFORM_LOG_DIR=/data/projects/kaiwu_arena/log/409173_1_1/game_data
++ PLATFORM_LOG_DIR=/data/projects/kaiwu_arena/log/409173_1_1/game_data
++ export GAMECORE_ID=409173_1_1
++ GAMECORE_ID=409173_1_1
++ export GAME_ID=409173_1_1
++ GAME_ID=409173_1_1
++ export KAIWU_MAP_CODE=1
++ KAIWU_MAP_CODE=1
++ random_seed=default
++ '[' battle = race ']'
++ export RANDOM_SEED=default
++ RANDOM_SEED=default
++ sh tools/start.sh robot_vacuum eval
+Activating robot_vacuum/lib/activate_env_lib.sh
+[Activate] Registered script directory: /data/projects/kaiwu_arena/robot_vacuum/lib
++ sleep 10
+++ pgrep -f 'eval_game_id=\b409173_1_1\b'
++ pids='335
+489'
++ log_info 'the pids of 409173_1_1 are 335
+489'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:56:53'
++ echo -e '\033[32m[INFO] [2026-04-11 16:56:53]\033[0m the pids of 409173_1_1 are 335
+489'
+[32m[INFO] [2026-04-11 16:56:53][0m the pids of 409173_1_1 are 335
+489
++ local gc_timeout=900
++ local gc_elapsed=0
++ local gc_game_dir_path
+++ game_dir 1
+++ local idx=1
+++ echo /workspace/log/eval_game/games/1
++ gc_game_dir_path=/workspace/log/eval_game/games/1
++ local gc_failed=false
++ true
++ sleep 20
++ gc_elapsed=20
++ log_info 'gamecore: checking result and aisrv status (elapsed=20s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:13'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:13]\033[0m gamecore: checking result and aisrv status (elapsed=20s)'
+[32m[INFO] [2026-04-11 16:57:13][0m gamecore: checking result and aisrv status (elapsed=20s)
++ '[' 20 -ge 900 ']'
++ '[' -f /workspace/log/tmp/409173_1_1/aisrv.error ']'
++ local gc_workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
+++ ls -t '/data/projects/kaiwu_arena/log/409173_1_1/game_data/*.done'
+++ head -n 1
++ result=
++ [[ ! -n '' ]]
++ log_info 'gamecore: result file is not exist, continue waiting...'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:13'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:13]\033[0m gamecore: result file is not exist, continue waiting...'
+[32m[INFO] [2026-04-11 16:57:13][0m gamecore: result file is not exist, continue waiting...
++ continue
++ true
++ sleep 20
++ gc_elapsed=40
++ log_info 'gamecore: checking result and aisrv status (elapsed=40s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:33'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:33]\033[0m gamecore: checking result and aisrv status (elapsed=40s)'
+[32m[INFO] [2026-04-11 16:57:33][0m gamecore: checking result and aisrv status (elapsed=40s)
++ '[' 40 -ge 900 ']'
++ '[' -f /workspace/log/tmp/409173_1_1/aisrv.error ']'
++ local gc_workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
+++ ls -t '/data/projects/kaiwu_arena/log/409173_1_1/game_data/*.done'
+++ head -n 1
++ result=
++ [[ ! -n '' ]]
++ log_info 'gamecore: result file is not exist, continue waiting...'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:33'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:33]\033[0m gamecore: result file is not exist, continue waiting...'
+[32m[INFO] [2026-04-11 16:57:33][0m gamecore: result file is not exist, continue waiting...
++ continue
++ true
++ sleep 20
++ gc_elapsed=60
++ log_info 'gamecore: checking result and aisrv status (elapsed=60s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:53'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:53]\033[0m gamecore: checking result and aisrv status (elapsed=60s)'
+[32m[INFO] [2026-04-11 16:57:53][0m gamecore: checking result and aisrv status (elapsed=60s)
++ '[' 60 -ge 900 ']'
++ '[' -f /workspace/log/tmp/409173_1_1/aisrv.error ']'
++ local gc_workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
+++ head -n 1
+++ ls -t '/data/projects/kaiwu_arena/log/409173_1_1/game_data/*.done'
++ result=
++ [[ ! -n '' ]]
++ log_info 'gamecore: result file is not exist, continue waiting...'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:57:53'
++ echo -e '\033[32m[INFO] [2026-04-11 16:57:53]\033[0m gamecore: result file is not exist, continue waiting...'
+[32m[INFO] [2026-04-11 16:57:53][0m gamecore: result file is not exist, continue waiting...
++ continue
++ true
++ sleep 20
++ gc_elapsed=80
++ log_info 'gamecore: checking result and aisrv status (elapsed=80s)'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:58:13'
++ echo -e '\033[32m[INFO] [2026-04-11 16:58:13]\033[0m gamecore: checking result and aisrv status (elapsed=80s)'
+[32m[INFO] [2026-04-11 16:58:13][0m gamecore: checking result and aisrv status (elapsed=80s)
++ '[' 80 -ge 900 ']'
++ '[' -f /workspace/log/tmp/409173_1_1/aisrv.error ']'
++ local gc_workflow_error_file=/workspace/log/eval_game/games/1/workflow_error
++ '[' -f /workspace/log/eval_game/games/1/workflow_error ']'
+++ head -n 1
+++ ls -t /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.done
++ result=/data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.done
++ [[ ! -n /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.done ]]
++ log_info 'gamecore: get donefile: /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.done'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:58:13'
++ echo -e '\033[32m[INFO] [2026-04-11 16:58:13]\033[0m gamecore: get donefile: /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.done'
+[32m[INFO] [2026-04-11 16:58:13][0m gamecore: get donefile: /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.done
+++ basename /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.done .done
++ result_name=409173_1_1
++ result_json=/data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.json
++ log_info 'gamecore: get result: /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.json'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:58:13'
++ echo -e '\033[32m[INFO] [2026-04-11 16:58:13]\033[0m gamecore: get result: /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.json'
+[32m[INFO] [2026-04-11 16:58:13][0m gamecore: get result: /data/projects/kaiwu_arena/log/409173_1_1/game_data/409173_1_1.json
++ break
++ '[' false = true ']'
++ log_info 'gamecore: start copying files to /workspace/battle'
+++ date '+%Y-%m-%d %H:%M:%S'
++ now='2026-04-11 16:58:13'
++ echo -e '\033[32m[INFO] [2026-04-11 16:58:13]\033[0m gamecore: start copying files to /workspace/battle'
+[32m[INFO] [2026-04-11 16:58:13][0m gamecore: start copying files to /workspace/battle
++ safe_copy '/workspace/log/start_*.log' /workspace/log/409173_1_1 启动日志
++ local 'source_pattern=/workspace/log/start_*.log'
++ local destination=/workspace/log/409173_1_1
++ local description=启动日志
++ local count=0
++ [[ /workspace/log/start_*.log == *\** ]]
++ shopt -s nullglob
++ files=('/workspace/log/start_aisrv.log' '/workspace/log/start_gamecore.log')
++ local files
++ shopt -u nullglob
++ count=2
++ '[' 2 -gt 0 ']'
++ cp -r /workspace/log/start_aisrv.log /workspace/log/start_gamecore.log /workspace/log/409173_1_1

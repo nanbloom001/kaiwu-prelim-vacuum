@@ -93,6 +93,17 @@ class Preprocessor:
         self.goal_kind = None
         self.path = []
         self.last_plan_step = -999
+        self.plan_mode = "explore"
+        self.current_region_id = None
+        self.region_seq = []
+        self.region_graph = {}
+        self.regions = {}
+        self.region_revision_step = -999
+        self.coverage_targets = []
+        self._active_region_dist_map = None
+        self._coverage_target_dist_map = None
+        self.charge_exit_pending = False
+        self.charge_exit_region_id = None
 
         self.pending_action = 0
         self.pending_prob = np.full(Config.ACTION_DIM, 1.0 / Config.ACTION_DIM, dtype=np.float32)
@@ -110,6 +121,7 @@ class Preprocessor:
         self._clean_integral = np.zeros((Config.GRID_SIZE + 1, Config.GRID_SIZE + 1), dtype=np.float32)
         self._visit_integral = np.zeros((Config.GRID_SIZE + 1, Config.GRID_SIZE + 1), dtype=np.float32)
         self._transit_integral = np.zeros((Config.GRID_SIZE + 1, Config.GRID_SIZE + 1), dtype=np.float32)
+        self._bottleneck_map = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
 
     def feature_process(self, env_obs, last_action):
         self._parse_env_obs(env_obs, last_action)
@@ -311,6 +323,32 @@ class Preprocessor:
         self._npc_zone_hard_block_map = zone_block
         self._npc_dynamic_hard_block_map = dynamic_block
         self._npc_penalty_map = penalty
+        self._bottleneck_map = self._build_bottleneck_map()
+
+    def _build_bottleneck_map(self):
+        bottleneck = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        passable = self._plannable_known_map & (~self._npc_zone_hard_block_map) & (~self._npc_dynamic_hard_block_map)
+        for x in range(Config.GRID_SIZE):
+            for z in range(Config.GRID_SIZE):
+                if not passable[x, z]:
+                    continue
+                neighbors = []
+                for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx = x + dx
+                    nz = z + dz
+                    neighbors.append(self._in_bounds(nx, nz) and passable[nx, nz])
+                degree = int(sum(neighbors))
+                if degree <= 1:
+                    bottleneck[x, z] = True
+                    continue
+                if degree == 2:
+                    left, right, up, down = neighbors[1], neighbors[0], neighbors[2], neighbors[3]
+                    if (left and right and not up and not down) or (up and down and not left and not right):
+                        bottleneck[x, z] = True
+                        continue
+                    # L-shaped corridors are also treated as narrow mandatory turns.
+                    bottleneck[x, z] = True
+        return bottleneck
 
     def _update_stuck_state(self):
         if self.cur_pos != self.last_pos or self.last_action < 0:
@@ -498,10 +536,17 @@ class Preprocessor:
     def _select_action(self, legal_action):
         self._trim_path_head()
         if self._need_charge():
+            if not self.charge_mode:
+                self._clear_active_region()
             self.charge_mode = True
+            self.plan_mode = "charge"
             self._clear_region_lock()
         elif self.on_charger and self.battery >= int(self.battery_max * 0.98):
             self.charge_mode = False
+            self.plan_mode = "transit" if self._in_fill_phase() else "explore"
+            self._prepare_charge_exit_switch()
+            if self.charge_exit_pending:
+                self.path = []
 
         if self._need_replan():
             self._replan()
@@ -511,14 +556,34 @@ class Preprocessor:
             next_pos = self.path[0]
             act = self._pos_to_action(next_pos)
             if act is not None and legal_action[act]:
-                action_scores[act] += Config.PATH_FOLLOW_BONUS
+                follow_scale = self._repeat_bias_decay(next_pos, radius=1)
+                if self._in_explore_phase():
+                    follow_scale = min(follow_scale, 0.72)
+                action_scores[act] += Config.PATH_FOLLOW_BONUS * follow_scale
 
         self.pending_prob = self._scores_to_probs(action_scores, legal_action)
         if float(np.sum(self.pending_prob)) > 0.0:
-            return int(np.argmax(self.pending_prob))
+            chosen = int(np.argmax(self.pending_prob))
+            if self.charge_exit_pending and self.on_charger:
+                dx, dz = self.ACTION_DELTAS[chosen]
+                if dx == 0 or dz == 0:
+                    exit_pos = (self.cur_pos[0] + dx, self.cur_pos[1] + dz)
+                    if not self._is_on_charger(exit_pos):
+                        self.charge_exit_pending = False
+                        self.charge_exit_region_id = None
+                    self.path = []
+            return chosen
 
         for act, ok in enumerate(legal_action):
             if ok:
+                if self.charge_exit_pending and self.on_charger:
+                    dx, dz = self.ACTION_DELTAS[act]
+                    if dx == 0 or dz == 0:
+                        exit_pos = (self.cur_pos[0] + dx, self.cur_pos[1] + dz)
+                        if not self._is_on_charger(exit_pos):
+                            self.charge_exit_pending = False
+                            self.charge_exit_region_id = None
+                        self.path = []
                 return act
         return 0
 
@@ -534,13 +599,895 @@ class Preprocessor:
             return True
         return self.battery / self.battery_max <= Config.LOW_BATTERY_RATIO
 
+    def _in_explore_phase(self):
+        return self.step_no < Config.EXPLORE_PHASE_STEPS
+
+    def _repeat_bias_decay(self, pos, radius=1):
+        repeat_density = self._local_repeat_density(pos, radius=radius)
+        return float(1.0 / (1.0 + 0.12 * repeat_density))
+
+    def _in_fill_phase(self):
+        return not self._in_explore_phase()
+
+    def _clear_active_region(self):
+        self.current_region_id = None
+        self.region_seq = []
+        self.coverage_targets = []
+        self._active_region_dist_map = None
+        self._coverage_target_dist_map = None
+        self.region_lock_kind = None
+        self.region_lock_center = None
+        self.charge_exit_pending = False
+        self.charge_exit_region_id = None
+
+    def _current_region(self):
+        return self.regions.get(self.current_region_id)
+
+    def _cell_parity(self, pos):
+        return (int(pos[0]) + int(pos[1])) & 1
+
+    def _diag_stripe_id(self, pos, family):
+        x = int(pos[0])
+        z = int(pos[1])
+        if family == "sum":
+            return x + z
+        return x - z
+
+    def _diag_progress_key(self, pos, family):
+        x = int(pos[0])
+        z = int(pos[1])
+        if family == "sum":
+            return x - z
+        return x + z
+
+    def _choose_region_diag_family(self, cells):
+        if not cells:
+            return "diff"
+
+        def family_score(family):
+            stripes = {}
+            for cell in cells:
+                sid = self._diag_stripe_id(cell, family)
+                stripes.setdefault(sid, []).append(self._diag_progress_key(cell, family))
+
+            segments = 0
+            stripe_count = len(stripes)
+            mean_len = 0.0
+            for keys in stripes.values():
+                ordered = sorted(set(int(v) for v in keys))
+                if not ordered:
+                    continue
+                mean_len += float(len(ordered))
+                segments += 1
+                for idx in range(1, len(ordered)):
+                    if abs(int(ordered[idx]) - int(ordered[idx - 1])) > 2:
+                        segments += 1
+            if stripe_count > 0:
+                mean_len /= float(stripe_count)
+            return float(segments + 0.30 * stripe_count - 0.20 * mean_len)
+
+        score_sum = family_score("sum")
+        score_diff = family_score("diff")
+        return "sum" if score_sum < score_diff else "diff"
+
+    def _diag_direct_segment(self, start_pos, goal_pos, family, allowed_mask):
+        if start_pos == goal_pos:
+            return []
+        if self._diag_stripe_id(start_pos, family) != self._diag_stripe_id(goal_pos, family):
+            return None
+
+        if family == "sum":
+            step = (1, -1) if goal_pos[0] > start_pos[0] else (-1, 1)
+        else:
+            step = (1, 1) if goal_pos[0] > start_pos[0] else (-1, -1)
+
+        path = []
+        cur = start_pos
+        while cur != goal_pos:
+            cur = (cur[0] + step[0], cur[1] + step[1])
+            if not self._in_bounds(*cur):
+                return None
+            if allowed_mask is not None and not allowed_mask[cur[0], cur[1]]:
+                return None
+            path.append(cur)
+            if len(path) > Config.MAX_TRACKED_PATH:
+                return None
+        return path
+
+    def _prepare_charge_exit_switch(self):
+        if not self._in_fill_phase():
+            self.charge_exit_pending = False
+            self.charge_exit_region_id = None
+            return
+
+        region = self._current_region()
+        if region is None:
+            self.charge_exit_pending = False
+            self.charge_exit_region_id = None
+            return
+
+        region["diag_phase"] = 1 - int(region.get("diag_phase", self._cell_parity(region["anchor"])))
+        region["diag_forward"] = -1 * int(region.get("diag_forward", 1))
+        self.charge_exit_pending = True
+        self.charge_exit_region_id = int(region["id"])
+
+    def _charge_exit_action_bonus(self, next_pos):
+        if not self.charge_exit_pending or not self.on_charger:
+            return 0.0
+
+        dx = next_pos[0] - self.cur_pos[0]
+        dz = next_pos[1] - self.cur_pos[1]
+        if dx != 0 and dz != 0:
+            return -Config.CHARGE_EXIT_DIAGONAL_PENALTY
+
+        region = self.regions.get(self.charge_exit_region_id)
+        bonus = Config.CHARGE_EXIT_STRAIGHT_BONUS
+        if region is not None:
+            desired_phase = int(region.get("diag_phase", self._cell_parity(next_pos)))
+            if self._cell_parity(next_pos) == desired_phase:
+                bonus += 1.4
+            else:
+                bonus -= 0.9
+            bonus -= 0.10 * self._distance_to_region(next_pos, region["kind"], region["anchor"])
+            bonus -= 0.06 * self._npc_zone_penalty(next_pos)
+        return float(bonus)
+
+    def _coverage_diagonal_action_bonus(self, next_pos, region):
+        if region is None or self.plan_mode != "coverage" or self.charge_mode:
+            return 0.0
+        if not self._inside_region(region, next_pos):
+            return 0.0
+
+        dx = next_pos[0] - self.cur_pos[0]
+        dz = next_pos[1] - self.cur_pos[1]
+        is_diag = dx != 0 and dz != 0
+        desired_phase = int(region.get("diag_phase", self._cell_parity(next_pos)))
+        bonus = 0.0
+
+        if is_diag:
+            bonus += Config.COVERAGE_DIAGONAL_ACTION_BONUS
+            if self._cell_parity(next_pos) == desired_phase:
+                bonus += 0.45
+        else:
+            if self._cell_parity(next_pos) == desired_phase:
+                bonus += Config.COVERAGE_ORTHO_SWITCH_BONUS
+            else:
+                bonus -= Config.COVERAGE_ORTHO_PENALTY
+
+        family = region.get("diag_family", "diff")
+        last_stripe_id = region.get("last_stripe_id")
+        if last_stripe_id is not None:
+            stripe_gap = abs(self._diag_stripe_id(next_pos, family) - int(last_stripe_id))
+            bonus -= 0.08 * max(0, stripe_gap - 1)
+
+        return float(bonus)
+
+    def _inside_region(self, region, pos=None):
+        if region is None:
+            return False
+        if pos is None:
+            pos = self.cur_pos
+        x, z = int(pos[0]), int(pos[1])
+        if not self._in_bounds(x, z):
+            return False
+        return bool(region["travel_mask"][x, z])
+
+    def _corridor_repeat_discount(self, pos):
+        x, z = int(pos[0]), int(pos[1])
+        if not self._in_bounds(x, z):
+            return 1.0
+        if self._bottleneck_map[x, z]:
+            return Config.BOTTLENECK_REPEAT_DISCOUNT
+        return 1.0
+
+    def _path_overlap_penalty(self, path, transit_bias=1.0):
+        overlap = 0.0
+        risk = 0.0
+        seen = set()
+        for cell in path:
+            x, z = int(cell[0]), int(cell[1])
+            if not self._in_bounds(x, z):
+                continue
+            cell_penalty = 0.12 * float(self.visit_count[x, z]) + 0.18 * float(self.clean_pass_count[x, z])
+            if cell in seen:
+                cell_penalty += 0.35
+            if self._bottleneck_map[x, z]:
+                cell_penalty *= Config.BOTTLENECK_PATH_DISCOUNT
+            overlap += cell_penalty
+            risk += 0.03 * min(self._npc_zone_penalty(cell), 30.0)
+            seen.add(cell)
+        return float(transit_bias * overlap + risk), float(overlap), float(risk)
+
+    def _path_transition_cost(self, start_pos, path, mode=None):
+        total = 0.0
+        cur = start_pos
+        for pos in path:
+            total += self._transition_cost(cur, pos, mode=mode)
+            cur = pos
+        return float(total)
+
+    def _expand_mask_on_known(self, base_mask, radius):
+        if radius <= 0:
+            return base_mask.copy()
+        result = base_mask.copy()
+        passable = self._plannable_known_map & (~self._npc_zone_hard_block_map) & (~self._npc_dynamic_hard_block_map)
+        cells = np.argwhere(base_mask)
+        for gx, gz in cells:
+            x0 = max(0, int(gx) - radius)
+            x1 = min(Config.GRID_SIZE, int(gx) + radius + 1)
+            z0 = max(0, int(gz) - radius)
+            z1 = min(Config.GRID_SIZE, int(gz) + radius + 1)
+            result[x0:x1, z0:z1] |= passable[x0:x1, z0:z1]
+        return result
+
+    def _choose_region_anchor(self, cells):
+        if not cells:
+            return None
+        arr = np.array(cells, dtype=np.float32)
+        center = np.mean(arr, axis=0)
+        best_score = float("inf")
+        best_cell = cells[0]
+        for cell in cells:
+            dist = abs(float(cell[0]) - center[0]) + abs(float(cell[1]) - center[1])
+            score = dist + 0.12 * self._local_repeat_density(cell, radius=1) + 0.05 * self._npc_zone_penalty(cell)
+            if self.map_state[cell[0], cell[1]] == self.DIRTY:
+                score -= 0.35
+            if score < best_score:
+                best_score = score
+                best_cell = cell
+        return best_cell
+
+    def _select_region_entry_cells(self, travel_mask, anchor):
+        cells = [tuple(map(int, pos)) for pos in np.argwhere(travel_mask)]
+        if not cells:
+            return []
+        candidates = []
+        for cell in cells:
+            x, z = cell
+            is_border = False
+            for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx = x + dx
+                nz = z + dz
+                if not self._in_bounds(nx, nz) or not travel_mask[nx, nz]:
+                    is_border = True
+                    break
+            if not is_border:
+                continue
+            score = (
+                self._local_repeat_density(cell, radius=1)
+                + 0.08 * self._npc_zone_penalty(cell)
+                + 0.06 * self._chebyshev(cell, anchor)
+            )
+            candidates.append((float(score), cell))
+        if not candidates:
+            candidates = [(0.0, cell) for cell in cells]
+        candidates.sort(key=lambda item: item[0])
+        return [cell for _, cell in candidates[: Config.REGION_ENTRY_CANDIDATES]]
+
+    def _build_real_regions(self):
+        old_regions = self.regions if isinstance(self.regions, dict) else {}
+        seed_mask = (self.map_state == self.DIRTY) | self._frontier_mask
+        seed_mask &= self._plannable_known_map
+        seed_mask &= (~self._npc_zone_hard_block_map)
+        seed_mask &= (~self._npc_dynamic_hard_block_map)
+
+        visited = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+        regions = {}
+        region_id = 0
+
+        for start in np.argwhere(seed_mask):
+            sx = int(start[0])
+            sz = int(start[1])
+            if visited[sx, sz]:
+                continue
+
+            queue = deque([(sx, sz)])
+            visited[sx, sz] = True
+            component = []
+            while queue:
+                x, z = queue.popleft()
+                component.append((x, z))
+                for dx, dz in self.ACTION_DELTAS:
+                    nx = x + dx
+                    nz = z + dz
+                    if not self._in_bounds(nx, nz):
+                        continue
+                    if visited[nx, nz] or not seed_mask[nx, nz]:
+                        continue
+                    visited[nx, nz] = True
+                    queue.append((nx, nz))
+
+            if not component:
+                continue
+
+            seed_component_mask = np.zeros((Config.GRID_SIZE, Config.GRID_SIZE), dtype=bool)
+            for x, z in component:
+                seed_component_mask[x, z] = True
+
+            support_mask = self._expand_mask_on_known(seed_component_mask, Config.REGION_SUPPORT_RADIUS)
+            travel_mask = self._expand_mask_on_known(support_mask, Config.REGION_TRAVEL_RADIUS)
+            travel_mask &= self._plannable_known_map
+            travel_mask &= (~self._npc_zone_hard_block_map)
+            travel_mask &= (~self._npc_dynamic_hard_block_map)
+            if not np.any(travel_mask):
+                continue
+
+            dirty_cells = [cell for cell in component if self.map_state[cell[0], cell[1]] == self.DIRTY]
+            frontier_cells = [cell for cell in component if self._frontier_mask[cell[0], cell[1]]]
+            anchor = self._choose_region_anchor(dirty_cells if dirty_cells else component)
+            if anchor is None:
+                continue
+
+            entry_cells = self._select_region_entry_cells(travel_mask, anchor)
+            region_kind = "dirty" if len(dirty_cells) >= len(frontier_cells) else "frontier"
+            travel_cells = [tuple(map(int, pos)) for pos in np.argwhere(travel_mask)]
+            dominant_cells = dirty_cells if dirty_cells else component
+            parity_counts = [0, 0]
+            for cell in dominant_cells:
+                parity_counts[self._cell_parity(cell)] += 1
+            default_phase = 0 if parity_counts[0] >= parity_counts[1] else 1
+            diag_family = self._choose_region_diag_family(component)
+            matched_old = None
+            matched_dist = 1e9
+            for old_region in old_regions.values():
+                if old_region.get("kind") != region_kind:
+                    continue
+                old_anchor = old_region.get("anchor")
+                if old_anchor is None:
+                    continue
+                dist = self._chebyshev(anchor, old_anchor)
+                if dist < matched_dist:
+                    matched_dist = dist
+                    matched_old = old_region
+
+            repeat_mean = float(np.mean([self._local_repeat_density(cell, radius=1) for cell in component]))
+            risk_mean = float(np.mean([self._npc_zone_penalty(cell) for cell in component]))
+            coverage_estimate = float(len(component) + 0.22 * len(travel_cells))
+            region_value = (
+                Config.REGION_VALUE_DIRTY_WEIGHT * float(len(dirty_cells))
+                + Config.REGION_VALUE_FRONTIER_WEIGHT * float(len(frontier_cells))
+                - Config.REGION_VALUE_REPEAT_WEIGHT * repeat_mean
+                - Config.REGION_VALUE_RISK_WEIGHT * risk_mean
+            )
+
+            regions[region_id] = {
+                "id": region_id,
+                "kind": region_kind,
+                "anchor": anchor,
+                "seed_cells": component,
+                "dirty_cells": dirty_cells,
+                "frontier_cells": frontier_cells,
+                "seed_mask": seed_component_mask,
+                "travel_mask": travel_mask,
+                "travel_cells": travel_cells,
+                "entry_cells": entry_cells if entry_cells else [anchor],
+                "value": float(region_value),
+                "coverage_estimate": coverage_estimate,
+                "charger_return": float(self._charger_dist_at(anchor, self._charger_dist_map)),
+                "diag_family": matched_old.get("diag_family", diag_family) if matched_old is not None else diag_family,
+                "diag_phase": int(matched_old.get("diag_phase", default_phase)) if matched_old is not None else int(default_phase),
+                "diag_forward": int(matched_old.get("diag_forward", 1)) if matched_old is not None else 1,
+                "last_stripe_id": matched_old.get("last_stripe_id") if matched_old is not None else None,
+            }
+            region_id += 1
+
+        old_graph = self.region_graph if isinstance(self.region_graph, dict) else {}
+        self.regions = regions
+        self.region_graph = {rid: dict(old_graph.get(rid, {})) for rid in regions}
+
+    def _match_region_by_anchor(self, anchor, kind=None):
+        best_id = None
+        best_score = 1e9
+        for rid, region in self.regions.items():
+            if kind is not None and region["kind"] != kind:
+                continue
+            dist = self._chebyshev(anchor, region["anchor"])
+            if self._inside_region(region, anchor):
+                return rid
+            if dist < best_score:
+                best_score = dist
+                best_id = rid
+        return best_id
+
+    def _region_remaining_targets(self, region):
+        if region is None:
+            return []
+        merged = {}
+        for cell in region.get("travel_cells", []):
+            x, z = int(cell[0]), int(cell[1])
+            if self.map_state[x, z] == self.DIRTY:
+                merged[(x, z)] = 2.0
+            elif self._frontier_mask[x, z] and self._plannable_known_map[x, z]:
+                merged[(x, z)] = 1.0
+        return list(merged.keys())
+
+    def _region_has_remaining_work(self, region):
+        return len(self._region_remaining_targets(region)) > 0
+
+    def _refresh_active_region_maps(self, region):
+        if region is None:
+            self._active_region_dist_map = None
+            self._coverage_target_dist_map = None
+            return
+        self._active_region_dist_map = self._build_multi_source_dist(
+            region["entry_cells"],
+            allow_unknown=False,
+        )
+        remaining = self._region_remaining_targets(region)
+        if remaining:
+            self._coverage_target_dist_map = self._build_multi_source_dist(
+                remaining,
+                allow_unknown=False,
+                allowed_mask=region["travel_mask"],
+            )
+        else:
+            self._coverage_target_dist_map = None
+
+    def _sync_region_inventory(self, force=False):
+        if self.charge_mode or self._in_explore_phase():
+            return
+        if not force and self.regions and self.step_no - self.region_revision_step < Config.REGION_REBUILD_INTERVAL:
+            return
+
+        prev_region = self._current_region()
+        prev_anchor = prev_region["anchor"] if prev_region is not None else None
+        prev_kind = prev_region["kind"] if prev_region is not None else None
+
+        self._build_real_regions()
+        self.region_revision_step = self.step_no
+
+        if prev_anchor is not None:
+            self.current_region_id = self._match_region_by_anchor(prev_anchor, prev_kind)
+        elif self.current_region_id not in self.regions:
+            self.current_region_id = None
+
+        if self.current_region_id is not None:
+            region = self.regions.get(self.current_region_id)
+            if region is None or not self._region_has_remaining_work(region):
+                self.current_region_id = None
+
+        self.region_seq = [
+            rid
+            for rid in self.region_seq
+            if rid in self.regions and self._region_has_remaining_work(self.regions[rid]) and rid != self.current_region_id
+        ]
+
+        if self.current_region_id is not None:
+            active = self.regions[self.current_region_id]
+            self.region_lock_kind = active["kind"]
+            self.region_lock_center = active["anchor"]
+            self._refresh_active_region_maps(active)
+        else:
+            self._refresh_active_region_maps(None)
+
+    def _estimate_position_to_region(self, start_pos, region):
+        if region is None:
+            return None
+
+        allow_unknown = bool(region["kind"] == "frontier")
+        best = None
+        goal_cells = region["entry_cells"] if region["entry_cells"] else [region["anchor"]]
+        for entry in goal_cells[: Config.REGION_ENTRY_CANDIDATES]:
+            path = self._plan_path_to_goals(
+                start_pos,
+                [entry],
+                allow_unknown=allow_unknown,
+                mode="transit",
+            )
+            if path is None:
+                continue
+            transition_cost = self._path_transition_cost(start_pos, path, mode="transit")
+            total_penalty, overlap_penalty, risk_penalty = self._path_overlap_penalty(path, transit_bias=1.0)
+            score_cost = transition_cost + Config.PATH_OVERLAP_TRANSIT_WEIGHT * total_penalty
+            if best is None or score_cost < best["cost"]:
+                best = {
+                    "entry": entry,
+                    "path": path,
+                    "steps": len(path),
+                    "cost": float(score_cost),
+                    "overlap": float(overlap_penalty),
+                    "risk": float(risk_penalty),
+                }
+
+        if best is None and allow_unknown:
+            path = self._plan_path_to_goals(start_pos, [region["anchor"]], allow_unknown=True, mode="transit")
+            if path is not None:
+                transition_cost = self._path_transition_cost(start_pos, path, mode="transit")
+                total_penalty, overlap_penalty, risk_penalty = self._path_overlap_penalty(path, transit_bias=1.0)
+                best = {
+                    "entry": region["anchor"],
+                    "path": path,
+                    "steps": len(path),
+                    "cost": float(transition_cost + Config.PATH_OVERLAP_TRANSIT_WEIGHT * total_penalty),
+                    "overlap": float(overlap_penalty),
+                    "risk": float(risk_penalty),
+                }
+
+        if best is None:
+            return None
+
+        best["return_budget"] = (
+            float(best["steps"]) + region["coverage_estimate"] + region["charger_return"] + Config.TARGET_CHARGE_BUFFER
+        )
+        return best
+
+    def _get_region_edge(self, src_region_id, dst_region_id, src_pos=None):
+        if src_region_id is None:
+            return self._estimate_position_to_region(src_pos if src_pos is not None else self.cur_pos, self.regions.get(dst_region_id))
+
+        cache = self.region_graph.setdefault(src_region_id, {})
+        if dst_region_id in cache:
+            return cache[dst_region_id]
+
+        src_region = self.regions.get(src_region_id)
+        dst_region = self.regions.get(dst_region_id)
+        if src_region is None or dst_region is None:
+            return None
+
+        edge = None
+        start_candidates = src_region["entry_cells"] if src_region["entry_cells"] else [src_region["anchor"]]
+        for start in start_candidates[: Config.REGION_ENTRY_CANDIDATES]:
+            candidate = self._estimate_position_to_region(start, dst_region)
+            if candidate is None:
+                continue
+            if edge is None or candidate["cost"] < edge["cost"]:
+                edge = candidate
+        if edge is not None:
+            cache[dst_region_id] = edge
+        return edge
+
+    def _build_region_sequence(self):
+        candidate_ids = [rid for rid, region in self.regions.items() if self._region_has_remaining_work(region)]
+        if not candidate_ids:
+            self.region_seq = []
+            return
+
+        seq = []
+        used = set()
+        cursor_region_id = self.current_region_id if self.current_region_id in candidate_ids else None
+        cursor_pos = self.regions[cursor_region_id]["anchor"] if cursor_region_id is not None else self.cur_pos
+
+        while len(seq) < Config.REGION_QUEUE_SIZE and len(used) < len(candidate_ids):
+            best_rid = None
+            best_score = -1e9
+            for rid in candidate_ids:
+                if rid == cursor_region_id or rid in used:
+                    continue
+                region = self.regions[rid]
+                edge = self._get_region_edge(cursor_region_id, rid, src_pos=cursor_pos)
+                if edge is None:
+                    continue
+                if edge["return_budget"] >= float(self.battery):
+                    continue
+                score = (
+                    region["value"]
+                    - Config.REGION_TRANSIT_COST_WEIGHT * edge["cost"]
+                    - Config.REGION_TRANSIT_REPEAT_WEIGHT * edge["overlap"]
+                    - Config.REGION_TRANSIT_RISK_WEIGHT * edge["risk"]
+                    - 0.08 * region["coverage_estimate"]
+                )
+                if self.current_region_id is not None and rid == self.current_region_id:
+                    score += 1.0
+                if score > best_score:
+                    best_score = score
+                    best_rid = rid
+            if best_rid is None:
+                break
+            seq.append(best_rid)
+            used.add(best_rid)
+            cursor_region_id = best_rid
+            cursor_pos = self.regions[best_rid]["anchor"]
+
+        self.region_seq = seq
+
+    def _activate_region(self, region_id):
+        region = self.regions.get(region_id)
+        if region is None:
+            self._clear_active_region()
+            return None
+        self.current_region_id = region_id
+        self.region_lock_kind = region["kind"]
+        self.region_lock_center = region["anchor"]
+        self._refresh_active_region_maps(region)
+        return region
+
+    def _build_region_stripe_order(self, region, remaining_targets, start_pos):
+        family = region.get("diag_family", "diff")
+        stripes = {}
+        for cell in remaining_targets:
+            sid = self._diag_stripe_id(cell, family)
+            stripes.setdefault(sid, []).append(cell)
+        for sid, cells in stripes.items():
+            stripes[sid] = sorted(cells, key=lambda cell: self._diag_progress_key(cell, family))
+
+        if not stripes:
+            return [], {}
+
+        current_sid = self._diag_stripe_id(start_pos, family)
+        desired_phase = int(region.get("diag_phase", self._cell_parity(start_pos)))
+        if not any((sid & 1) == desired_phase for sid in stripes):
+            nearest_sid = min(stripes.keys(), key=lambda sid: abs(int(sid) - int(current_sid)))
+            desired_phase = int(nearest_sid & 1)
+            region["diag_phase"] = desired_phase
+
+        order = []
+        remaining_ids = set(stripes.keys())
+        cursor_sid = region.get("last_stripe_id")
+        if cursor_sid is None:
+            cursor_sid = current_sid
+        phase = desired_phase
+
+        while remaining_ids and len(order) < Config.COVERAGE_TARGET_BATCH:
+            phase_ids = [sid for sid in remaining_ids if (sid & 1) == phase]
+            if not phase_ids:
+                phase ^= 1
+                phase_ids = [sid for sid in remaining_ids if (sid & 1) == phase]
+                if not phase_ids:
+                    break
+            best_sid = min(
+                phase_ids,
+                key=lambda sid: (abs(int(sid) - int(cursor_sid)), abs(int(sid) - int(current_sid))),
+            )
+            order.append(best_sid)
+            remaining_ids.remove(best_sid)
+            cursor_sid = best_sid
+            phase ^= 1
+
+        if not order:
+            nearest_sid = min(stripes.keys(), key=lambda sid: abs(int(sid) - int(current_sid)))
+            order.append(nearest_sid)
+        return order, stripes
+
+    def _order_region_stripe_cells(self, region, stripe_cells, current_pos):
+        if not stripe_cells:
+            return [], 1
+
+        family = region.get("diag_family", "diff")
+        ordered = sorted(stripe_cells, key=lambda cell: self._diag_progress_key(cell, family))
+        forward = 1 if int(region.get("diag_forward", 1)) >= 0 else -1
+        pref = ordered if forward > 0 else list(reversed(ordered))
+        alt = list(reversed(pref))
+
+        def entry_cost(cells):
+            head = cells[0]
+            return float(self._chebyshev(current_pos, head) + 0.12 * self._local_repeat_density(head, radius=1))
+
+        if entry_cost(alt) + 0.25 < entry_cost(pref):
+            return alt, -forward
+        return pref, forward
+
+    def _pick_phase_shift_step(self, region, current_pos, next_stripe_id):
+        family = region.get("diag_family", "diff")
+        current_sid = self._diag_stripe_id(current_pos, family)
+        if int(current_sid) == int(next_stripe_id):
+            return None
+
+        direction = 1 if int(next_stripe_id) > int(current_sid) else -1
+        if family == "sum":
+            candidates = [(1, 0), (0, 1)] if direction > 0 else [(-1, 0), (0, -1)]
+        else:
+            candidates = [(1, 0), (0, -1)] if direction > 0 else [(-1, 0), (0, 1)]
+
+        best_pos = None
+        best_score = 1e9
+        for dx, dz in candidates:
+            nx = current_pos[0] + dx
+            nz = current_pos[1] + dz
+            if not self._in_bounds(nx, nz):
+                continue
+            if not region["travel_mask"][nx, nz]:
+                continue
+            if self._npc_zone_hard_block((nx, nz)) or self._npc_dynamic_hard_block((nx, nz)):
+                continue
+            score = (
+                self._local_repeat_density((nx, nz), radius=1)
+                + 0.08 * self._npc_zone_penalty((nx, nz))
+                + 0.15 * abs(self._diag_stripe_id((nx, nz), family) - int(next_stripe_id))
+            )
+            if self._cell_parity((nx, nz)) == int(region.get("diag_phase", self._cell_parity((nx, nz)))):
+                score -= 0.85
+            if score < best_score:
+                best_score = score
+                best_pos = (nx, nz)
+
+        if best_pos is None:
+            return None
+        return [best_pos]
+
+    def _build_region_coverage_path(self, region):
+        remaining_targets = self._region_remaining_targets(region)
+        remaining = set(remaining_targets)
+        if self.cur_pos in remaining:
+            remaining.discard(self.cur_pos)
+        if not remaining:
+            self.coverage_targets = []
+            return []
+
+        stripe_order, stripe_map = self._build_region_stripe_order(region, list(remaining), self.cur_pos)
+        if not stripe_order:
+            self.coverage_targets = list(remaining)
+            return []
+
+        path = []
+        current = self.cur_pos
+        travel_mask = region["travel_mask"]
+        last_sid = None
+
+        for stripe_idx, sid in enumerate(stripe_order):
+            stripe_cells = [cell for cell in stripe_map.get(sid, []) if cell in remaining]
+            if not stripe_cells:
+                continue
+
+            ordered_cells, actual_forward = self._order_region_stripe_cells(region, stripe_cells, current)
+            entry_segment = self._plan_path_to_goals(
+                current,
+                [ordered_cells[0]],
+                allow_unknown=False,
+                allowed_mask=travel_mask,
+                mode="coverage",
+            )
+            if entry_segment is None:
+                continue
+            for cell in entry_segment:
+                if not path or path[-1] != cell:
+                    path.append(cell)
+                remaining.discard(cell)
+            current = ordered_cells[0]
+            remaining.discard(current)
+
+            family = region.get("diag_family", "diff")
+            for cell in ordered_cells[1:]:
+                if len(path) >= Config.MAX_TRACKED_PATH:
+                    break
+                segment = self._diag_direct_segment(current, cell, family, travel_mask)
+                if segment is None:
+                    segment = self._plan_path_to_goals(
+                        current,
+                        [cell],
+                        allow_unknown=False,
+                        allowed_mask=travel_mask,
+                        mode="coverage",
+                    )
+                if segment is None:
+                    continue
+                for pos in segment:
+                    if not path or path[-1] != pos:
+                        path.append(pos)
+                    remaining.discard(pos)
+                current = cell
+                remaining.discard(current)
+                if len(path) >= Config.MAX_TRACKED_PATH:
+                    break
+
+            last_sid = sid
+            region["diag_forward"] = -actual_forward
+            if len(path) >= Config.MAX_TRACKED_PATH:
+                break
+
+            if stripe_idx + 1 < len(stripe_order):
+                shift = self._pick_phase_shift_step(region, current, stripe_order[stripe_idx + 1])
+                if shift is not None:
+                    for pos in shift:
+                        if not path or path[-1] != pos:
+                            path.append(pos)
+                        remaining.discard(pos)
+                    current = shift[-1]
+                    if len(path) >= Config.MAX_TRACKED_PATH:
+                        break
+
+        if last_sid is not None:
+            region["last_stripe_id"] = int(last_sid)
+            region["diag_phase"] = int(1 - (int(last_sid) & 1))
+        self.coverage_targets = list(remaining)
+        return path[: Config.MAX_TRACKED_PATH]
+
+    def _plan_transit_to_region(self, region):
+        edge = self._estimate_position_to_region(self.cur_pos, region)
+        if edge is None:
+            return False
+        self.plan_mode = "transit"
+        self.goal = edge["entry"]
+        self.goal_kind = region["kind"]
+        self.path = list(edge["path"][: Config.MAX_TRACKED_PATH])
+        self.last_plan_step = self.step_no
+        return True
+
+    def _plan_coverage_for_region(self, region):
+        self.plan_mode = "coverage"
+        self.goal_kind = region["kind"]
+        self.goal = region["anchor"]
+        self._refresh_active_region_maps(region)
+        path = self._build_region_coverage_path(region)
+        if not path:
+            self.path = []
+            self.last_plan_step = self.step_no
+            return False
+        self.path = path[: Config.MAX_TRACKED_PATH]
+        self.last_plan_step = self.step_no
+        return True
+
+    def _replan_fill(self):
+        self._sync_region_inventory(force=not self.regions)
+        attempts = 0
+        max_attempts = max(2, len(self.regions) + 1)
+
+        while attempts < max_attempts:
+            region = self._current_region()
+            if region is None or not self._region_has_remaining_work(region):
+                self.current_region_id = None
+                self._refresh_active_region_maps(None)
+                if not self.region_seq:
+                    self._build_region_sequence()
+                next_region_id = None
+                while self.region_seq:
+                    rid = self.region_seq.pop(0)
+                    if rid in self.regions and self._region_has_remaining_work(self.regions[rid]):
+                        next_region_id = rid
+                        break
+                if next_region_id is None:
+                    self._sync_region_inventory(force=True)
+                    self._build_region_sequence()
+                    while self.region_seq:
+                        rid = self.region_seq.pop(0)
+                        if rid in self.regions and self._region_has_remaining_work(self.regions[rid]):
+                            next_region_id = rid
+                            break
+                if next_region_id is None:
+                    self.plan_mode = "coverage"
+                    self.goal = None
+                    self.goal_kind = None
+                    self.path = []
+                    self.last_plan_step = self.step_no
+                    return
+                region = self._activate_region(next_region_id)
+
+            if region is None:
+                attempts += 1
+                continue
+
+            if self._inside_region(region):
+                if self._plan_coverage_for_region(region):
+                    return
+                self.current_region_id = None
+                attempts += 1
+                continue
+
+            if self._plan_transit_to_region(region):
+                return
+
+            self.current_region_id = None
+            attempts += 1
+
+        self.goal = None
+        self.goal_kind = None
+        self.path = []
+        self.last_plan_step = self.step_no
+
     def _need_replan(self):
         if not self.path:
             return True
-        if self.step_no - self.last_plan_step >= Config.REPLAN_INTERVAL:
+        if self.last_plan_step < Config.EXPLORE_PHASE_STEPS <= self.step_no:
+            return True
+        interval = Config.REPLAN_INTERVAL if self.charge_mode or self._in_explore_phase() else Config.FILL_REPLAN_INTERVAL
+        if self.step_no - self.last_plan_step >= interval:
             return True
         if self.stuck_chain > 0:
             return True
+        if self._path_is_npc_unsafe():
+            return True
+
+        if self._in_fill_phase() and not self.charge_mode:
+            region = self._current_region()
+            if region is None:
+                return True
+            if not self._region_has_remaining_work(region):
+                return True
+            if self.plan_mode == "transit" and self._inside_region(region):
+                return True
+            if self.plan_mode == "coverage" and not self._inside_region(region):
+                return True
+            return False
+
         if self.goal is None:
             return True
         if self.goal_kind == "dirty":
@@ -548,8 +1495,6 @@ class Preprocessor:
             if not self._in_bounds(gx, gz) or self.map_state[gx, gz] != self.DIRTY:
                 return True
         if self.goal_kind == "charger" and self.on_charger:
-            return True
-        if self._path_is_npc_unsafe():
             return True
         return False
 
@@ -606,13 +1551,15 @@ class Preprocessor:
     def _set_region_lock(self, kind, center, mass):
         if kind not in {"dirty", "frontier"} or center is None:
             return
+        if self.charge_mode or self._in_explore_phase():
+            return
         if mass < self._region_min_mass(kind):
             return
         self.region_lock_kind = kind
         self.region_lock_center = (int(center[0]), int(center[1]))
 
     def _should_keep_region_lock(self):
-        if self.charge_mode or self.region_lock_center is None or self.region_lock_kind is None:
+        if self.charge_mode or self._in_explore_phase() or self.region_lock_center is None or self.region_lock_kind is None:
             return False
 
         dirty_mass = self._region_mass("dirty", self.region_lock_center)
@@ -639,9 +1586,93 @@ class Preprocessor:
         return list(candidates)
 
     def _distance_to_region(self, pos, kind, center):
+        if self.current_region_id is not None and self._active_region_dist_map is not None and self._in_bounds(pos[0], pos[1]):
+            d = int(self._active_region_dist_map[pos[0], pos[1]])
+            if d >= 0:
+                return d
         if center is None or kind not in {"dirty", "frontier"}:
             return 0
         return max(0, self._chebyshev(pos, center) - self._region_radius(kind))
+
+    def _pick_best_region_plan(self, dist, charger_dist):
+        best_score = -1e9
+        best_kind = None
+        best_center = None
+
+        dirty_cells = np.argwhere(self.map_state == self.DIRTY)
+        dirty_candidates = self._cluster_cells(dirty_cells, Config.DIRTY_CLUSTER_RADIUS, self._dirty_density)
+        for gx, gz in dirty_candidates[: Config.REGION_PLAN_CANDIDATES]:
+            d = int(dist[gx, gz])
+            if d <= 0:
+                continue
+
+            return_budget = d + self._charger_dist_at((gx, gz), charger_dist) + Config.TARGET_CHARGE_BUFFER
+            if return_budget >= self.battery:
+                continue
+
+            mass = self._region_mass("dirty", (gx, gz))
+            if mass < Config.REGION_LOCK_DIRTY_MIN_MASS:
+                continue
+
+            score = (
+                Config.REGION_SCORE_DIRTY_WEIGHT * min(mass, 24.0)
+                + 1.10 * self._dirty_density(gx, gz)
+                + 0.35 * self._frontier_gain(gx, gz)
+                - Config.REGION_SCORE_DISTANCE_WEIGHT * d
+                - Config.REGION_SCORE_REPEAT_WEIGHT * self._local_repeat_density((gx, gz), radius=2)
+                - Config.REGION_SCORE_RISK_WEIGHT * self._npc_zone_penalty((gx, gz))
+            )
+            if (
+                self.region_lock_kind == "dirty"
+                and self.region_lock_center is not None
+                and self._chebyshev((gx, gz), self.region_lock_center) <= self._region_radius("dirty")
+            ):
+                score += Config.REGION_LOCK_STICKY_BONUS
+
+            if score > best_score:
+                best_score = score
+                best_kind = "dirty"
+                best_center = (int(gx), int(gz))
+
+        frontier_candidates = self._cluster_cells(
+            self._collect_frontiers(),
+            Config.FRONTIER_CLUSTER_RADIUS,
+            self._frontier_gain,
+        )
+        for gx, gz in frontier_candidates[: Config.REGION_PLAN_CANDIDATES]:
+            d = int(dist[gx, gz])
+            if d <= 0:
+                continue
+
+            return_budget = d + self._charger_dist_at((gx, gz), charger_dist) + Config.TARGET_CHARGE_BUFFER
+            if return_budget >= self.battery:
+                continue
+
+            mass = self._region_mass("frontier", (gx, gz))
+            if mass < Config.REGION_LOCK_FRONTIER_MIN_MASS:
+                continue
+
+            score = (
+                Config.REGION_SCORE_FRONTIER_WEIGHT * min(mass, 28.0)
+                + 0.80 * self._frontier_gain(gx, gz)
+                + 0.25 * self._dirty_density(gx, gz)
+                - Config.REGION_SCORE_DISTANCE_WEIGHT * d
+                - Config.REGION_SCORE_REPEAT_WEIGHT * self._local_repeat_density((gx, gz), radius=2)
+                - 1.05 * Config.REGION_SCORE_RISK_WEIGHT * self._npc_zone_penalty((gx, gz))
+            )
+            if (
+                self.region_lock_kind == "frontier"
+                and self.region_lock_center is not None
+                and self._chebyshev((gx, gz), self.region_lock_center) <= self._region_radius("frontier")
+            ):
+                score += Config.REGION_LOCK_STICKY_BONUS
+
+            if score > best_score:
+                best_score = score
+                best_kind = "frontier"
+                best_center = (int(gx), int(gz))
+
+        return best_kind, best_center
 
     def _replan(self):
         dist, prev_x, prev_z = self._build_bfs_tree(allow_unknown=True)
@@ -650,43 +1681,19 @@ class Preprocessor:
         goal_kind = None
         goal = None
         if self.charge_mode:
+            self.plan_mode = "charge"
             goal_kind, goal = self._pick_best_charger_goal(dist)
-        else:
-            if self._should_keep_region_lock():
-                region_center = self.region_lock_center
-                if self.region_lock_kind == "dirty":
-                    goal_kind, goal = self._pick_best_dirty_goal(
-                        dist,
-                        self._charger_dist_map,
-                        region_center=region_center,
-                        restrict_region=True,
-                    )
-                    if goal is None:
-                        goal_kind, goal = self._pick_best_frontier_goal(
-                            dist,
-                            self._charger_dist_map,
-                            region_center=region_center,
-                            restrict_region=True,
-                        )
-                else:
-                    goal_kind, goal = self._pick_best_frontier_goal(
-                        dist,
-                        self._charger_dist_map,
-                        region_center=region_center,
-                        restrict_region=True,
-                    )
-                    if goal is None:
-                        goal_kind, goal = self._pick_best_dirty_goal(
-                            dist,
-                            self._charger_dist_map,
-                            region_center=region_center,
-                            restrict_region=True,
-                        )
-            else:
-                self._clear_region_lock()
-
+        elif self._in_explore_phase():
+            self.plan_mode = "explore"
+            self._clear_region_lock()
+            goal_kind, goal = self._pick_best_frontier_goal(dist, self._charger_dist_map)
             if goal is None:
                 goal_kind, goal = self._pick_best_dirty_goal(dist, self._charger_dist_map)
+        else:
+            self._replan_fill()
+            if self.goal is not None or self.path:
+                return
+            goal_kind, goal = self._pick_best_dirty_goal(dist, self._charger_dist_map)
             if goal is None:
                 goal_kind, goal = self._pick_best_frontier_goal(dist, self._charger_dist_map)
             if goal is None and self.battery <= int(self.battery_max * 0.55):
@@ -742,7 +1749,7 @@ class Preprocessor:
 
         return dist, prev_x, prev_z
 
-    def _build_multi_source_dist(self, starts, allow_unknown):
+    def _build_multi_source_dist(self, starts, allow_unknown, allowed_mask=None):
         dist = np.full((Config.GRID_SIZE, Config.GRID_SIZE), -1, dtype=np.int16)
         queue = deque()
         plannable = self._plannable_unknown_map if allow_unknown else self._plannable_known_map
@@ -768,7 +1775,11 @@ class Preprocessor:
                     continue
                 if not plannable[nx, nz]:
                     continue
+                if allowed_mask is not None and not allowed_mask[nx, nz]:
+                    continue
                 if dx != 0 and dz != 0 and not (plannable[x + dx, z] or plannable[x, z + dz]):
+                    continue
+                if dx != 0 and dz != 0 and allowed_mask is not None and not (allowed_mask[x + dx, z] or allowed_mask[x, z + dz]):
                     continue
                 if zone_block[nx, nz] or dynamic_block[nx, nz]:
                     continue
@@ -777,10 +1788,12 @@ class Preprocessor:
 
         return dist
 
-    def _is_global_move_passable(self, cur_pos, next_pos, allow_unknown):
+    def _is_global_move_passable(self, cur_pos, next_pos, allow_unknown, allowed_mask=None):
         nx, nz = next_pos
         plannable = self._plannable_unknown_map if allow_unknown else self._plannable_known_map
         if not self._in_bounds(nx, nz) or not plannable[nx, nz]:
+            return False
+        if allowed_mask is not None and not allowed_mask[nx, nz]:
             return False
 
         dx = nx - cur_pos[0]
@@ -789,6 +1802,8 @@ class Preprocessor:
             side_a = (cur_pos[0] + dx, cur_pos[1])
             side_b = (cur_pos[0], cur_pos[1] + dz)
             if not (plannable[side_a[0], side_a[1]] or plannable[side_b[0], side_b[1]]):
+                return False
+            if allowed_mask is not None and not (allowed_mask[side_a[0], side_a[1]] or allowed_mask[side_b[0], side_b[1]]):
                 return False
         return True
 
@@ -803,22 +1818,37 @@ class Preprocessor:
         return True
 
     def _plan_weighted_path(self, goal, allow_unknown):
-        if goal == self.cur_pos:
+        return self._plan_path_to_goals(self.cur_pos, [goal], allow_unknown=allow_unknown)
+
+    def _plan_path_to_goals(self, start_pos, goals, allow_unknown, allowed_mask=None, mode=None):
+        goal_list = [tuple(map(int, goal)) for goal in goals if goal is not None and self._in_bounds(int(goal[0]), int(goal[1]))]
+        if not goal_list:
+            return None
+        goal_set = set(goal_list)
+        if start_pos in goal_set:
             return []
 
         best_cost = np.full((Config.GRID_SIZE, Config.GRID_SIZE), np.inf, dtype=np.float32)
         prev_x = np.full((Config.GRID_SIZE, Config.GRID_SIZE), -1, dtype=np.int16)
         prev_z = np.full((Config.GRID_SIZE, Config.GRID_SIZE), -1, dtype=np.int16)
 
-        sx, sz = self.cur_pos
+        sx, sz = int(start_pos[0]), int(start_pos[1])
+        if not self._in_bounds(sx, sz):
+            return None
+        if allowed_mask is not None and not allowed_mask[sx, sz]:
+            return None
+
         best_cost[sx, sz] = 0.0
-        heap = [(float(self._chebyshev(self.cur_pos, goal)), 0.0, sx, sz)]
+        start_h = min(float(self._chebyshev(start_pos, goal)) for goal in goal_list)
+        heap = [(start_h, 0.0, sx, sz)]
+        reached_goal = None
 
         while heap:
             _, cur_cost, x, z = heapq.heappop(heap)
             if cur_cost > float(best_cost[x, z]) + 1e-6:
                 continue
-            if (x, z) == goal:
+            if (x, z) in goal_set:
+                reached_goal = (x, z)
                 break
 
             for dx, dz in self.ACTION_DELTAS:
@@ -826,12 +1856,12 @@ class Preprocessor:
                 nz = z + dz
                 if not self._in_bounds(nx, nz):
                     continue
-                if not self._is_global_move_passable((x, z), (nx, nz), allow_unknown=allow_unknown):
+                if not self._is_global_move_passable((x, z), (nx, nz), allow_unknown=allow_unknown, allowed_mask=allowed_mask):
                     continue
                 if self._npc_zone_hard_block((nx, nz)) or self._npc_dynamic_hard_block((nx, nz)):
                     continue
 
-                move_cost = self._transition_cost((x, z), (nx, nz))
+                move_cost = self._transition_cost((x, z), (nx, nz), mode=mode)
                 new_cost = cur_cost + move_cost
                 if new_cost + 1e-6 >= float(best_cost[nx, nz]):
                     continue
@@ -839,12 +1869,16 @@ class Preprocessor:
                 best_cost[nx, nz] = new_cost
                 prev_x[nx, nz] = x
                 prev_z[nx, nz] = z
-                heuristic = float(self._chebyshev((nx, nz), goal))
+                heuristic = min(float(self._chebyshev((nx, nz), goal)) for goal in goal_list)
                 heapq.heappush(heap, (new_cost + heuristic, new_cost, nx, nz))
 
-        return self._reconstruct_path(goal, prev_x, prev_z)
+        if reached_goal is None:
+            return None
+        return self._reconstruct_path(reached_goal, prev_x, prev_z)
 
-    def _transition_cost(self, cur_pos, next_pos):
+    def _transition_cost(self, cur_pos, next_pos, mode=None):
+        if mode is None:
+            mode = self.plan_mode
         nx, nz = next_pos
         cell = int(self.map_state[nx, nz]) if self._in_bounds(nx, nz) else self.OBSTACLE
         visit = float(self.visit_count[nx, nz]) if self._in_bounds(nx, nz) else float(Config.MAX_VISIT_CLIP)
@@ -856,12 +1890,14 @@ class Preprocessor:
         base = 1.0 + (0.05 if next_pos[0] != cur_pos[0] and next_pos[1] != cur_pos[1] else 0.0)
         recent_gap = self.step_no - int(self.last_visit_step[nx, nz]) if self._in_bounds(nx, nz) else 0
         recent_penalty = 0.0 if recent_gap > 20 else 0.08 * max(0, 20 - recent_gap)
-        repeat_penalty = 0.16 * charge_repeat_scale * min(visit, float(Config.MAX_VISIT_CLIP))
-        transit_penalty = 0.28 * charge_repeat_scale * min(transit, float(Config.MAX_TRANSIT_CLIP))
+        corridor_scale = self._corridor_repeat_discount(next_pos)
+        repeat_penalty = 0.16 * charge_repeat_scale * corridor_scale * min(visit, float(Config.MAX_VISIT_CLIP))
+        transit_penalty = 0.28 * charge_repeat_scale * corridor_scale * min(transit, float(Config.MAX_TRANSIT_CLIP))
         risk_penalty = 0.05 * min(self._npc_zone_penalty(next_pos), 60.0)
         interior_penalty = self._interior_clean_penalty(next_pos)
         snake_bias = self._serpentine_bias(cur_pos, next_pos)
         boundary_bonus = self._boundary_bonus(next_pos)
+        repeat_decay = self._repeat_bias_decay(next_pos, radius=1)
 
         dirty_bonus = 0.95 if cell == self.DIRTY else 0.0
         frontier_bonus = 0.0
@@ -876,10 +1912,30 @@ class Preprocessor:
 
         slack = self._charge_slack()
         snake_scale = 1.0
+        boundary_scale = 0.18 if self._in_explore_phase() else Config.FILL_BOUNDARY_WEIGHT_SCALE
         if self.goal_kind == "charger" or self.charge_mode:
             dirty_bonus *= slack
             frontier_bonus *= 0.65 * slack
             snake_scale = Config.CHARGE_SNAKE_SCALE * (0.35 + 0.65 * slack)
+            boundary_scale *= 0.55 + 0.45 * slack
+
+        if self._in_explore_phase():
+            snake_scale = 0.0
+        else:
+            snake_scale *= Config.FILL_SNAKE_WEIGHT_SCALE * repeat_decay
+            boundary_scale *= 0.65 + 0.35 * repeat_decay
+
+        if mode == "transit":
+            repeat_penalty *= 1.18
+            transit_penalty *= 1.22
+            boundary_scale *= 0.35
+            snake_scale *= 0.18
+            frontier_bonus *= 0.55
+        elif mode == "coverage":
+            dirty_bonus *= 1.10
+            boundary_scale *= 0.75
+            if self._current_region() is not None and not self._inside_region(self._current_region(), next_pos):
+                interior_penalty += 1.0
 
         snake_penalty = 0.0
         if snake_bias >= 0.0:
@@ -897,10 +1953,17 @@ class Preprocessor:
             + risk_penalty
             + interior_penalty
             + snake_penalty
-            - Config.BOUNDARY_BONUS_WEIGHT * boundary_bonus
+            - Config.BOUNDARY_BONUS_WEIGHT * boundary_scale * boundary_bonus
         )
         cost -= dirty_bonus
         cost -= frontier_bonus
+        if self._in_explore_phase() and not self.charge_mode:
+            explore_bonus = Config.EXPLORE_FRONTIER_PATH_WEIGHT * min(float(self._frontier_gain(nx, nz)), 12.0)
+            if cell == self.UNKNOWN:
+                explore_bonus += 0.45 * Config.EXPLORE_UNKNOWN_CELL_BONUS
+            if nx != cur_pos[0] and nz != cur_pos[1] and (cell == self.UNKNOWN or self._has_unknown_neighbor(next_pos)):
+                explore_bonus += Config.EXPLORE_DIAGONAL_PATH_BONUS
+            cost -= explore_bonus
         return max(0.12, float(cost))
 
     def _serpentine_index(self, pos):
@@ -957,6 +2020,24 @@ class Preprocessor:
         charger_dist = max(self._current_charger_distance(), 1)
         margin = self.battery - charger_dist - Config.RETURN_CHARGE_BUFFER
         return float(np.clip(margin / max(self.battery_max, 1), 0.0, 1.0))
+
+    def _explore_action_bonus(self, cur_pos, next_pos):
+        if self.charge_mode or not self._in_explore_phase() or not self._in_bounds(*next_pos):
+            return 0.0
+
+        nx, nz = next_pos
+        cell = int(self.map_state[nx, nz])
+        bonus = Config.EXPLORE_FRONTIER_ACTION_WEIGHT * min(float(self._frontier_gain(nx, nz)), 12.0) / 6.0
+        if cell == self.UNKNOWN:
+            bonus += Config.EXPLORE_UNKNOWN_CELL_BONUS
+        elif cell == self.DIRTY:
+            bonus += 0.45
+
+        if nx != cur_pos[0] and nz != cur_pos[1] and (cell == self.UNKNOWN or self._has_unknown_neighbor(next_pos)):
+            bonus += Config.EXPLORE_DIAGONAL_ACTION_BONUS
+
+        bonus -= 0.10 * min(self._local_repeat_density(next_pos, radius=1), 10.0)
+        return float(bonus)
 
     def _interior_clean_penalty(self, pos):
         x, z = pos
@@ -1276,6 +2357,12 @@ class Preprocessor:
         charger_dist_now = self._current_charger_distance()
         goal_dist_now = self._chebyshev(self.cur_pos, self.goal) if self.goal is not None else 0
         region_dist_now = self._distance_to_region(self.cur_pos, self.region_lock_kind, self.region_lock_center)
+        active_region = self._current_region()
+        target_dist_now = None
+        if self._coverage_target_dist_map is not None and self._in_bounds(*self.cur_pos):
+            cur_target_dist = int(self._coverage_target_dist_map[self.cur_pos[0], self.cur_pos[1]])
+            if cur_target_dist >= 0:
+                target_dist_now = cur_target_dist
 
         for act, (dx, dz) in enumerate(self.ACTION_DELTAS):
             if not legal_action[act]:
@@ -1287,15 +2374,41 @@ class Preprocessor:
 
             score = -1.6 * self._transition_cost(self.cur_pos, next_pos)
             if self._in_bounds(nx, nz):
+                local_gain_scale = 0.55 if self.plan_mode == "transit" and not self.charge_mode else 1.0
                 if self.map_state[nx, nz] == self.DIRTY:
-                    score += 8.0
-                score += 1.5 * self._frontier_gain(nx, nz)
+                    score += 8.0 * local_gain_scale
+                score += 1.5 * local_gain_scale * self._frontier_gain(nx, nz)
                 score -= 0.45 * self.visit_count[nx, nz]
                 score -= 0.75 * self.clean_pass_count[nx, nz]
                 score -= 0.08 * self._npc_zone_penalty(next_pos)
-                snake_scale = 1.0 if not self.charge_mode else Config.CHARGE_SNAKE_SCALE * (0.35 + 0.65 * self._charge_slack())
+                repeat_decay = self._repeat_bias_decay(next_pos, radius=1)
+                snake_scale = 0.0 if self._in_explore_phase() else Config.FILL_SNAKE_WEIGHT_SCALE * repeat_decay
+                boundary_scale = 0.18 if self._in_explore_phase() else Config.FILL_BOUNDARY_WEIGHT_SCALE * (0.65 + 0.35 * repeat_decay)
+                if self.charge_mode:
+                    charge_scale = Config.CHARGE_SNAKE_SCALE * (0.35 + 0.65 * self._charge_slack())
+                    snake_scale *= charge_scale
+                    boundary_scale *= 0.55 + 0.45 * self._charge_slack()
                 score += Config.SNAKE_ACTION_WEIGHT * snake_scale * self._serpentine_bias(self.cur_pos, next_pos)
-                score += Config.BOUNDARY_ACTION_WEIGHT * self._boundary_bonus(next_pos)
+                score += Config.BOUNDARY_ACTION_WEIGHT * boundary_scale * self._boundary_bonus(next_pos)
+                score += self._explore_action_bonus(self.cur_pos, next_pos)
+                if self.charge_exit_pending and self.on_charger:
+                    score += self._charge_exit_action_bonus(next_pos)
+
+                if active_region is not None and self._in_fill_phase() and not self.charge_mode:
+                    in_region = bool(active_region["travel_mask"][nx, nz])
+                    if self.plan_mode == "transit":
+                        region_dist_next = self._distance_to_region(next_pos, self.region_lock_kind, self.region_lock_center)
+                        score += Config.TRANSIT_REGION_ACTION_WEIGHT * (region_dist_now - region_dist_next)
+                        if in_region:
+                            score += 1.2
+                    elif self.plan_mode == "coverage":
+                        if not in_region:
+                            score -= 2.8
+                        if target_dist_now is not None and self._coverage_target_dist_map is not None:
+                            next_target_dist = int(self._coverage_target_dist_map[nx, nz])
+                            if next_target_dist >= 0:
+                                score += Config.COVERAGE_REGION_ACTION_WEIGHT * (target_dist_now - next_target_dist)
+                        score += self._coverage_diagonal_action_bonus(next_pos, active_region)
 
             if next_pos == self.last_pos:
                 score -= 2.0

@@ -1,0 +1,47 @@
+2026-04-11 16:56:44.734 | INFO | PID:278 | learner.register_monitor:151 - learner learner_init Start loading framework default monitor file kaiwudrl/conf/kaiwudrl/monitor.yaml
+2026-04-11 16:56:44.734 | INFO | PID:278 | monitor_config_builder.load_monitor_config_from_yaml:667 - learner learner_init Loading monitor file
+2026-04-11 16:56:44.739 | INFO | PID:278 | monitor_config_builder.load_monitor_config_from_yaml:673 - learner learner_init YAML file read successfully, starting validation and configuration build...
+2026-04-11 16:56:44.740 | INFO | PID:278 | monitor_config_builder.load_monitor_config_from_yaml:680 - learner learner_init Config build validation successful!
+2026-04-11 16:56:44.740 | INFO | PID:278 | monitor_config_builder.merge:487 - learner Config merge completed
+2026-04-11 16:56:44.740 | INFO | PID:278 | learner.register_monitor:157 - learner learner_init Framework default monitor config merged successfully (lowest priority)
+2026-04-11 16:56:44.740 | INFO | PID:278 | learner.register_monitor:164 - learner learner_init Start loading project default monitor file
+2026-04-11 16:56:44.740 | INFO | PID:278 | monitor_config_builder.load_monitor_config_from_yaml:667 - learner learner_init Loading monitor file
+2026-04-11 16:56:44.743 | INFO | PID:278 | monitor_config_builder.load_monitor_config_from_yaml:673 - learner learner_init YAML file read successfully, starting validation and configuration build...
+2026-04-11 16:56:44.743 | INFO | PID:278 | monitor_config_builder.load_monitor_config_from_yaml:680 - learner learner_init Config build validation successful!
+2026-04-11 16:56:44.743 | INFO | PID:278 | monitor_config_builder.merge:487 - learner Config merge completed
+2026-04-11 16:56:44.743 | INFO | PID:278 | learner.register_monitor:170 - learner learner_init Project default monitor config merged successfully (medium priority, overrides framework default)
+2026-04-11 16:56:44.743 | INFO | PID:278 | learner.register_monitor:182 - learner learner_init Start loading user custom monitor file: agent_diy/conf/monitor_builder.py
+2026-04-11 16:56:44.744 | INFO | PID:278 | monitor_config_builder.load_user_monitor_config:866 - learner learner_init User config directory added to Python path: /data/projects/robot_vacuum/agent_diy/conf
+2026-04-11 16:56:44.744 | INFO | PID:278 | monitor_config_builder.load_user_monitor_config:901 - learner learner_init Modified expr for metric [reward]: avg(kaiwu_reward{})
+2026-04-11 16:56:44.744 | INFO | PID:278 | monitor_config_builder.load_user_monitor_config:901 - learner learner_init Modified expr for metric [total_loss]: avg(kaiwu_total_loss{})
+2026-04-11 16:56:44.744 | INFO | PID:278 | monitor_config_builder.load_user_monitor_config:901 - learner learner_init Modified expr for metric [value_loss]: avg(kaiwu_value_loss{})
+2026-04-11 16:56:44.745 | INFO | PID:278 | monitor_config_builder.load_user_monitor_config:901 - learner learner_init Modified expr for metric [policy_loss]: avg(kaiwu_policy_loss{})
+2026-04-11 16:56:44.745 | INFO | PID:278 | monitor_config_builder.load_user_monitor_config:901 - learner learner_init Modified expr for metric [entropy_loss]: avg(kaiwu_entropy_loss{})
+2026-04-11 16:56:44.745 | INFO | PID:278 | monitor_config_builder.load_user_monitor_config:907 - learner learner_init User custom monitor config loaded successfully (kaiwu_ prefix added): /data/projects/robot_vacuum/agent_diy/conf/monitor_builder.py
+2026-04-11 16:56:44.745 | INFO | PID:278 | monitor_config_builder.merge:487 - learner Config merge completed
+2026-04-11 16:56:44.745 | INFO | PID:278 | learner.register_monitor:188 - learner learner_init User custom monitor config merged successfully (highest priority, overrides all default configs)
+2026-04-11 16:56:44.745 | INFO | PID:278 | learner.register_monitor:199 - learner learner_init Start building final monitor config...
+2026-04-11 16:56:44.745 | INFO | PID:278 | learner.register_monitor:207 - learner learner_init Output directory /workspace/train/ ready (created automatically if not exists)
+2026-04-11 16:56:44.751 | INFO | PID:278 | monitor_config_builder.dump_to_yaml_file:572 - learner Config successfully written to file: /workspace/train/monitor.yaml
+2026-04-11 16:56:44.757 | INFO | PID:278 | monitor_config_builder.dump_to_yaml_file:572 - learner Config successfully written to file: /workspace/train/monitor.yaml.done
+2026-04-11 16:56:44.757 | INFO | PID:278 | learner.register_monitor:215 - learner learner_init === Monitor config registration completed ===
+2026-04-11 16:56:44.757 | INFO | PID:278 | learner.register_monitor:216 - learner learner_init Final config file generated: /workspace/train/monitor.yaml
+2026-04-11 16:56:45.275835: I tensorflow/core/util/port.cc:110] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-04-11 16:56:45.277383: I tensorflow/tsl/cuda/cudart_stub.cc:28] Could not find cuda drivers on your machine, GPU will not be used.
+2026-04-11 16:56:45.339522: I tensorflow/tsl/cuda/cudart_stub.cc:28] Could not find cuda drivers on your machine, GPU will not be used.
+2026-04-11 16:56:45.339987: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2026-04-11 16:56:49.841518: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+2026-04-11 16:56:53.171 | INFO | PID:278 | process_health_monitor.register_alert_callback:319 - learner learner_init ProcessHealthMonitor registered alert callback for types: ALL
+2026-04-11 16:56:53.179 | INFO | PID:278 | process_health_monitor.register_process:192 - learner learner_init ProcessHealthMonitor registered process: trainer(pid=567, type=trainer)
+2026-04-11 16:56:53.180 | INFO | PID:278 | learner.train_loop:353 - learner_init process health monitor started
+2026-04-11 16:56:53.191 | INFO | PID:567 | trainer.before_run:290 - learner train process start at pid is 567
+2026-04-11 16:56:53.194 | INFO | PID:567 | replay_buffer_wrapper.init:122 - learner train replay_buff, use reverb
+[reverb/cc/platform/tfrecord_checkpointer.cc:162]  Initializing TFRecordCheckpointer in /tmp/tmp2_rtmbjk.
+[reverb/cc/platform/tfrecord_checkpointer.cc:567] Loading latest checkpoint from /tmp/tmp2_rtmbjk
+[reverb/cc/platform/default/server.cc:71] Started replay server on port 9999
+2026-04-11 16:56:53.441 | INFO | PID:567 | agent_wrapper_common.create_standard_agent_wrapper:103 - learner policy_name train_one, algo diy, agent_wrapper is StandardModelWrapperPytorch
+2026-04-11 16:56:53.448 | INFO | PID:567 | trainer.before_run:383 - learner train zmq server on learner bind at 0.0.0.0:9997 for aisrv
+2026-04-11 16:56:53.451 | INFO | PID:567 | agent.save_model:179 - learner save model /data/ckpt/robot_vacuum_diy/model.ckpt-0.pkl successfully
+2026-04-11 16:56:53.459 | INFO | PID:567 | off_policy_strategy.before_run:50 - learner OffPolicyStrategy before_run
+2026-04-11 16:56:53.459 | INFO | PID:567 | trainer.before_run:440 - learner train process start success at 567, on-policy/off-policy is off_policy, trainer global step -1.0, app robot_vacuum algo diy, train_batch_size is 1024
