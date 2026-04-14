@@ -11,6 +11,7 @@ Robot Vacuum Agent.
 """
 
 import os
+import json
 from pathlib import Path
 
 import torch
@@ -38,6 +39,99 @@ def _env_flag(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+_RUNTIME_PROBE_ENV_KEYS = (
+    "CUDA_VISIBLE_DEVICES",
+    "NVIDIA_VISIBLE_DEVICES",
+    "KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE",
+    "KAIWU_PYTORCH_READ_DATA_FROM_REVERB_TYPE",
+    "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE",
+    "KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE",
+    "KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE",
+    "KAIWU_SERVICE_NAME",
+)
+
+_RUNTIME_PROBE_CONFIG_KEYS = (
+    "svr_name",
+    "train_batch_size",
+    "predict_batch_size",
+    "proxy_batch_size",
+    "send_sample_size",
+    "replay_buffer_type",
+    "reverb_sampler",
+    "reverb_rate_limiter",
+    "pytorch_read_data_from_reverb_type",
+)
+
+
+def _device_to_string(device):
+    if device is None:
+        return None
+    return str(device)
+
+
+def _get_model_param_device(model):
+    if model is None or not hasattr(model, "parameters"):
+        return None
+    try:
+        return str(next(model.parameters()).device)
+    except (StopIteration, TypeError, AttributeError):
+        return None
+
+
+def _describe_runtime_value(value):
+    if value is None:
+        return {"type": "NoneType"}
+    if torch.is_tensor(value):
+        return {
+            "type": "torch.Tensor",
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "device": str(value.device),
+        }
+    if isinstance(value, np.ndarray):
+        return {
+            "type": "numpy.ndarray",
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+        }
+    return {"type": type(value).__name__}
+
+
+def _build_runtime_probe_payload(stage, service_name, requested_device, model, algorithm, use_amp, extra=None):
+    payload = {
+        "stage": stage,
+        "service_name": service_name,
+        "requested_device": _device_to_string(requested_device),
+        "model_param_device": _get_model_param_device(model),
+        "algorithm_device": _device_to_string(getattr(algorithm, "device", None)),
+        "use_amp": use_amp,
+        "torch_cuda_available": torch.cuda.is_available(),
+        "torch_cuda_device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+        "env": {key: os.getenv(key) for key in _RUNTIME_PROBE_ENV_KEYS},
+        "config": {key: getattr(KAIWU_CONFIG, key, None) for key in _RUNTIME_PROBE_CONFIG_KEYS},
+    }
+    if torch.cuda.is_available():
+        try:
+            payload["torch_cuda_current_device"] = torch.cuda.current_device()
+        except RuntimeError:
+            payload["torch_cuda_current_device"] = None
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _emit_runtime_probe_once(logger, seen_stages, stage, payload):
+    if stage in seen_stages:
+        return False
+    seen_stages.add(stage)
+    message = f"runtime_probe {json.dumps(payload, sort_keys=True, default=str)}"
+    if logger is not None and hasattr(logger, "info"):
+        logger.info(message)
+    else:
+        print(message, flush=True)
+    return True
 
 
 def _configure_torch_runtime(service_name: str, device) -> None:
@@ -111,6 +205,24 @@ class Agent(BaseAgent):
         self.device = device
         _configure_torch_runtime(self.service_name, self.device)
         self.model = Model(device).to(self.device)
+        if "learner" in self.service_name:
+            compiled = False
+            if _env_flag("KAIWU_LEARNER_TORCH_COMPILE", getattr(Config, "LEARNER_TORCH_COMPILE", True)):
+                try:
+                    self.model = torch.compile(self.model, mode="reduce-overhead")
+                    compiled = True
+                except RuntimeError:
+                    pass
+            if not compiled and _env_flag(
+                "KAIWU_LEARNER_JIT_TRACE", getattr(Config, "LEARNER_JIT_TRACE", True)
+            ):
+                try:
+                    _dummy = torch.randn(1, Config.DIM_OF_OBSERVATION, device=self.device)
+                    self.model = torch.jit.trace(self.model, _dummy)
+                    self.model.set_train_mode = lambda: self.model.train()
+                    self.model.set_eval_mode = lambda: self.model.eval()
+                except Exception:
+                    pass
         self.use_amp = (
             "learner" in self.service_name
             and self.device is not None
@@ -123,16 +235,21 @@ class Agent(BaseAgent):
             "betas": (0.9, 0.999),
             "eps": 1e-8,
         }
-        if _env_flag("KAIWU_LEARNER_USE_FOREACH_OPTIMIZER", Config.LEARNER_ALLOW_FOREACH_OPTIMIZER):
-            optimizer_kwargs["foreach"] = True
-        if (
+        use_fused = (
             self.use_amp
             and _env_flag("KAIWU_LEARNER_USE_FUSED_OPTIMIZER", Config.LEARNER_ALLOW_FUSED_OPTIMIZER)
-        ):
+        )
+        use_foreach = (
+            not use_fused
+            and _env_flag("KAIWU_LEARNER_USE_FOREACH_OPTIMIZER", Config.LEARNER_ALLOW_FOREACH_OPTIMIZER)
+        )
+        if use_fused:
             optimizer_kwargs["fused"] = True
+        elif use_foreach:
+            optimizer_kwargs["foreach"] = True
         try:
             self.optimizer = torch.optim.Adam(**optimizer_kwargs)
-        except TypeError:
+        except (TypeError, RuntimeError):
             optimizer_kwargs.pop("fused", None)
             optimizer_kwargs.pop("foreach", None)
             self.optimizer = torch.optim.Adam(**optimizer_kwargs)
@@ -161,6 +278,7 @@ class Agent(BaseAgent):
         self._model_load_call_count = 0
         self._model_load_reload_count = 0
         self._model_load_cache_hit_count = 0
+        self._runtime_probe_stages = set()
 
         # Resume from checkpoint if configured in conf.py
         if Config.RESUME_CHECKPOINT:
@@ -182,6 +300,21 @@ class Agent(BaseAgent):
                         print(f"[RESUME] Failed: {e}", file=sys.stderr, flush=True)
 
         super().__init__(agent_type, device, logger, monitor)
+        self._log_runtime_probe("init")
+
+    def _log_runtime_probe(self, stage, extra=None):
+        if stage in self._runtime_probe_stages:
+            return False
+        payload = _build_runtime_probe_payload(
+            stage=stage,
+            service_name=self.service_name,
+            requested_device=self.device,
+            model=self.model,
+            algorithm=self.algorithm,
+            use_amp=self.use_amp,
+            extra=extra,
+        )
+        return _emit_runtime_probe_once(self.logger, self._runtime_probe_stages, stage, payload)
 
     def reset(self, env_obs):
         """Reset per-episode state.
@@ -301,7 +434,15 @@ class Agent(BaseAgent):
 
         委托给 Algorithm 执行训练。
         """
-        return self.algorithm.learn(list_sample_data)
+        result = self.algorithm.learn(list_sample_data)
+        self._log_runtime_probe(
+            "learn",
+            {
+                "input": _describe_runtime_value(list_sample_data),
+                "output": _describe_runtime_value(result),
+            },
+        )
+        return result
 
     def save_model(self, path=None, id="1"):
         """Save model checkpoint.
@@ -340,6 +481,13 @@ class Agent(BaseAgent):
 
         加载模型检查点。
         """
+        if path is None:
+            from common_python.config.config_control import CONFIG as _CFG
+            path = getattr(_CFG, "restore_dir", None)
+            if path:
+                path = f"{path}/{_CFG.app}_{_CFG.algo}"
+            else:
+                path = "/workspace/code/ckpt"
         model_file_path = f"{path}/model.ckpt-{id}.pkl"
         self._model_load_call_count += 1
         model_mtime_ns = self._get_model_mtime_ns(Path(model_file_path))
@@ -400,6 +548,7 @@ class Agent(BaseAgent):
         obs_tensor = (
             torch.tensor(np.array([feature], dtype=np.float32)).view(1, Config.DIM_OF_OBSERVATION).to(self.device)
         )
+        self._log_runtime_probe("predict", {"input": _describe_runtime_value(obs_tensor)})
         with torch.no_grad():
             rst = self.model(obs_tensor, inference=True)
         logits = rst[0].cpu().numpy()[0]

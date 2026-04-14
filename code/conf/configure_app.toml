@@ -2,7 +2,7 @@
 
 # Replay buffer configurations
 # 样本池容量
-replay_buffer_capacity = 10000
+replay_buffer_capacity = 50000
 
 # The ratio of the sample pool capacity that triggers training
 # 当样本池中的样本占总容量的比例达到该值时，启动训练

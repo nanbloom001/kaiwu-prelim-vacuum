@@ -246,17 +246,22 @@ class ModelSignerThread:
             json.dump(data, f)
 
         zip_path = f'{self._output_dir}/{base_name}.zip'
-        python_exec_shell(
+        rc, _ = python_exec_shell(
             f"cd {staging} && zip -r -q {zip_path} . "
             f"-x 'conf/kaiwudrl/*' -x 'conf/kaiwudrl/'"
         )
         with open(f'{self._output_dir}/{base_name}.zip.json', 'w') as f:
             json.dump(data, f)
 
-        try:
-            os.remove(tar_gz_path)
-        except OSError:
-            pass
+        if rc == 0 and os.path.exists(zip_path) and os.path.getsize(zip_path) > 0:
+            try:
+                os.remove(tar_gz_path)
+            except OSError:
+                pass
+        else:
+            self.logger.warning(
+                f'[ModelSigner] zip failed (rc={rc}), keeping source tar.gz: {tar_gz_path}'
+            )
         self._clean_dir(staging)
 
         self.logger.info(
@@ -336,7 +341,6 @@ class ModelSignerThread:
         self._patch_eval_config(staging, str(step))
 
         # Build metadata
-        now = datetime.now(timezone.utc)
         local_now = datetime.now().astimezone()
         time_str = local_now.strftime('%Y_%m_%d_%H_%M_%S')
         version = getattr(CONFIG, 'kaiwu_project_version', '') or os.environ.get(
@@ -380,10 +384,14 @@ class ModelSignerThread:
 
         # Create zip
         zip_path = f'{self._output_dir}/{base_name}.zip'
-        python_exec_shell(
+        rc, _ = python_exec_shell(
             f"cd {staging} && zip -r -q {zip_path} . "
             f"-x 'conf/kaiwudrl/*' -x 'conf/kaiwudrl/'"
         )
+        if rc != 0:
+            self.logger.warning(
+                f'[ModelSigner] zip failed (rc={rc}) for pkl checkpoint {ckpt_id}'
+            )
 
         # Write .zip.json
         with open(f'{self._output_dir}/{base_name}.zip.json', 'w') as f:

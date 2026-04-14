@@ -3,6 +3,7 @@
 
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -11,7 +12,7 @@ import torch
 
 sys.path.insert(0, "/workspace/code")
 
-from agent_ppo.agent import Agent
+from agent_ppo.agent import Agent, _build_runtime_probe_payload, _emit_runtime_probe_once
 from agent_ppo.algorithm.algorithm import Algorithm
 from agent_ppo.conf.conf import Config
 from agent_ppo.workflow.train_workflow import PerfWindow
@@ -96,6 +97,64 @@ class PerfWindowTests(unittest.TestCase):
         self.assertEqual(payload["episode_predict_avg_ms"], 15.0)
         self.assertEqual(payload["episode_samples_sent_count"], 8)
         self.assertEqual(perf.values, {})
+
+
+class RuntimeProbeTests(unittest.TestCase):
+    def test_build_runtime_probe_payload_includes_devices_and_config(self):
+        model = torch.nn.Linear(2, 2)
+        algorithm = types.SimpleNamespace(device=torch.device("cpu"))
+        config_stub = types.SimpleNamespace(
+            svr_name="aisrv",
+            train_batch_size=4096,
+            predict_batch_size=128,
+            proxy_batch_size=128,
+            send_sample_size=4096,
+            replay_buffer_type="zmq",
+            reverb_sampler="reverb.selectors.Fifo",
+            reverb_rate_limiter="MinSize",
+            pytorch_read_data_from_reverb_type=1,
+        )
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "CUDA_VISIBLE_DEVICES": "1",
+                "NVIDIA_VISIBLE_DEVICES": "1",
+                "KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE": "zmq",
+                "KAIWU_PYTORCH_READ_DATA_FROM_REVERB_TYPE": "1",
+            },
+            clear=False,
+        ), mock.patch("agent_ppo.agent.KAIWU_CONFIG", new=config_stub):
+            payload = _build_runtime_probe_payload(
+                stage="predict",
+                service_name="aisrv",
+                requested_device=torch.device("cpu"),
+                model=model,
+                algorithm=algorithm,
+                use_amp=False,
+                extra={"input": {"device": "cpu", "type": "torch.Tensor"}},
+            )
+
+        self.assertEqual(payload["stage"], "predict")
+        self.assertEqual(payload["requested_device"], "cpu")
+        self.assertEqual(payload["model_param_device"], "cpu")
+        self.assertEqual(payload["algorithm_device"], "cpu")
+        self.assertEqual(payload["config"]["replay_buffer_type"], "zmq")
+        self.assertEqual(payload["env"]["KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE"], "zmq")
+        self.assertEqual(payload["input"]["device"], "cpu")
+
+    def test_emit_runtime_probe_once_logs_only_once_per_stage(self):
+        logger = mock.Mock()
+        seen = set()
+        payload = {"stage": "learn", "service_name": "learner"}
+
+        first = _emit_runtime_probe_once(logger, seen, "learn", payload)
+        second = _emit_runtime_probe_once(logger, seen, "learn", payload)
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        logger.info.assert_called_once()
+        self.assertIn("runtime_probe", logger.info.call_args.args[0])
 
 
 if __name__ == "__main__":
