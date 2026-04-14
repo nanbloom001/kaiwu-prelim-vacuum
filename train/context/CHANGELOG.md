@@ -1,7 +1,20 @@
 # Changelog
 
+## 2026-04-14
+
+~22:05 | v5.4 电池死亡根因诊断完成。通过在 Expert `_evaluate_return()` 添加文件诊断日志（3214 条），推翻初始假设（充电桩未发现/A* 无路径），确认真正原因：Expert A* 寻路和 action 提供均正常（path=20-52, act 非 None），但 non-emergency bias（3-8）太弱，73% 的电池死亡场景中模型清扫偏好压过充电引导，直到 ratio≤0.10 才触发 emergency bias=100 为时已晚。v5.4 碰撞死亡 -89%（18→2），WinRate 85.2%→88.2%。修复方向：提高 bias 强度 + 降低 emergency 阈值。详见 LOG_20260414_v54_battery_death_diagnosis.md。
+~21:30 | v5.4 Expert 充电逻辑修复（5 项，仅改 expert.py）。Fix 1: filter_actions dist≤3 时拦截所有靠近 NPC 的动作（原仅拦截正对方向）；Fix 2: 移除 A* npc_weight=0.0 fallback（2 处，消除穿过 NPC 路径）；Fix 3: get_logit_bias NPC dist≤4 时抑制充电 bias（解决躲避/充电双系统冲突）；Fix 4: return_mode 触发修复——高电量 85% 强制退出（修复 ep 204 持久化 bug，专家方案盲区）+ 动态 LOW_BATTERY_RATIO（小电池提前触发）+ 0.65 距离触发守卫；Fix 5: UNEXPLORED_COST 3.0→1.8（改善 A* 早期寻路）。详见 iterative-orbiting-goblet.md。
+~21:10 | Expert 充电逻辑完整审查报告完成。独立分析 18 碰撞 + 14 电池死亡根因，提出 5 项具体修改方案（优先级排序）：(1) filter_actions dist≤3 时扩展拦截所有靠近动作，(2) 删除 A* npc_weight=0.0 无 NPC 避让 fallback，(3) 返回模式加 0.65 电量守卫+动态 LOW_BATTERY_RATIO，(4) NPC 近距距离时抑制充电 bias 解决冲突，(5) 降低 UNEXPLORED_COST 3.0→1.8。并评估及时性（低/中/低）、预期收益（-70% 碰撞、-50% 电池死），中长期简化 Expert 路线。详见 EXPERT_REVIEW_20260414.md。
+~19:15 | v5.3 训练趋势分析（step ~5500, ep ~228）。ENTROPY_FLOOR_COEF 修复成功（0.12-0.21 稳定无塌缩）。WinRate 85.2%。DEATH_TRAJ 精准定位两个 Expert bug：(1) 碰撞死亡 18 例全部在 mode=2（充电模式）—— A* fallback 过度降级到 npc_weight=0.0 + filter_actions 漏洞；(2) 电池死亡 14 例全部从未触发充电（mode=1 到死）—— return_mode 触发条件不鲁棒 + A* 路径 inf + 多机器人争抢。详见 LOG_20260414_v53_training_analysis.md。
+~15:00 | v5.3 综合优化实施（基于双专家方案）。4 文件修改：(1) conf.py ENTROPY_FLOOR_COEF 0.2→1.0 修复 entropy 塌缩；(2) preprocessor.py reward_process 返回分量字典 + urgency 三段式（-0.3/-0.6/-1.2）；(3) agent.py 传递 reward_components；(4) train_workflow.py 死亡轨迹日志 + 每 config 失败率追踪 + outcome_bonus 按剩余步数缩放（k=1.5）。Resume from v52-step8500。详见 OPT_PLAN_v53_20260414.md。
+~12:20 | 完整训练趋势分析（CPS+存活率标准）。结论：v52-step8500 已是最佳可用 checkpoint。训练在 step 8k-10k 达峰（CPS=0.895, Surv=0.818, CS×Surv=941），step 10k-12k CS×Surv 最高（1055）但该 checkpoint 已被 learner 自动清理，仅剩 session best 快照也已随 aisrv 重启丢失。step 12k 后所有指标持续下降，至 step 64k 无回升。v52-step8500 位于 peak zone 且已双备份保存。清理了之前用 rejected robust_score 标准保存的 ep733 模型。
+~02:45 | 手动保存最佳 checkpoint：v52-step8500。选择理由：综合评分第 1（N≥8 可靠样本）。AvgCS=1320（最高）、MinCS=871（无灾难局）、ColRate=0.101（全场最低）、Entropy=0.149（健康）、VLoss=147。在 12 个候选点中以 balanced score 1210.8 排名第 1。已保存至 saved_models/v52-step8500/ + backup_model/ 双重备份。
+~02:10 | 修复监控面板 "fail to fetch"：fe-monitor-service 容器 `server_req_base_url` 被旧版 compose 缓存为 Docker 内部主机名，`--force-recreate` 重建后正确注入 `http://127.0.0.1:11001`。
+~00:28 | ENTROPY_FLOOR_COEF 0.1→0.2，温和推高 entropy（effective_beta 从 0.05→0.09）。重启 learner+aisrv 生效。
+
 ## 2026-04-13
 
+~22:30 | v5.2 综合优化实施完成（基于外部 AI 专家方案批注 + 精细调整）。3 文件修改：(1) preprocessor.py：移除 wall_adjacent edge_bonus、dirty_approach 加守卫条件系数 0.08、revisit 三组件系统（只罚干净格+区域感知+模式豁免）、NPC penalty 范围 10 系数 -3.0 +方向分量；(2) expert.py：NPC filter 距离 3→5、logit_bias NPC 负偏置 -2.0、LOW_BATTERY_RATIO 0.26→0.32 + BASE_RETURN_MARGIN 14→18；(3) train_workflow.py：4 阶段课程(eval_hard ep401+ 37.5%强制2000步)、outcome_bonus 碰撞 -8.0/电池 -3.0、robust_score 碰撞权重 -30。Resume from v51-step4900。详见 OPT_PLAN_v52_20260413.md。
 ~20:30 | 撤销步数对齐保存（框架签名 .zip 不受我们代码控制），改为将 RESUME_TIME_SNAPSHOT_INTERVAL 从 15 分钟缩短到 10 分钟。
 ~20:05 | 手动保存最佳 checkpoint：v51-step4900。选择理由：CC=7.0（充电策略最佳）、Entropy=0.37（健康）、CompRate=1.00、CS=1035。在 10 个候选点中 balanced score 排名第 2（1553），仅次于 ckpt-1000（早期不稳定）。保存至 code/saved_models/v51-step4900/。
 ~17:30 | v5.1 充电效率修复（仅改 preprocessor.py）。(1) 新增 pre_charge_battery 追踪充电前电量；(2) charge_reward 替换为效率公式 3.0*(charge_received/battery_max)，消除"充满后 reward 恒 2.0"的 bug；(3) 新增 urgency_penalty：charger_slack<0 时 -0.4*min(-slack/8,1)，强化本地紧急信号替代依赖 GAE 传播的弱死亡惩罚。

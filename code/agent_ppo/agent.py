@@ -88,8 +88,9 @@ class Agent(BaseAgent):
 
         将原始 env_obs 转换为 ObsData（69D 特征 + 合法动作掩码）。
         """
-        feature, legal_action, reward = self.preprocessor.feature_process(env_obs, self.last_action)
+        feature, legal_action, reward, reward_components = self.preprocessor.feature_process(env_obs, self.last_action)
         self.last_reward = reward
+        self.reward_components = reward_components
 
         obs_data = ObsData(
             feature=list(feature),

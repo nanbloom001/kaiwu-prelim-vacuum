@@ -573,8 +573,8 @@ class Preprocessor:
         legal_arr = np.array(legal_action, dtype=np.float32)
 
         feature = np.concatenate([local_map, global_memory, scalar_state, legal_arr], axis=0).astype(np.float32)
-        reward = self.reward_process()
-        return feature, legal_action, reward
+        reward, reward_components = self.reward_process()
+        return feature, legal_action, reward, reward_components
 
     def reward_process(self):
         # Primary cleaning reward
@@ -583,8 +583,8 @@ class Preprocessor:
         # Cleaning streak bonus
         streak_bonus = 0.15 * min(float(self.cleaned_this_step > 0), 1.0) * min(self.consecutive_clean_steps, 5)
 
-        # Edge-following bonus: reward walking along walls and dirty boundaries
-        edge_bonus = 0.02 * min(self.wall_adjacent, 2) + 0.08 * min(self.dirty_adjacent / 2.0, 1.0)
+        # Edge-following bonus: reward walking near dirty boundaries
+        edge_bonus = 0.06 * min(self.dirty_adjacent / 2.0, 1.0)
 
         # Exploration reward
         explore_reward = 0.05 * float(min(self.new_explored_cells, 6))
@@ -620,9 +620,23 @@ class Preprocessor:
         else:
             charge_reward = 0.0
 
-        # NPC avoidance: strong quadratic penalty (range 8, coeff 1.5)
-        npc_risk = float(np.clip((8.0 - self.nearest_npc_dist) / 8.0, 0.0, 1.0))
-        npc_penalty = -1.5 * npc_risk ** 2
+        # NPC avoidance: range 10, coeff 3.0, power 1.5 + direction penalty
+        npc_risk = float(np.clip((10.0 - self.nearest_npc_dist) / 10.0, 0.0, 1.0))
+        npc_penalty = -3.0 * npc_risk ** 1.5
+
+        # Direction penalty: moving toward NPC is penalized (Chebyshev normalization)
+        if self._last_action >= 0 and self._last_action < 8:
+            _adx, _adz = self.ACTION_DELTAS[self._last_action]
+            for _npc_dist, _ndx, _ndz in self.all_npc_info:
+                if _npc_dist > 8.0:
+                    break
+                if _npc_dist < 1.0:
+                    continue
+                _nlen = max(max(abs(_ndx), abs(_ndz)), 1.0)
+                _dot = (_adx * _ndx + _adz * _ndz) / _nlen
+                if _dot > 0:
+                    _closeness = (8.0 - _npc_dist) / 8.0
+                    npc_penalty -= 0.5 * _dot * _closeness
 
         # NPC-cleaned cell penalty: discourage wasting time on NPC-cleaned areas
         hx, hz = self.cur_pos
@@ -631,12 +645,33 @@ class Preprocessor:
         ) else 0.0
         npc_cleaned_penalty = -0.3 * npc_cleaned_here
 
-        # Frontier-aware revisit penalty (increased to outweigh edge bonus)
-        is_on_frontier = (self.local_dirt_density > 0.02) or (self.local_frontier_density > 0.08)
-        if is_on_frontier:
-            revisit_penalty = -0.10 * float(np.clip(self.cur_visit_count - 1, 0.0, 2.0))
+        # Revisit penalty: three-component system
+        _in_bounds = 0 <= hx < self.GRID_SIZE and 0 <= hz < self.GRID_SIZE
+
+        # Component A: penalize stepping on already-cleaned cells
+        _cell_is_clean = (
+            _in_bounds
+            and self.explored_map[hx, hz] > 0
+            and self.dirty_memory[hx, hz] < 0.5
+            and self.cleaned_this_step == 0
+        )
+        if _cell_is_clean:
+            revisit_penalty = -0.12 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
         else:
-            revisit_penalty = -0.15 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
+            revisit_penalty = 0.0
+
+        # Component B: large-area cleaned zone penalty
+        if _in_bounds and self._view_map is not None:
+            _local_clean = float(np.mean(self._view_map == 1))
+            _local_dirty = float(np.mean(self._view_map == 2))
+            if _local_clean > 0.50 and _local_dirty < 0.03:
+                revisit_penalty -= 0.10 * (_local_clean - 0.50)
+
+        # Component C: mode suppression for evade/charge
+        if self.current_mode == self.MODE_EVADE:
+            revisit_penalty = 0.0
+        elif self.current_mode == self.MODE_CHARGE:
+            revisit_penalty *= 0.2
 
         # Stuck penalty: escalating with duration
         stuck_penalty = -0.5 * self.last_move_invalid - 0.25 * _norm(self.stuck_steps, 10)
@@ -646,8 +681,10 @@ class Preprocessor:
 
         # Directional dirty approach reward: guide toward dirty-dense directions
         dirty_approach_reward = 0.0
-        if self._last_action >= 0 and self._last_action < 8 and np.max(self.directional_dirty) > 0.01:
-            dirty_approach_reward = 0.10 * self.directional_dirty[self._last_action]
+        if (self._last_action >= 0 and self._last_action < 8
+                and self.local_dirt_density > 0.02
+                and np.max(self.directional_dirty) > 0.03):
+            dirty_approach_reward = 0.08 * self.directional_dirty[self._last_action]
 
         # CPS EMA efficiency reward: per-step CPS signal
         if self.cleaned_this_step > 0:
@@ -656,10 +693,18 @@ class Preprocessor:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 0.0
         efficiency_reward = 0.3 * max(self._cps_ema - 0.75, 0)
 
-        # Urgency penalty: local signal when battery can't reach charger
+        # Urgency penalty: 3-tier local signal when battery can't reach charger
         urgency_penalty = 0.0
-        if self.charger_slack < 0 and not self.just_charged:
-            urgency_penalty = -0.4 * min(float(-self.charger_slack) / 8.0, 1.0)
+        if not self.just_charged:
+            if self.charger_slack < -8:
+                # Nearly certain death - emergency signal
+                urgency_penalty = -1.2
+            elif self.charger_slack < 0:
+                # Past point of no return - clear return signal
+                urgency_penalty = -0.6 * min(float(-self.charger_slack) / 8.0, 1.0)
+            elif self.charger_slack < 5 and (self.battery / max(self.battery_max, 1)) < 0.20:
+                # Low battery and tight margin - gentle warning
+                urgency_penalty = -0.3
 
         reward = (
             cleaning_reward
@@ -679,4 +724,21 @@ class Preprocessor:
             + efficiency_reward
             + urgency_penalty
         )
-        return float(np.clip(reward, -5.0, 5.0))
+        components = {
+            "cleaning": cleaning_reward,
+            "streak": streak_bonus,
+            "edge": edge_bonus,
+            "explore": explore_reward,
+            "frontier": frontier_reward,
+            "charger_approach": charger_reward,
+            "charge": charge_reward,
+            "npc": npc_penalty,
+            "npc_cleaned": npc_cleaned_penalty,
+            "revisit": revisit_penalty,
+            "stuck": stuck_penalty,
+            "idle": idle_penalty,
+            "dirty_approach": dirty_approach_reward,
+            "efficiency": efficiency_reward,
+            "urgency": urgency_penalty,
+        }
+        return float(np.clip(reward, -5.0, 5.0)), components

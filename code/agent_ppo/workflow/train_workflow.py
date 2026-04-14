@@ -117,7 +117,9 @@ class EnvConfigSampler:
             return "warmup"
         if episode_idx <= 200:
             return "blend"
-        return "robust"
+        if episode_idx <= 400:
+            return "robust"
+        return "eval_hard"
 
     def _pick_profile(self, stage):
         draw = self.rng.random()
@@ -133,11 +135,18 @@ class EnvConfigSampler:
             if draw < 0.75:
                 return "mild"
             return "broad"
-        if draw < 0.15:
+        if stage == "robust":
+            if draw < 0.10:
+                return "anchor"
+            if draw < 0.45:
+                return "mild"
+            return "broad"
+        # eval_hard
+        if draw < 0.05:
             return "anchor"
-        if draw < 0.50:
+        if draw < 0.25:
             return "mild"
-        return "broad"
+        return "broad_eval"
 
     def _sample_robot_count(self, profile):
         if profile == "mild":
@@ -150,12 +159,19 @@ class EnvConfigSampler:
         return int(self.rng.integers(1, 5))
 
     def _sample_max_step(self, profile):
+        if profile == "broad_eval":
+            if self.rng.random() < 0.50:
+                return 2000
+            return int(self.rng.choice([1100, 1400, 1700, 2000]))
         if profile == "mild":
             return self._sample_near(self.base_max_step, 400, 2000, (-250, -100, 0, 100, 250), quant=50)
         levels = [500, 700, 900, 1100, 1400, 1700, 2000]
         return int(self.rng.choice(levels))
 
     def _sample_battery_max(self, profile):
+        if profile == "broad_eval":
+            levels = [120, 160, 200, 200, 200, 260, 320, 420]
+            return int(self.rng.choice(levels))
         if profile == "mild":
             return self._sample_near(self.base_battery_max, 100, 999, (-80, -40, 0, 40, 80, 120), quant=20)
         levels = [120, 160, 200, 260, 320, 420, 560, 720]
@@ -212,6 +228,10 @@ class EpisodeRunner:
         self.rolling_charge_efficiency_total = 0.0
         self.rolling_clean_per_step_total = 0.0
         self.rolling_episode_total = 0
+
+        self.death_trajectory_buffer = []
+        self.DEATH_TRAJ_LENGTH = 20
+        self.config_stats = {}
 
         self.score_window = []
         self.best_avg_score = 0.0
@@ -462,6 +482,16 @@ class EpisodeRunner:
                 step += 1
                 done = terminated or truncated
 
+                # Record death trajectory snapshot
+                fm = self.agent.preprocessor
+                self.death_trajectory_buffer.append({
+                    "step": step, "battery": fm.battery, "battery_max": fm.battery_max,
+                    "charger_slack": fm.charger_slack, "nearest_npc_dist": fm.nearest_npc_dist,
+                    "mode": fm.current_mode, "action": self.agent.last_action,
+                })
+                if len(self.death_trajectory_buffer) > self.DEATH_TRAJ_LENGTH:
+                    self.death_trajectory_buffer.pop(0)
+
                 next_obs_data, _ = self.agent.observation_process(env_obs)
                 next_obs_data.frame_no = frame_no
 
@@ -551,16 +581,40 @@ class EpisodeRunner:
 
         cleaning_ratio = fm.dirt_cleaned / max(fm.total_dirt, 1)
         self.last_clean_score = clean_score
-        outcome_bonus = {
+        _base_bonus = {
             "completed": 1.5,
-            "battery": -2.5,
-            "collision": -6.0,
-            "unknown": -3.0,
-        }.get(fail_reason, -3.0)
+            "battery": -3.0,
+            "collision": -8.0,
+            "unknown": -4.0,
+        }.get(fail_reason, -4.0)
+
+        if fail_reason in ("battery", "collision", "unknown"):
+            actual_max_step = max(int(env_info.get("max_step", sampled_env_conf.get("max_step", step))), 1)
+            remaining_ratio = max(0.0, 1.0 - float(step) / actual_max_step)
+            outcome_bonus = _base_bonus * (1.0 + 1.5 * remaining_ratio)
+        else:
+            outcome_bonus = _base_bonus
+
         efficiency_bonus = 0.5 * cleaning_ratio + 0.5 * min(clean_score / max(step, 1), 1.0)
         final_reward = outcome_bonus + efficiency_bonus
         result_str = "WIN" if fail_reason == "completed" else "FAIL"
 
+        # Death trajectory logging
+        if fail_reason in ("battery", "collision"):
+            traj_parts = []
+            for s in self.death_trajectory_buffer:
+                traj_parts.append(
+                    f"s{s['step']}:bat={s['battery']}/{s['battery_max']}"
+                    f" slack={s['charger_slack']:.1f} npc={s['nearest_npc_dist']:.0f}"
+                    f" mode={s['mode']} act={s['action']}"
+                )
+            self.logger.info(
+                f"[DEATH_TRAJ] ep:{self.episode_cnt} reason:{fail_reason} "
+                f"traj=[{' | '.join(traj_parts)}]"
+            )
+            self.death_trajectory_buffer.clear()
+        elif fail_reason == "completed":
+            self.death_trajectory_buffer.clear()
         invalid_move_rate = fm.invalid_move_count / max(step, 1)
         charge_count = float(env_info.get("charge_count", 0))
         finished_steps = float(env_info.get("finished_steps", step))
@@ -626,7 +680,7 @@ class EpisodeRunner:
                 + 3.0 * _percentile(self.score_window, 0.10)
                 - 8.0 * invalid_move_rate
                 - 20.0 * (1.0 if fail_reason == "battery" else 0.0)
-                - 24.0 * (1.0 if fail_reason == "collision" else 0.0)
+                - 30.0 * (1.0 if fail_reason == "collision" else 0.0)
             )
             if rolling_avg > self.best_avg_score:
                 self.best_avg_score = rolling_avg
@@ -669,6 +723,26 @@ class EpisodeRunner:
             self.archive.log_event("battery_fail", episode_payload)
         elif fail_reason == "collision":
             self.archive.log_event("collision_fail", episode_payload)
+
+        # Per-config failure rate tracking
+        battery_bin = min(int(actual_battery_max / 100) * 100, 800)
+        max_step_bin = min(int(actual_max_step / 500) * 500, 2000)
+        config_key = f"r{actual_robot_count}_c{actual_charger_count}_b{battery_bin}_s{max_step_bin}"
+        if config_key not in self.config_stats:
+            self.config_stats[config_key] = {"total": 0, "battery": 0, "collision": 0, "completed": 0}
+        stats = self.config_stats[config_key]
+        stats["total"] += 1
+        stats[fail_reason] = stats.get(fail_reason, 0) + 1
+
+        if self.episode_cnt % 50 == 0 and len(self.config_stats) >= 3:
+            high_death = []
+            for ck, cs in sorted(self.config_stats.items()):
+                if cs["total"] >= 3:
+                    dr = (cs.get("battery", 0) + cs.get("collision", 0)) / cs["total"]
+                    if dr > 0.3:
+                        high_death.append(f"{ck}:{dr:.0%}({cs['total']}ep)")
+            if high_death:
+                self.logger.info(f"[CONFIG_RISK] {' '.join(high_death)}")
 
         return final_reward
 

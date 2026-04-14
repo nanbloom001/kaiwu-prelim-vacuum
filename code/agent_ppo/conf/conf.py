@@ -44,7 +44,7 @@ class Config:
 
     # Entropy floor: prevent policy collapse
     ENTROPY_FLOOR = 0.5
-    ENTROPY_FLOOR_COEF = 0.1
+    ENTROPY_FLOOR_COEF = 1.0
 
     LABEL_SIZE_LIST = [ACTION_NUM]
     LEGAL_ACTION_SIZE_LIST = LABEL_SIZE_LIST.copy()
