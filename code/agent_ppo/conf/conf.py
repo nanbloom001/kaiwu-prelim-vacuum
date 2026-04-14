@@ -73,4 +73,4 @@ class Config:
     KEEP_BEST_RESUME_SNAPSHOTS = 5
 
     # Resume control: None = train from scratch; filename = resume from that checkpoint
-    RESUME_CHECKPOINT = "model.ckpt-resume.pkl"  # resume from v5-step4300
+    RESUME_CHECKPOINT = "model.ckpt-resume.pkl"  # resume from best checkpoint (step 47500)
