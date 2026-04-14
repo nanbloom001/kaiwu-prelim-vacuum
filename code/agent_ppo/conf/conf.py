@@ -37,9 +37,9 @@ class Config:
     GAMMA = 0.99
     LAMDA = 0.95
 
-    INIT_LEARNING_RATE_START = 0.0001
-    BETA_START = 0.008
-    CLIP_PARAM = 0.2
+    INIT_LEARNING_RATE_START = 0.00005
+    BETA_START = 0.012
+    CLIP_PARAM = 0.15
     VF_COEF = 0.5
     # Entropy floor: prevent policy collapse during training
     ENTROPY_FLOOR = 0.5
