@@ -331,8 +331,9 @@ class Agent(BaseAgent):
 
         将原始 env_obs 转换为 ObsData（69D 特征 + 合法动作掩码）。
         """
-        feature, legal_action, reward = self.preprocessor.feature_process(env_obs, self.last_action)
+        feature, legal_action, reward, reward_components = self.preprocessor.feature_process(env_obs, self.last_action)
         self.last_reward = reward
+        self.reward_components = reward_components
 
         obs_data = ObsData(
             feature=list(feature),
@@ -383,11 +384,10 @@ class Agent(BaseAgent):
                     )
                 ]
         else:
-            # Training mode: soft expert logit bias — correct PPO ratio
+            # Training mode: soft expert logit bias with clean prob storage
             expert_bias = expert.get_logit_bias(
                 self.preprocessor, filtered_legal, last_action=self.last_action
             )
-            logits = logits + np.array(expert_bias, dtype=np.float32)
 
         # Layer 2: Anti-stuck — random legal action if stuck too long
         # Skip anti-stuck during expert return_mode (Expert handles stuck via blocked cells + A*)
@@ -405,17 +405,25 @@ class Agent(BaseAgent):
                     )
                 ]
 
-        # RL decision (with biased logits in training mode)
+        # RL decision
         legal_arr = np.array(filtered_legal, dtype=np.float32)
-        prob = self._legal_soft_max(logits, legal_arr)
-        action = self._legal_sample(prob, use_max=False)
-        d_action = self._legal_sample(prob, use_max=True)
+        clean_prob = self._legal_soft_max(logits, legal_arr)
+
+        if not use_hard_override and np.any(expert_bias > 0):
+            # Training with bias: sample from biased distribution
+            biased_logits = logits + np.array(expert_bias, dtype=np.float32)
+            biased_prob = self._legal_soft_max(biased_logits, legal_arr)
+            action = self._legal_sample(biased_prob, use_max=False)
+            d_action = self._legal_sample(biased_prob, use_max=True)
+        else:
+            action = self._legal_sample(clean_prob, use_max=False)
+            d_action = self._legal_sample(clean_prob, use_max=True)
 
         return [
             ActData(
                 action=[action],
                 d_action=[d_action],
-                prob=list(prob),
+                prob=list(clean_prob),
                 value=value,
             )
         ]

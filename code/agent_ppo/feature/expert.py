@@ -25,8 +25,8 @@ class ExpertPolicy:
 
     # Charging state machine parameters
     EXIT_RETURN_RATIO = 0.95       # Leave return_mode when battery >= 95% and on charger
-    LOW_BATTERY_RATIO = 0.26       # Force return_mode when battery < 26%
-    BASE_RETURN_MARGIN = 14.0      # Base safety margin for return threshold
+    LOW_BATTERY_RATIO = 0.32       # Force return_mode when battery < 32%
+    BASE_RETURN_MARGIN = 18.0      # Base safety margin for return threshold
 
     # Blocked cell memory
     BLOCKED_TTL = 8                # Steps before blocked cell expires
@@ -36,7 +36,7 @@ class ExpertPolicy:
     _NPC_DANGER_MAX = 15.0         # peak danger cost at NPC position
     _NPC_DANGER_DECAY = 2.0        # exponential decay rate
     _NPC_DANGER_RADIUS = 8         # Chebyshev radius of danger zone
-    _UNEXPLORED_COST = 3.0         # moderate cost for unexplored (passable but uncertain)
+    _UNEXPLORED_COST = 1.8         # moderate cost for unexplored (passable but uncertain)
 
     def __init__(self):
         self._charger_list = []
@@ -84,7 +84,7 @@ class ExpertPolicy:
     # ------------------------------------------------------------------
 
     def filter_actions(self, prep, legal_action):
-        """Block stepping onto NPC and moving directly toward nearby NPCs."""
+        """Block stepping onto NPC and moving toward nearby NPCs."""
         legal = list(legal_action)
         hx, hz = prep.cur_pos
 
@@ -101,8 +101,12 @@ class ExpertPolicy:
                 if nx2 == nx and nz2 == nz:
                     legal[idx] = 0
                     continue
-                # Block moving directly toward NPC within distance 3
+                # Block all moves that reduce Chebyshev distance when NPC is very close
                 if npc_dist <= 3:
+                    new_dist = max(abs(nx2 - nx), abs(nz2 - nz))
+                    if new_dist < npc_dist:
+                        legal[idx] = 0
+                elif npc_dist <= 5:
                     sx = (1 if ndx > 0 else -1) if ndx != 0 else 0
                     sz = (1 if ndz > 0 else -1) if ndz != 0 else 0
                     if dx == sx and dz == sz:
@@ -159,6 +163,12 @@ class ExpertPolicy:
             self._cached_path = []
             self._cached_target = None
 
+        # Exit return_mode: high battery regardless of charger position
+        if self.return_mode and battery_ratio >= 0.85:
+            self.return_mode = False
+            self._cached_path = []
+            self._cached_target = None
+
         # Try to get A* path to nearest charger (with caching)
         charger_path, charger_dist, charger_target = self._plan_to_charger_cached(prep)
 
@@ -169,11 +179,19 @@ class ExpertPolicy:
         # Compute dynamic margin based on path complexity
         margin = self._charge_margin(charger_path)
 
+        # Dynamic LOW_BATTERY_RATIO: small batteries need earlier trigger
+        effective_low_ratio = max(
+            self.LOW_BATTERY_RATIO,
+            min(50.0 / max(prep.battery_max, 1), 0.45)
+        )
+
         # Trigger conditions
         should_return = (
             self.return_mode
-            or (charger_dist < float('inf') and prep.battery <= charger_dist + margin)
-            or battery_ratio <= self.LOW_BATTERY_RATIO
+            or (charger_dist < float('inf')
+                and prep.battery <= charger_dist + margin
+                and battery_ratio <= 0.65)
+            or battery_ratio <= effective_low_ratio
         )
 
         if not should_return:
@@ -241,13 +259,42 @@ class ExpertPolicy:
         )
 
         if should_return and expert_action is not None:
-            slack = prep.battery - charger_dist
-            urgency = float(np.clip(1 - slack / max(margin, 1), 0.2, 1.0))
+            # Check if any NPC is dangerously close — suppress charge bias if so
+            min_npc_dist = float('inf')
+            hx, hz = prep.cur_pos
+            for npc in prep._npcs:
+                _p = npc.get("pos") or {}
+                _nd = max(abs(int(_p.get("x", 0)) - hx), abs(int(_p.get("z", 0)) - hz))
+                min_npc_dist = min(min_npc_dist, _nd)
 
-            if slack <= 3 or (prep.battery / max(prep.battery_max, 1)) <= 0.10:
-                bias[expert_action] = 100.0     # Emergency: near-equivalent to hard override
+            if min_npc_dist <= 4:
+                pass  # NPC too close — let NPC avoidance bias dominate
             else:
-                bias[expert_action] = 3.0 + 5.0 * urgency  # Soft bias [3.0, 8.0]
+                slack = prep.battery - charger_dist
+                urgency = float(np.clip(1 - slack / max(margin, 1), 0.2, 1.0))
+
+                if slack <= 3 or (prep.battery / max(prep.battery_max, 1)) <= 0.10:
+                    bias[expert_action] = 100.0     # Emergency: near-equivalent to hard override
+                else:
+                    bias[expert_action] = 3.0 + 5.0 * urgency  # Soft bias [3.0, 8.0]
+
+        # NPC avoidance bias: penalize moving toward nearby NPCs
+        hx, hz = prep.cur_pos
+        for npc in prep._npcs:
+            _pos = npc.get("pos") or {}
+            _nx, _nz = int(_pos.get("x", 0)), int(_pos.get("z", 0))
+            _ndx, _ndz = _nx - hx, _nz - hz
+            _npc_dist = max(abs(_ndx), abs(_ndz))
+            if _npc_dist > 6 or _npc_dist < 1:
+                continue
+            for _idx, (_dx, _dz) in enumerate(self.DELTAS):
+                if not legal_action[_idx]:
+                    continue
+                _nlen = max(max(abs(_ndx), abs(_ndz)), 1.0)
+                _dot = (_dx * _ndx + _dz * _ndz) / _nlen
+                if _dot > 0:
+                    _close = (6.0 - _npc_dist) / 6.0
+                    bias[_idx] -= 2.0 * _dot * _close
 
         return bias
 
@@ -337,15 +384,7 @@ class ExpertPolicy:
             self._cached_target = path[-1] if path else None
             return path, dist, self._cached_target
 
-        # Fallback: no NPC avoidance
-        cost_map = self._build_cost_map(prep, npc_weight=0.0)
-        act, path, dist = self._weighted_astar_full(prep, cost_map, is_goal, h_func)
-        if act is not None and path:
-            self._cached_path = path
-            self._cached_distance = dist
-            self._cached_target = path[-1] if path else None
-            return path, dist, self._cached_target
-
+        # No safe path found — fall through to greedy (protected by filter_actions)
         return [], float('inf'), None
 
     @staticmethod
@@ -577,6 +616,5 @@ class ExpertPolicy:
         if act is not None:
             return act
 
-        # Fallback 2: no NPC avoidance at all
-        cost_map = self._build_cost_map(prep, npc_weight=0.0)
-        return self._weighted_astar(prep, cost_map, is_goal, h_func)
+        # No safe path found — fall through to greedy (protected by filter_actions)
+        return None

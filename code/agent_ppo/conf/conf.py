@@ -41,6 +41,9 @@ class Config:
     BETA_START = 0.008
     CLIP_PARAM = 0.2
     VF_COEF = 0.5
+    # Entropy floor: prevent policy collapse during training
+    ENTROPY_FLOOR = 0.5
+    ENTROPY_FLOOR_COEF = 1.0
 
     LABEL_SIZE_LIST = [ACTION_NUM]
     LEGAL_ACTION_SIZE_LIST = LABEL_SIZE_LIST.copy()
@@ -64,10 +67,10 @@ class Config:
     SAVE_MODEL_INTERVAL_EPISODES = 50
     RESUME_LATEST_SYNC_INTERVAL_EPISODES = 20
     RESUME_EPISODE_SNAPSHOT_INTERVAL = 50
-    RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS = 15 * 60
+    RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS = 10 * 60
     KEEP_EPISODE_RESUME_SNAPSHOTS = 8
     KEEP_TIME_RESUME_SNAPSHOTS = 6
     KEEP_BEST_RESUME_SNAPSHOTS = 5
 
     # Resume control: None = train from scratch; filename = resume from that checkpoint
-    RESUME_CHECKPOINT = None  # e.g. "model.ckpt-resume.pkl"
+    RESUME_CHECKPOINT = "model.ckpt-resume.pkl"  # resume from v5-step4300
