@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-15
+
+~14:00 | 训练全周期瓶颈分析报告完成。覆盖 v4→v5.4 全部 7 个瓶颈：entropy 塨缩（已解决）、Expert-RL 梯度对抗（核心结构性问题）、碰撞死亡（v5.4 修复 89%）、电池死亡（当前主瓶颈，bias 3-8 太弱）、GAE 长周期 credit 衰减（γλ^50=4.7%）、Reward 失衡（清扫:充电=60:1）、Peak-Then-Decline 训练曲线。含 18 例碰撞 + 14 例电池死亡完整日志。评估 4 个网络框架改动方向：LSTM 时序层、n-step return、势函数 reward shaping、分层策略。详见 BOTTLENECK_ANALYSIS_FULL_20260415.md。
+
 ## 2026-04-14
 
 ~22:05 | v5.4 电池死亡根因诊断完成。通过在 Expert `_evaluate_return()` 添加文件诊断日志（3214 条），推翻初始假设（充电桩未发现/A* 无路径），确认真正原因：Expert A* 寻路和 action 提供均正常（path=20-52, act 非 None），但 non-emergency bias（3-8）太弱，73% 的电池死亡场景中模型清扫偏好压过充电引导，直到 ratio≤0.10 才触发 emergency bias=100 为时已晚。v5.4 碰撞死亡 -89%（18→2），WinRate 85.2%→88.2%。修复方向：提高 bias 强度 + 降低 emergency 阈值。详见 LOG_20260414_v54_battery_death_diagnosis.md。
