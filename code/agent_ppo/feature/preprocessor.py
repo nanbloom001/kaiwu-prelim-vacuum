@@ -649,6 +649,14 @@ class Preprocessor:
                 # Reward proportional to how much closer we got + explored new cells
                 charger_path_explore = 0.12 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
 
+        # Charger proximity reward: encourage learning charger locations at ALL battery levels
+        charger_proximity_reward = 0.0
+        if not self.just_charged and self.nearest_charger_dist < 20.0:
+            delta_prox = self.last_nearest_charger_dist - self.nearest_charger_dist
+            if delta_prox > 0:  # moving closer to charger
+                closeness = 1.0 - min(self.nearest_charger_dist / 20.0, 1.0)
+                charger_proximity_reward = 0.15 * closeness * min(delta_prox, 3.0) / 3.0
+
         # Charging reward: efficiency-based — actual charge received / battery capacity
         if self.just_charged:
             charge_received = max(0.0, float(self.battery - self.pre_charge_battery + 1))
@@ -758,6 +766,7 @@ class Preprocessor:
             + frontier_reward
             + charger_reward
             + charger_path_explore
+            + charger_proximity_reward
             + charge_reward
             + npc_penalty
             + npc_cleaned_penalty

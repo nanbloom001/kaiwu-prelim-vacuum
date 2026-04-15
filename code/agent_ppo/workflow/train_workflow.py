@@ -555,6 +555,7 @@ class EpisodeRunner:
 
             collector = []
             self.episode_cnt += 1
+            self.agent._predict_episode_idx = self.episode_cnt
             done = False
             step = 0
             total_reward = 0.0

@@ -397,6 +397,19 @@ class Agent(BaseAgent):
             expert_bias = expert.get_logit_bias(
                 self.preprocessor, filtered_legal, last_action=self.last_action
             )
+
+            # Expert annealing: gradually reduce bias as training progresses
+            if Config.EXPERT_ANNEAL_START_EPISODE > 0:
+                episode = getattr(self, '_predict_episode_idx', 0)
+                if episode >= Config.EXPERT_ANNEAL_START_EPISODE:
+                    progress = min(
+                        (episode - Config.EXPERT_ANNEAL_START_EPISODE)
+                        / max(Config.EXPERT_ANNEAL_END_EPISODE - Config.EXPERT_ANNEAL_START_EPISODE, 1),
+                        1.0,
+                    )
+                    scale = 1.0 - progress * (1.0 - Config.EXPERT_ANNEAL_MIN_SCALE)
+                    expert_bias = expert_bias * scale
+
             self._last_expert_weight = float(max(0.0, np.max(expert_bias)))
 
         # Layer 2: Anti-stuck — random legal action if stuck too long

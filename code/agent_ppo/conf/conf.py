@@ -53,8 +53,8 @@ class Config:
     GRAD_CLIP_RANGE = 0.5
 
     # A* potential-based reward shaping (Ng et al. 1999)
-    ASTAR_POTENTIAL_ALPHA = 0.25
-    ASTAR_POTENTIAL_BATTERY_THRESHOLD = 0.65
+    ASTAR_POTENTIAL_ALPHA = 0.35              # was 0.25; stronger per-step signal
+    ASTAR_POTENTIAL_BATTERY_THRESHOLD = 0.80  # was 0.65; activate earlier so model learns charger paths
 
     # Trajectory heatmap
     TRAJECTORY_LENGTH = 50
@@ -63,6 +63,11 @@ class Config:
     # Expert soft bias range
     EXPERT_BIAS_MIN = 5.0
     EXPERT_BIAS_MAX = 15.0
+
+    # Expert annealing: gradually reduce expert influence
+    EXPERT_ANNEAL_START_EPISODE = 50    # begin reducing bias at ep 50
+    EXPERT_ANNEAL_END_EPISODE = 300     # full anneal by ep 300
+    EXPERT_ANNEAL_MIN_SCALE = 0.2       # retain 20% bias after full anneal
 
     # Gradient isolation for expert-overridden samples
     EXPERT_WEIGHT_DIM = 1
@@ -82,9 +87,9 @@ class Config:
 
     # Dynamic curriculum advancement
     CURRICULUM_WINDOW = 20           # rolling window for curriculum metrics
-    CURRICULUM_ADVANCE_WIN_RATE = 0.90  # advance: WinRate >= 90%
-    CURRICULUM_ADVANCE_AVG_CS = 850     # advance: avg CleanScore >= 850
-    CURRICULUM_ADVANCE_CHARGE = 3.0     # advance: avg ChargeCount >= 3.0
+    CURRICULUM_ADVANCE_WIN_RATE = 0.80  # advance: WinRate >= 80% (was 0.90)
+    CURRICULUM_ADVANCE_AVG_CS = 800     # advance: avg CleanScore >= 800 (was 850)
+    CURRICULUM_ADVANCE_CHARGE = 2.5     # advance: avg ChargeCount >= 2.5 (was 3.0)
     CURRICULUM_HOLD_WIN_RATE = 0.70     # hold stage if WinRate < 70%
 
     # Training snapshot / resume strategy
@@ -97,4 +102,4 @@ class Config:
     KEEP_BEST_RESUME_SNAPSHOTS = 10
 
     # Resume control: None = train from scratch; filename = resume from that checkpoint
-    RESUME_CHECKPOINT = "saved_models/v52-step10000/model.ckpt-resume.pkl"  # v52 best: step 10000, entropy=0.15, CS=915
+    RESUME_CHECKPOINT = "saved_models/v52-step70000/model.ckpt-resume.pkl"  # v52 Phase 2 best: anchor 100% WR, CPS 0.879
