@@ -87,6 +87,7 @@ class Config:
 
     # Dynamic curriculum advancement
     CURRICULUM_WINDOW = 20           # rolling window for curriculum metrics
+    MONITOR_WINDOW = 20              # rolling window for monitor dashboard (same as curriculum)
     CURRICULUM_ADVANCE_WIN_RATE = 0.80  # advance: WinRate >= 80% (was 0.90)
     CURRICULUM_ADVANCE_AVG_CS = 800     # advance: avg CleanScore >= 800 (was 850)
     CURRICULUM_ADVANCE_CHARGE = 2.5     # advance: avg ChargeCount >= 2.5 (was 3.0)

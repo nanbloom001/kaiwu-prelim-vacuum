@@ -10,6 +10,7 @@ Training workflow for Robot Vacuum.
 import os
 import time
 import json
+from collections import deque
 from copy import deepcopy
 from pathlib import Path
 
@@ -288,26 +289,11 @@ class EpisodeRunner:
         self.last_perf_stat_time = 0
         self.perf_window = PerfWindow()
 
-        self.failure_counts = {
-            "battery": 0,
-            "collision": 0,
-            "completed": 0,
-            "unknown": 0,
-        }
-
-        self.rolling_charge_total = 0.0
-        self.rolling_cleaned_total = 0.0
-        self.rolling_finished_steps = 0.0
-        self.rolling_remaining_charge_total = 0.0
-        self.rolling_invalid_move_rate_total = 0.0
-        self.rolling_charge_efficiency_total = 0.0
-        self.rolling_clean_per_step_total = 0.0
-        self.rolling_episode_total = 0
+        self.episode_history = deque(maxlen=Config.MONITOR_WINDOW)
         self.death_trajectory_buffer = []
         self.DEATH_TRAJ_LENGTH = 20
         self.config_stats = {}
 
-        self.score_window = []
         self.best_avg_score = 0.0
         self.best_robust_score = float("-inf")
         self.last_clean_score = 0.0
@@ -487,15 +473,73 @@ class EpisodeRunner:
             self._save_resume_artifacts("time", self.last_clean_score, with_named_snapshot=True)
             self.last_time_snapshot_at = now
 
+    def _window_metrics(self, episodes=None):
+        """Compute rolling-window metrics from episode_history."""
+        buf = list(episodes or self.episode_history)
+        n = len(buf)
+        if n == 0:
+            return {}
+        wins = [ep for ep in buf if ep["result"] == "completed"]
+        w = len(wins)
+        return {
+            "win_rate": w / n,
+            "avg_clean_score": sum(ep["clean_score"] for ep in buf) / n,
+            "avg_finished_steps": sum(ep["finished_steps"] for ep in buf) / n,
+            "avg_charge_count": sum(ep["charge_count"] for ep in buf) / n,
+            "avg_remaining_charge": sum(ep["remaining_charge"] for ep in buf) / n,
+            "avg_invalid_move_rate": sum(ep["invalid_move_rate"] for ep in buf) / n,
+            "avg_charge_efficiency": sum(ep["charge_efficiency"] for ep in buf) / n,
+            "avg_clean_per_step": sum(ep["clean_per_step"] for ep in buf) / n,
+            "avg_expert_weight": sum(ep["expert_weight"] for ep in buf) / n,
+            "battery_fail_rate": sum(1 for ep in buf if ep["result"] == "battery") / n,
+            "collision_fail_rate": sum(1 for ep in buf if ep["result"] == "collision") / n,
+            "cps_win": (sum(ep["clean_per_step"] for ep in wins) / w) if w else 0.0,
+            "avg_charge_count_win": (sum(ep["charge_count"] for ep in wins) / w) if w else 0.0,
+            "avg_clean_score_win": (sum(ep["clean_score"] for ep in wins) / w) if w else 0.0,
+            "anchor_win_rate": self._profile_win_rate(buf, "anchor"),
+            "mild_win_rate": self._profile_win_rate(buf, "mild"),
+            "broad_win_rate": self._profile_win_rate(buf, ["broad", "broad_eval"]),
+        }
+
+    @staticmethod
+    def _profile_win_rate(buf, profiles):
+        if isinstance(profiles, str):
+            profiles = [profiles]
+        subset = [ep for ep in buf if ep["profile"] in profiles]
+        if not subset:
+            return -1.0
+        return sum(1 for ep in subset if ep["result"] == "completed") / len(subset)
+
+    def _curriculum_progress_payload(self):
+        """Compute curriculum stage and progress towards advancement."""
+        stage_names = {"warmup": 0, "blend": 1, "robust": 2, "eval_hard": 3}
+        recent = list(self.episode_history)[-Config.CURRICULUM_WINDOW:] if self.episode_history else []
+        if len(recent) < Config.CURRICULUM_WINDOW:
+            return {"curriculum_stage_idx": 0, "curriculum_progress": 0.0}
+
+        m = self._window_metrics(recent)
+        wr_ratio = m["win_rate"] / Config.CURRICULUM_ADVANCE_WIN_RATE
+        cs_ratio = m["avg_clean_score"] / Config.CURRICULUM_ADVANCE_AVG_CS
+        cc_ratio = m["avg_charge_count"] / Config.CURRICULUM_ADVANCE_CHARGE
+        progress = min(wr_ratio, cs_ratio, cc_ratio)
+
+        cur_metrics = {"win_rate": m["win_rate"], "avg_cs": m["avg_clean_score"],
+                       "avg_cc": m["avg_charge_count"]}
+        stage = self.config_sampler._stage_name(self.episode_cnt, cur_metrics)
+
+        return {
+            "curriculum_stage_idx": stage_names.get(stage, 0),
+            "curriculum_progress": round(min(progress, 1.0), 4),
+        }
+
     def _get_curriculum_metrics(self):
         """Compute rolling metrics for dynamic curriculum advancement."""
-        if self.rolling_episode_total < Config.CURRICULUM_WINDOW:
+        if len(self.episode_history) < Config.CURRICULUM_WINDOW:
             return None
-        win_rate = self.failure_counts.get("completed", 0) / max(self.rolling_episode_total, 1)
-        recent = self.score_window[-Config.CURRICULUM_WINDOW:]
-        avg_cs = sum(recent) / len(recent) if recent else 0
-        avg_cc = self.rolling_charge_total / max(self.rolling_episode_total, 1)
-        return {"win_rate": win_rate, "avg_cs": avg_cs, "avg_cc": avg_cc}
+        recent = list(self.episode_history)[-Config.CURRICULUM_WINDOW:]
+        m = self._window_metrics(recent)
+        return {"win_rate": m["win_rate"], "avg_cs": m["avg_clean_score"],
+                "avg_cc": m["avg_charge_count"]}
 
     def run_episodes(self):
         while True:
@@ -508,7 +552,7 @@ class EpisodeRunner:
                     window_payload = {
                         "record_type": "workflow_window",
                         "episode_cnt": self.episode_cnt,
-                        "rolling_episode_total": self.rolling_episode_total,
+                        "rolling_episode_total": len(self.episode_history),
                     }
                     for group_name, group_metrics in training_metrics.items():
                         if not isinstance(group_metrics, dict):
@@ -739,16 +783,19 @@ class EpisodeRunner:
         charge_efficiency = clean_score / max(charge_count, 1.0)
         clean_per_step = clean_score / max(finished_steps, 1.0)
 
-        self.failure_counts.setdefault(fail_reason, 0)
-        self.failure_counts[fail_reason] += 1
-        self.rolling_episode_total += 1
-        self.rolling_charge_total += charge_count
-        self.rolling_cleaned_total += clean_score
-        self.rolling_finished_steps += finished_steps
-        self.rolling_remaining_charge_total += remaining_charge
-        self.rolling_invalid_move_rate_total += invalid_move_rate
-        self.rolling_charge_efficiency_total += charge_efficiency
-        self.rolling_clean_per_step_total += clean_per_step
+        self.episode_history.append({
+            "result": fail_reason,
+            "clean_score": clean_score,
+            "finished_steps": finished_steps,
+            "charge_count": charge_count,
+            "remaining_charge": remaining_charge,
+            "invalid_move_rate": invalid_move_rate,
+            "charge_efficiency": charge_efficiency,
+            "clean_per_step": clean_per_step,
+            "expert_weight": getattr(self.agent, '_last_expert_weight', 0.0),
+            "profile": sampled_meta['profile'],
+            "total_reward": total_reward + final_reward,
+        })
 
         map_id = extra_info.get("map_id") or extra_info.get("map_code") or "?"
         actual_robot_count = int(env_info.get("npc_count", sampled_env_conf.get("robot_count", 1)))
@@ -763,9 +810,6 @@ class EpisodeRunner:
             f"map:{map_id} chargers:{actual_charger_count} robots:{actual_robot_count}"
         )
 
-        self.score_window.append(clean_score)
-        if len(self.score_window) > 30:
-            self.score_window.pop(0)
         self.is_new_best = False
 
         # Log curriculum metrics periodically
@@ -799,11 +843,12 @@ class EpisodeRunner:
                     f"variance:{variance:.1f} min_avg:{min_avg:.1f} spread:{spread:.1f}"
                 )
 
-        if len(self.score_window) >= 20:
-            rolling_avg = sum(self.score_window) / len(self.score_window)
+        scores = [ep["clean_score"] for ep in self.episode_history]
+        if len(scores) >= 20:
+            rolling_avg = sum(scores) / len(scores)
             robust_score = (
                 rolling_avg
-                + 3.0 * _percentile(self.score_window, 0.10)
+                + 3.0 * _percentile(scores, 0.10)
                 - 8.0 * invalid_move_rate
                 - 20.0 * (1.0 if fail_reason == "battery" else 0.0)
                 - 30.0 * (1.0 if fail_reason == "collision" else 0.0)
@@ -873,41 +918,32 @@ class EpisodeRunner:
         return final_reward
 
     def _build_monitor_payload(self, reward):
-        avg_episode_steps = self.rolling_finished_steps / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        avg_charge_count = self.rolling_charge_total / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        avg_cleaned_cells = self.rolling_cleaned_total / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        avg_remaining_charge = (
-            self.rolling_remaining_charge_total / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        )
-        avg_invalid_move_rate = (
-            self.rolling_invalid_move_rate_total / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        )
-        avg_charge_efficiency = (
-            self.rolling_charge_efficiency_total / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        )
-        avg_clean_per_step = (
-            self.rolling_clean_per_step_total / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        )
-        battery_fail_rate = self.failure_counts["battery"] / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        collision_fail_rate = (
-            self.failure_counts["collision"] / self.rolling_episode_total if self.rolling_episode_total else 0.0
-        )
-        completed_rate = self.failure_counts["completed"] / self.rolling_episode_total if self.rolling_episode_total else 0.0
-
-        return {
+        m = self._window_metrics()
+        if not m:
+            return {"reward": reward, "episode_cnt": self.episode_cnt}
+        payload = {
             "reward": reward,
             "episode_cnt": self.episode_cnt,
-            "avg_episode_steps": avg_episode_steps,
-            "avg_charge_count": avg_charge_count,
-            "avg_cleaned_cells": avg_cleaned_cells,
-            "avg_remaining_charge": avg_remaining_charge,
-            "avg_invalid_move_rate": round(avg_invalid_move_rate, 4),
-            "avg_charge_efficiency": round(avg_charge_efficiency, 4),
-            "avg_clean_per_step": round(avg_clean_per_step, 4),
-            "battery_fail_rate": round(battery_fail_rate, 4),
-            "collision_fail_rate": round(collision_fail_rate, 4),
-            "completed_rate": round(completed_rate, 4),
+            "avg_episode_steps": round(m["avg_finished_steps"], 2),
+            "avg_charge_count": round(m["avg_charge_count"], 2),
+            "avg_cleaned_cells": round(m["avg_clean_score"], 2),
+            "avg_remaining_charge": round(m["avg_remaining_charge"], 2),
+            "avg_invalid_move_rate": round(m["avg_invalid_move_rate"], 4),
+            "avg_charge_efficiency": round(m["avg_charge_efficiency"], 4),
+            "avg_clean_per_step": round(m["avg_clean_per_step"], 4),
+            "battery_fail_rate": round(m["battery_fail_rate"], 4),
+            "collision_fail_rate": round(m["collision_fail_rate"], 4),
+            "completed_rate": round(m["win_rate"], 4),
+            "cps_win": round(m["cps_win"], 4),
+            "avg_charge_count_win": round(m["avg_charge_count_win"], 2),
+            "avg_clean_score_win": round(m["avg_clean_score_win"], 2),
+            "avg_expert_weight": round(m["avg_expert_weight"], 2),
+            "anchor_win_rate": round(m["anchor_win_rate"], 4) if m["anchor_win_rate"] >= 0 else -1,
+            "mild_win_rate": round(m["mild_win_rate"], 4) if m["mild_win_rate"] >= 0 else -1,
+            "broad_win_rate": round(m["broad_win_rate"], 4) if m["broad_win_rate"] >= 0 else -1,
         }
+        payload.update(self._curriculum_progress_payload())
+        return payload
 
 
 def _percentile(values, q):
