@@ -1,109 +1,128 @@
 ﻿import os
 import subprocess
 import requests
-import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 def run_command(cmd):
-    # Use encoding utf-8 explicitly to avoid garbled logs on diverse runners
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8')
     return result.stdout.strip()
 
 def get_recent_commits(branch):
     if branch and branch.lower() != 'all':
-        print(f"Fetching commits for branch: {branch}")
         cmd = f"git log origin/{branch} --since='24 hours ago' --format='%s (by %an on %D) [%h]' --name-status"
     else:
-        print("Fetching commits for ALL branches...")
         cmd = "git log --all --since='24 hours ago' --format='%s (by %an on %D) [%h]' --name-status"
-    
-    latest_commits = run_command(cmd)
-    return latest_commits
+    return run_command(cmd)
 
-def call_openclaw_llm(commits_data, branch):
+def get_updated_branches():
+    cmd = "git branch -r | grep -v '\\->'"
+    branches = []
+    output = run_command(cmd)
+    for line in output.split('\n'):
+        line = line.strip()
+        if line.startswith('origin/'):
+            branch_name = line.replace('origin/', '', 1)
+            if branch_name.lower() != 'head':
+                branches.append(branch_name)
+    return branches
+
+def call_openclaw_llm(prompt):
     api_key = os.environ.get("OPENCLAW_API_KEY", "")
     if not api_key:
-        print("Warning: OPENCLAW_API_KEY is empty. Outputting raw git logs only.")
+        print("Warning: OPENCLAW_API_KEY is empty.")
         return None
 
     url = "https://ai.gs88.shop/v1/chat/completions"
-    
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-
-    branch_text = f"[{branch}] branch" if branch and branch.lower() != 'all' else "[All branches]"
-    prompt = f"""
-请作为一位资深的研发技术主管，对{branch_text}过去 24 小时内的代码提交记录进行深度审查与汇报。
-
-【强制格式和内容要求】：
-无论是针对单个分支还是所有分支的变更，请**严格按照每个涉及到的分支进行分类汇报**。对于每个出现修改的分支，请单独作为一个章节，并包含以下三个部分：
-
-### 📁 分支：[分支名称]
-1. **修改点列举**：结合具体的代码变更内容，将琐碎的提交按照逻辑聚合成大颗粒度的功能模块，条理清晰地列出具体的改动项。
-2. **总结**：用一段话清晰概括该分支在这一时间段内主要解决了什么问题、推进了哪些业务或重构了什么核心模块。
-3. **分析与点评**：评估该分支的开发进展、代码活跃情况以及可能的潜在影响或风险。
-
-*(如果提供了多个分支的记录，请为每个分支重复上述结构即可；如果仅仅是一个特定的分支，则只输出该分支的上述三点内容)*
-
-以下是提取出的原始代码变更数据（提交记录中包含涉及的特定分支名及对应的文件修改，请仔细归纳提取）：
-{commits_data[:10000]}
-"""
-
     payload = {
         "model": "gpt-5.4",
         "messages": [
-            {"role": "system", "content": "你是一个高效、精练、深刻洞察技术变更逻辑的代码审计专家。请返回清晰、干净的纯文本或者 markdown，并且使用规范的中文字符。"},
+            {"role": "system", "content": "你是一个严谨且逻辑清晰的研发代码审计专家，只输出客观技术事实。"},
             {"role": "user", "content": prompt}
         ]
     }
-
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=60)
-        # Attempt to explicitly instruct response decode format to utf8
         response.encoding = 'utf-8'
         response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+        return response.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        print(f"Error analyzing with AI, details: {str(e)}")
+        print(f"AI API Error: {str(e)}")
         return None
 
 def main():
     target_branch = os.environ.get("TARGET_BRANCH", "all").strip() or "all"
-    print(f"Gathering worklogs from the last 24 hours for branch: {target_branch}...")
-    
-    commits = get_recent_commits(target_branch)
-    
-    report_dir = "branch_summaries"
-    os.makedirs(report_dir, exist_ok=True)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    branch_name_for_file = "all_branches" if target_branch.lower() == 'all' else target_branch.replace("/", "_")
-    report_file = os.path.join(report_dir, f"summary_{branch_name_for_file}_{date_str}.md")
-    
-    branch_text = f"【{target_branch}】分支" if target_branch.lower() != 'all' else "【所有分支】"
+    report_dir = os.path.join("branch_summaries", date_str)
+    os.makedirs(report_dir, exist_ok=True)
+    print(f"Directory created: {report_dir}")
 
-    if not commits:
-        content = f"## {branch_text} 在这 24 小时内没有任何代码提交。\n\n大家辛苦了！好好休息！"
-        with open(report_file, "w", encoding="utf-8") as f:
-            f.write(content)
-        print("No commits found.")
-        return
+    branches_to_check = [target_branch] if target_branch.lower() != 'all' else get_updated_branches()
+    
+    # 步骤一：列举出每个有变更的分支的修改点，全部存入对应的日期文件夹
+    has_any_commits = False
+    all_branch_details = []
+
+    for branch in branches_to_check:
+        commits = get_recent_commits(branch)
+        if not commits:
+            continue
+            
+        print(f"Step 1: Extracting changes for branch: {branch}...")
+        has_any_commits = True
         
-    print(f"Found following commits:\n{commits[:500]}...\n")
-    
-    summary = call_openclaw_llm(commits, target_branch)
-    
-    if summary:
-        content = f"# {branch_text} 变更总结 ({date_str})\n\n{summary}"
-    else:
-        content = f"# {branch_text} 原始修改记录 ({date_str})\n\n```text\n{commits}\n```\n\n*(配置有效正确的 OPENCLAW_API_KEY 及 AI url 后获取智能化概括)*"
+        prompt_branch = f"""
+请将以下【{branch}】分支在过去 24 小时内的代码提交记录，整理为一个清晰的 Markdown 列表文档。
+【要求】：只罗列由于代码变更所对应的具体修改点（模块/功能/文件级变动），可以适度聚类，不需要写前言后语，不需要整体总结。
 
-    with open(report_file, "w", encoding="utf-8") as f:
-        f.write(content)
+======
+原始记录:
+{commits[:10000]}
+"""
+        branch_md = call_openclaw_llm(prompt_branch)
+        if not branch_md:
+            branch_md = f"*(AI调用失败，原始记录参考)*\n```text\n{commits}\n```"
+            
+        # 写入每个分支独立的 md 文件
+        safe_branch_name = branch.replace("/", "_")
+        branch_file = os.path.join(report_dir, f"{safe_branch_name}.md")
+        with open(branch_file, "w", encoding="utf-8") as f:
+            f.write(f"### 分支 {branch} 修改事项：\n\n{branch_md}")
+            
+        all_branch_details.append(f"--- 【分支：{branch}】 ---\n{branch_md}")
+
+    if not has_any_commits:
+        print("未检测到 24 小时内的任何代码变更。")
+        no_file = os.path.join(report_dir, "no_updates.md")
+        with open(no_file, "w", encoding="utf-8") as f:
+            f.write(f"在 {date_str} 过去的 24 小时内，仓库中没有代码提交记录。大家辛苦了！")
+        return
+
+    # 步骤二：读取刚刚生成的所有分支 MD 提取详情，进行全局的聚合性工作总结
+    print("Step 2: Generating the overall aggregated summary from individual branches...")
+    combined_docs = "\n\n".join(all_branch_details)
     
-    print("Report generated at:", report_file)
+    prompt_summary = f"""
+以下是今天各个分支的具体代码修改点列举（Markdown格式汇总）：
+{combined_docs[:20000]}
+
+请你作为技术主管，对整个项目（各分支）今天的工作进展写一份概括性技术文档风格的工作总结。
+【要求格式】：
+1. **工作进度概览**：一段话（不超过 50 字），高度概括各分支今天主要产出了什么成果或解决了什么痛点。
+2. **各版块协同分析与点评**：基于所有分支的变动，评估当天的协同开发与代码活跃状况，或者提出一些潜在的关联提醒与影响评估。
+"""
+    final_summary_md = call_openclaw_llm(prompt_summary)
+    if not final_summary_md:
+        final_summary_md = "由于 AI 服务调用错误，本次未生成总览性点评。"
+
+    overall_report = os.path.join(report_dir, "OVERALL_SUMMARY.md")
+    with open(overall_report, "w", encoding="utf-8") as f:
+        f.write(f"# 综合技术工作总结 ({date_str})\n\n{final_summary_md}\n\n## 附件：各分支改动明细（也可查阅同目录下的单独分支文件）\n{combined_docs}")
+        
+    print(f"Process completed successfully. Check {report_dir} directory.")
 
 if __name__ == "__main__":
     main()
