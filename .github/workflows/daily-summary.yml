@@ -37,9 +37,11 @@ jobs:
         run: |
           python .github/scripts/daily_summary.py
 
-      - name: Publish Summary to GitHub Issue
-        uses: peter-evans/create-issue-from-file@v5
-        with:
-          title: "日常分支工作量回顾 - $(date +'%Y-%m-%d')"
-          content-filepath: ./daily_summary_report.md
-          labels: daily-report
+      - name: Commit and push summary to master
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add branch_summaries/
+          git commit -m "docs: add daily branch summary for $(date +'%Y-%m-%d')" || echo "No changes to commit"
+          # Push 确保推送到 master 分支
+          git push origin master

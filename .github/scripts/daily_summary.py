@@ -60,7 +60,10 @@ def main():
     print("Gathering branch worklogs from the last 24 hours...")
     commits = get_recent_commits()
     
-    report_file = "daily_summary_report.md"
+    report_dir = "branch_summaries"
+    os.makedirs(report_dir, exist_ok=True)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    report_file = os.path.join(report_dir, f"summary_{date_str}.md")
     
     if not commits:
         content = "## 过去 24 小时没有任何代码提交。大家辛苦了！好好休息！"
