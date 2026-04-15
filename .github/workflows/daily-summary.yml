@@ -1,14 +1,12 @@
-name: Daily Branch Workload Summary
+﻿name: Daily Branch Workload Summary
 
 on:
-  # 每天 UTC 时间 00:00 执行（北京时间早 8:00），将扫描全部分支
   schedule:
     - cron: '0 0 * * *'
-  # 允许手动触发执行，并且强制选择目标分支（选 all 则为全部分支）
   workflow_dispatch:
     inputs:
       target_branch:
-        description: '选择需要生成总结的分支（输入 all 则扫描所有分支）'
+        description: 'Choose branch to summarize (input "all" for all branches)'
         required: true
         type: string
         default: 'all'
@@ -23,9 +21,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 必须拉取所有历史记录和分支以进行对比
-          # 如果是手动触发并且没填 all，则直接检出目标分支，否则默认（适用于 cron）为当前默认分支全拉取
-          ref: ${{ github.event.inputs.target_branch != 'all' && github.event.inputs.target_branch || '' }}
+          fetch-depth: 0
+          ref: master
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,25 +32,26 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # 如果后续你使用 OpenAI SDK 调用 OpenClaw 等 API，可以在这就安装
           pip install requests
 
       - name: Fetch target branch updates and generate summary
         env:
-          # 在 GitHub 仓库设置 -> Secrets and variables -> Actions 中添加 OPENCLAW_API_KEY
           OPENCLAW_API_KEY: ${{ secrets.OPENCLAW_API_KEY }}
-          # 既要处理 workflow_dispatch 又要处理 schedule 模式
           TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'all' }}
+          PYTHONIOENCODING: utf-8
         run: |
+          git config --local core.quotepath false
           python .github/scripts/daily_summary.py
 
       - name: Commit and push summary to master
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git checkout master || git checkout -b master
           git add branch_summaries/
+          if git diff --staged --quiet; then
+            echo "No changes to commit. Exiting safely."
+            exit 0
+          fi
           BRANCH_NAME="${{ github.event.inputs.target_branch || 'all' }}"
-          git commit -m "docs: add summary for branch ${BRANCH_NAME} on $(date +'%Y-%m-%d')" || echo "No changes to commit"
-          # Push 确保推送到 master 分支
-          git push origin HEAD:refs/heads/master
+          git commit -m "docs: add summary for branch ${BRANCH_NAME} on $(date +'%Y-%m-%d')"
+          git push origin master || { echo "Failed to push"; exit 1; }
