@@ -45,12 +45,17 @@ def call_openclaw_llm(prompt):
         ]
     }
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        # Increase timeout from 60 to 180 to accomodate larger summarizations
+        response = requests.post(url, headers=headers, json=payload, timeout=180)
         response.encoding = 'utf-8'
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print(f"AI API Error: {str(e)}")
+        # Print part of the body if available to help identify token limits API rejections.
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response status: {e.response.status_code}")
+            print(f"Response text: {e.response.text}")
         return None
 
 def main():
@@ -62,7 +67,6 @@ def main():
 
     branches_to_check = [target_branch] if target_branch.lower() != 'all' else get_updated_branches()
     
-    # 步骤一：列举出每个有变更的分支的修改点，全部存入对应的日期文件夹
     has_any_commits = False
     all_branch_details = []
 
@@ -80,13 +84,12 @@ def main():
 
 ======
 原始记录:
-{commits[:10000]}
+{commits[:6000]}
 """
         branch_md = call_openclaw_llm(prompt_branch)
         if not branch_md:
             branch_md = f"*(AI调用失败，原始记录参考)*\n```text\n{commits}\n```"
             
-        # 写入每个分支独立的 md 文件
         safe_branch_name = branch.replace("/", "_")
         branch_file = os.path.join(report_dir, f"{safe_branch_name}.md")
         with open(branch_file, "w", encoding="utf-8") as f:
@@ -101,13 +104,12 @@ def main():
             f.write(f"在 {date_str} 过去的 24 小时内，仓库中没有代码提交记录。大家辛苦了！")
         return
 
-    # 步骤二：读取刚刚生成的所有分支 MD 提取详情，进行全局的聚合性工作总结
     print("Step 2: Generating the overall aggregated summary from individual branches...")
     combined_docs = "\n\n".join(all_branch_details)
     
     prompt_summary = f"""
 以下是今天各个分支的具体代码修改点列举（Markdown格式汇总）：
-{combined_docs[:20000]}
+{combined_docs[:8000]}
 
 请你作为技术主管，对整个项目（各分支）今天的工作进展写一份概括性技术文档风格的工作总结。
 【要求格式】：
