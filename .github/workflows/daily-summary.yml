@@ -1,0 +1,45 @@
+name: Daily Branch Workload Summary
+
+on:
+  schedule:
+    # 每天 UTC 时间 00:00 执行（北京时间早 8:00）
+    - cron: '0 0 * * *'
+  # 允许手动触发执行
+  workflow_dispatch:
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 必须拉取所有历史记录和分支以进行对比
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 如果后续你使用 OpenAI SDK 调用 OpenClaw 等 API，可以在这就安装
+          pip install requests
+
+      - name: Fetch recent branches updates and generate summary
+        env:
+          # 在 GitHub 仓库设置 -> Secrets and variables -> Actions 中添加 OPENCLAW_API_KEY
+          OPENCLAW_API_KEY: ${{ secrets.OPENCLAW_API_KEY }} 
+        run: |
+          python .github/scripts/daily_summary.py
+
+      - name: Publish Summary to GitHub Issue
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "日常分支工作量回顾 - $(date +'%Y-%m-%d')"
+          content-filepath: ./daily_summary_report.md
+          labels: daily-report
