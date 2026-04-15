@@ -11,7 +11,7 @@ Configuration for Robot Vacuum PPO agent.
 class Config:
     # Feature layout
     LOCAL_VIEW_SIZE = 21
-    LOCAL_VIEW_CHANNELS = 3
+    LOCAL_VIEW_CHANNELS = 4  # was 3; 4th channel = trajectory heatmap
     GLOBAL_MEMORY_SIZE = 8
     GLOBAL_MEMORY_CHANNELS = 3
     SCALAR_DIM = 74  # 39 raw + 26 extra (4 NPC×3 + 4 charger×3 - NPC#1 - charger#1 already in raw + 8 dir_dirty) + 9 one-hot
@@ -43,13 +43,29 @@ class Config:
     VF_COEF = 0.5
     # Entropy floor: prevent policy collapse during training
     ENTROPY_FLOOR = 0.5
-    ENTROPY_FLOOR_COEF = 1.0
+    ENTROPY_FLOOR_COEF = 3.0  # was 1.0; stronger push to prevent collapse
 
     LABEL_SIZE_LIST = [ACTION_NUM]
     LEGAL_ACTION_SIZE_LIST = LABEL_SIZE_LIST.copy()
 
     USE_GRAD_CLIP = True
     GRAD_CLIP_RANGE = 0.5
+
+    # A* potential-based reward shaping (Ng et al. 1999)
+    ASTAR_POTENTIAL_ALPHA = 0.25
+    ASTAR_POTENTIAL_BATTERY_THRESHOLD = 0.65
+
+    # Trajectory heatmap
+    TRAJECTORY_LENGTH = 50
+    TRAJECTORY_DECAY = 0.02
+
+    # Expert soft bias range
+    EXPERT_BIAS_MIN = 5.0
+    EXPERT_BIAS_MAX = 15.0
+
+    # Gradient isolation for expert-overridden samples
+    EXPERT_WEIGHT_DIM = 1
+    USE_EXPERT_GRADIENT_ISOLATION = True
 
     # Learner runtime tuning
     LEARNER_CPU_THREADS = 4
@@ -68,9 +84,9 @@ class Config:
     RESUME_LATEST_SYNC_INTERVAL_EPISODES = 20
     RESUME_EPISODE_SNAPSHOT_INTERVAL = 50
     RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS = 10 * 60
-    KEEP_EPISODE_RESUME_SNAPSHOTS = 8
-    KEEP_TIME_RESUME_SNAPSHOTS = 6
-    KEEP_BEST_RESUME_SNAPSHOTS = 5
+    KEEP_EPISODE_RESUME_SNAPSHOTS = 16
+    KEEP_TIME_RESUME_SNAPSHOTS = 12
+    KEEP_BEST_RESUME_SNAPSHOTS = 10
 
     # Resume control: None = train from scratch; filename = resume from that checkpoint
     RESUME_CHECKPOINT = "model.ckpt-resume.pkl"  # resume from best checkpoint (step 47500)

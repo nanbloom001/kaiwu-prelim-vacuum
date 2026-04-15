@@ -57,6 +57,7 @@ class Algorithm:
             reward_sum,
             advantage,
             reward,
+            expert_weight,
         ) = self._unpack_train_batch(list_sample_data)
 
         self.model.set_train_mode()
@@ -75,6 +76,7 @@ class Algorithm:
                 old_value=old_value,
                 reward_sum=reward_sum,
                 advantage=advantage,
+                expert_weight=expert_weight,
             )
 
         self.scaler.scale(total_loss).backward()
@@ -173,6 +175,11 @@ class Algorithm:
         begin += Config.VALUE_NUM
 
         old_prob = batch_tensor[:, begin : begin + Config.ACTION_NUM]
+        begin += Config.ACTION_NUM
+
+        expert_weight = None
+        if Config.USE_EXPERT_GRADIENT_ISOLATION:
+            expert_weight = batch_tensor[:, begin : begin + Config.EXPERT_WEIGHT_DIM]
 
         return (
             obs,
@@ -183,6 +190,7 @@ class Algorithm:
             reward_sum,
             advantage,
             reward,
+            expert_weight,
         )
 
     def _unpack_sample_objects(self, list_sample_data):
@@ -199,6 +207,10 @@ class Algorithm:
         advantage = torch.stack([s.advantage for s in list_sample_data]).to(**to_device)
         reward = torch.stack([s.reward for s in list_sample_data]).to(**to_device)
 
+        expert_weight = None
+        if Config.USE_EXPERT_GRADIENT_ISOLATION:
+            expert_weight = torch.stack([s.expert_weight for s in list_sample_data]).to(**to_device)
+
         return (
             obs,
             legal_action,
@@ -208,12 +220,13 @@ class Algorithm:
             reward_sum,
             advantage,
             reward,
+            expert_weight,
         )
 
-    def _compute_loss(self, logits, value_pred, legal_action, old_action, old_prob, old_value, reward_sum, advantage):
-        """Compute standard PPO loss (policy + value + entropy).
+    def _compute_loss(self, logits, value_pred, legal_action, old_action, old_prob, old_value, reward_sum, advantage, expert_weight=None):
+        """Compute standard PPO loss (policy + value + entropy) with optional gradient isolation.
 
-        计算标准 PPO 三项损失。
+        计算标准 PPO 三项损失（含可选梯度隔离）。
         """
         # Value loss (clipped)
         # 价值损失（裁剪）
@@ -243,6 +256,11 @@ class Algorithm:
 
         adv = advantage.squeeze(-1) if advantage.dim() > 1 else advantage
         adv = adv.unsqueeze(-1)
+
+        # Gradient isolation: downweight policy gradient for expert-overridden samples
+        if expert_weight is not None:
+            isolation = 1.0 / (1.0 + (expert_weight / 10.0))
+            adv = adv * isolation
 
         policy_loss = torch.maximum(
             -ratio * adv,

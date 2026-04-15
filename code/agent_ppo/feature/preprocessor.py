@@ -129,6 +129,16 @@ class Preprocessor:
         self._cps_ema = 0.5
         self._last_action = -1
 
+        # Trajectory heatmap state
+        self._trajectory = []
+        self._astar_dist = float('inf')
+        self._last_astar_dist = float('inf')
+
+        # Trajectory heatmap state
+        self._trajectory = []
+        self._astar_dist = float('inf')
+        self._last_astar_dist = float('inf')
+
     def pb2struct(self, env_obs, last_action):
         observation = env_obs.get("observation") or {}
         frame_state = observation.get("frame_state") or {}
@@ -210,6 +220,11 @@ class Preprocessor:
         else:
             self.cur_visit_count = 0
 
+        # Trajectory tracking for heatmap
+        self._trajectory.append((hx, hz))
+        if len(self._trajectory) > Config.TRAJECTORY_LENGTH:
+            self._trajectory = self._trajectory[-Config.TRAJECTORY_LENGTH:]
+
         self.last_nearest_dirt_dist = self.nearest_dirt_dist
         self.nearest_dirt_dist = self._calc_nearest_dirt_dist()
 
@@ -223,6 +238,10 @@ class Preprocessor:
         self.last_charger_slack = self.charger_slack
         reserve = max(8.0, 0.04 * self.battery_max)
         self.charger_slack = float(self.battery - self.nearest_charger_dist - reserve)
+
+        # A* path distance for potential-based reward shaping
+        self._last_astar_dist = self._astar_dist
+        self._astar_dist = self._compute_astar_charger_dist()
 
         (
             self.nearest_npc_dist,
@@ -299,6 +318,12 @@ class Preprocessor:
                     if prev_dirty > 0.5 and not (gx == hx and gz == hz):
                         self.npc_cleaned[gx, gz] = 1.0
         return new_cells
+
+    def _compute_astar_charger_dist(self):
+        """A* path distance to nearest charger, with Chebyshev fallback."""
+        self.expert.update_chargers(self)
+        path, dist, _ = self.expert._plan_to_charger_cached(self)
+        return dist if path else self.nearest_charger_dist
 
     def _calc_nearest_dirt_dist(self):
         dirt_coords = np.argwhere(self._view_map == 2)
@@ -411,7 +436,19 @@ class Preprocessor:
         obstacle = (self._view_map == 0).astype(np.float32)
         cleaned = (self._view_map == 1).astype(np.float32)
         dirt = (self._view_map == 2).astype(np.float32)
-        return np.stack([obstacle, cleaned, dirt], axis=0).reshape(-1)
+
+        # Trajectory heatmap: current pos = 1.0, decay by TRAJECTORY_DECAY per step age
+        heatmap = np.zeros((self.VIEW_SIZE, self.VIEW_SIZE), dtype=np.float32)
+        hx, hz = self.cur_pos
+        half = self.VIEW_HALF
+        for age, (tx, tz) in enumerate(reversed(self._trajectory)):
+            col = tx - (hx - half)
+            row = tz - (hz - half)
+            if 0 <= row < self.VIEW_SIZE and 0 <= col < self.VIEW_SIZE:
+                val = max(0.0, 1.0 - age * Config.TRAJECTORY_DECAY)
+                heatmap[int(row), int(col)] = max(heatmap[int(row), int(col)], val)
+
+        return np.stack([obstacle, cleaned, dirt, heatmap], axis=0).reshape(-1)
 
     def _get_global_memory_feature(self):
         explored = self._pool_global_map(self.explored_map)
@@ -706,6 +743,13 @@ class Preprocessor:
                 # Low battery and tight margin - gentle warning
                 urgency_penalty = -0.3
 
+        # A* potential-based reward shaping (Ng et al. 1999)
+        astar_potential_reward = 0.0
+        battery_ratio = self.battery / max(self.battery_max, 1)
+        if battery_ratio < Config.ASTAR_POTENTIAL_BATTERY_THRESHOLD and self._last_astar_dist < float('inf'):
+            delta_dist = self._last_astar_dist - self._astar_dist
+            astar_potential_reward = Config.ASTAR_POTENTIAL_ALPHA * delta_dist
+
         reward = (
             cleaning_reward
             + streak_bonus
@@ -723,6 +767,7 @@ class Preprocessor:
             + dirty_approach_reward
             + efficiency_reward
             + urgency_penalty
+            + astar_potential_reward
         )
         components = {
             "cleaning": cleaning_reward,
@@ -740,5 +785,6 @@ class Preprocessor:
             "dirty_approach": dirty_approach_reward,
             "efficiency": efficiency_reward,
             "urgency": urgency_penalty,
+            "astar_potential": astar_potential_reward,
         }
         return float(np.clip(reward, -5.0, 5.0)), components

@@ -33,16 +33,17 @@ ActData = create_cls(
 # 训练样本数据：字段值为 int 时框架自动按维度处理
 SampleData = create_cls(
     "SampleData",
-    obs=Config.DIM_OF_OBSERVATION,  # 69D feature vector / 特征向量
-    legal_action=Config.ACTION_NUM,  # 8D legal action mask / 合法动作掩码
-    act=1,  # action index / 执行的动作
-    reward=Config.VALUE_NUM,  # 1D reward / 奖励
+    obs=Config.DIM_OF_OBSERVATION,  # feature vector
+    legal_action=Config.ACTION_NUM,  # 8D legal action mask
+    act=1,  # action index
+    reward=Config.VALUE_NUM,  # 1D reward
     reward_sum=Config.VALUE_NUM,  # GAE td-lambda return
     done=1,
-    value=Config.VALUE_NUM,  # 1D value estimate / 价值估计
+    value=Config.VALUE_NUM,  # 1D value estimate
     next_value=Config.VALUE_NUM,
-    advantage=Config.VALUE_NUM,  # 1D GAE advantage / GAE 优势
-    prob=Config.ACTION_NUM,  # 8D action probabilities / 动作概率
+    advantage=Config.VALUE_NUM,  # 1D GAE advantage
+    prob=Config.ACTION_NUM,  # 8D action probabilities
+    expert_weight=Config.EXPERT_WEIGHT_DIM,  # gradient isolation weight
 )
 
 

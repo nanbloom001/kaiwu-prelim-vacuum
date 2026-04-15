@@ -15,6 +15,8 @@ from __future__ import annotations
 import heapq
 import numpy as np
 
+from agent_ppo.conf.conf import Config
+
 
 class ExpertPolicy:
     GRID = 128
@@ -276,7 +278,7 @@ class ExpertPolicy:
                 if slack <= 3 or (prep.battery / max(prep.battery_max, 1)) <= 0.10:
                     bias[expert_action] = 100.0     # Emergency: near-equivalent to hard override
                 else:
-                    bias[expert_action] = 3.0 + 5.0 * urgency  # Soft bias [3.0, 8.0]
+                    bias[expert_action] = Config.EXPERT_BIAS_MIN + (Config.EXPERT_BIAS_MAX - Config.EXPERT_BIAS_MIN) * urgency
 
         # NPC avoidance bias: penalize moving toward nearby NPCs
         hx, hz = prep.cur_pos

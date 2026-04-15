@@ -452,7 +452,7 @@ class ModelSignerThread:
             _glob.glob(os.path.join(self._output_dir, '*.zip')),
             key=os.path.getmtime,
         )
-        for old_zip in zips[:-50]:
+        for old_zip in zips[:-100]:
             old_json = old_zip + '.json'
             try:
                 os.remove(old_zip)

@@ -290,6 +290,14 @@ class Agent(BaseAgent):
                 if os.path.isfile(_resume_path):
                     try:
                         state_dict = torch.load(_resume_path, map_location=self.device)
+                        # Migrate checkpoint: expand conv1 from 3ch to 4ch (trajectory heatmap)
+                        if 'local_encoder.0.weight' in state_dict:
+                            w = state_dict['local_encoder.0.weight']
+                            if w.shape[1] == 3 and Config.LOCAL_VIEW_CHANNELS == 4:
+                                new_w = torch.zeros(w.shape[0], 4, w.shape[2], w.shape[3])
+                                new_w[:, :3, :, :] = w
+                                new_w[:, 3, :, :] = w.mean(dim=1)
+                                state_dict['local_encoder.0.weight'] = new_w
                         self.model.load_state_dict(state_dict)
                         import sys
                         print(f"[RESUME] Loaded from {_resume_path}", file=sys.stderr, flush=True)
@@ -363,6 +371,7 @@ class Agent(BaseAgent):
 
         logits, value = self._run_model(feature)
         expert = self.preprocessor.expert
+        self._last_expert_weight = 0.0  # default: no expert bias
 
         # Layer 1: NPC safety filter — block moves toward nearby NPCs (first!)
         filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
@@ -388,6 +397,7 @@ class Agent(BaseAgent):
             expert_bias = expert.get_logit_bias(
                 self.preprocessor, filtered_legal, last_action=self.last_action
             )
+            self._last_expert_weight = float(max(0.0, np.max(expert_bias)))
 
         # Layer 2: Anti-stuck — random legal action if stuck too long
         # Skip anti-stuck during expert return_mode (Expert handles stuck via blocked cells + A*)

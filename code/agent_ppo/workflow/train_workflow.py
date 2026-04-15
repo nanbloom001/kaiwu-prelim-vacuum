@@ -595,6 +595,7 @@ class EpisodeRunner:
                         next_value=np.zeros(Config.VALUE_NUM, dtype=np.float32),
                         advantage=np.zeros(Config.VALUE_NUM, dtype=np.float32),
                         prob=np.array(act_data.prob, dtype=np.float32),
+                        expert_weight=np.array([getattr(self.agent, '_last_expert_weight', 0.0)], dtype=np.float32),
                     )
                 )
 
