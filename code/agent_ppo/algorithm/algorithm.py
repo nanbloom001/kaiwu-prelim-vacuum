@@ -267,13 +267,15 @@ class Algorithm:
             -ratio.clamp(1 - self.clip_param, 1 + self.clip_param) * adv,
         ).mean()
 
-        # Total loss with adaptive entropy floor
-        # 总损失（含自适应 entropy 下限保护）
+        # Proportional entropy floor: scale bonus relative to value_loss magnitude
+        # 比例式 entropy 下限保护：bonus 与 value_loss 成比例，不受 loss 量级影响
         entropy_val = entropy_loss.item()
         effective_beta = self.var_beta
         if entropy_val < Config.ENTROPY_FLOOR:
             floor_gap = Config.ENTROPY_FLOOR - entropy_val
-            effective_beta = self.var_beta + Config.ENTROPY_FLOOR_COEF * floor_gap
+            reference_scale = max(abs(value_loss.item()), 1.0)
+            target_entropy_bonus = Config.ENTROPY_FLOOR_COEF * reference_scale * floor_gap
+            effective_beta = max(self.var_beta, target_entropy_bonus / max(entropy_val, 0.01))
 
         total_loss = self.vf_coef * value_loss + policy_loss - effective_beta * entropy_loss
 

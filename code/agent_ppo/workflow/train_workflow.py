@@ -134,8 +134,8 @@ class EnvConfigSampler:
         self.base_battery_max = int(self.base_env_conf.get("battery_max", 200))
         self.rng = np.random.default_rng(seed=20260409)
 
-    def sample(self, episode_idx):
-        stage = self._stage_name(episode_idx)
+    def sample(self, episode_idx, metrics=None):
+        stage = self._stage_name(episode_idx, metrics)
         profile = self._pick_profile(stage)
         env_conf = deepcopy(self.base_env_conf)
 
@@ -158,12 +158,39 @@ class EnvConfigSampler:
         }
         return sampled_usr_conf, meta
 
-    def _stage_name(self, episode_idx):
+    def _stage_name(self, episode_idx, metrics=None):
+        """Dynamic curriculum: metric-driven advancement, episode count fallback."""
+        if metrics is None:
+            if episode_idx <= 40:
+                return "warmup"
+            if episode_idx <= 200:
+                return "blend"
+            if episode_idx <= 400:
+                return "robust"
+            return "eval_hard"
+
+        win_rate = metrics.get("win_rate", 0)
+        avg_cs = metrics.get("avg_cs", 0)
+        avg_cc = metrics.get("avg_cc", 0)
+
+        can_advance = (
+            win_rate >= Config.CURRICULUM_ADVANCE_WIN_RATE
+            and avg_cs >= Config.CURRICULUM_ADVANCE_AVG_CS
+            and avg_cc >= Config.CURRICULUM_ADVANCE_CHARGE
+        )
+        must_hold = win_rate < Config.CURRICULUM_HOLD_WIN_RATE
+
         if episode_idx <= 40:
             return "warmup"
         if episode_idx <= 200:
+            if can_advance:
+                return "robust"
             return "blend"
         if episode_idx <= 400:
+            if must_hold:
+                return "blend"
+            if can_advance:
+                return "eval_hard"
             return "robust"
         return "eval_hard"
 
@@ -460,6 +487,16 @@ class EpisodeRunner:
             self._save_resume_artifacts("time", self.last_clean_score, with_named_snapshot=True)
             self.last_time_snapshot_at = now
 
+    def _get_curriculum_metrics(self):
+        """Compute rolling metrics for dynamic curriculum advancement."""
+        if self.rolling_episode_total < Config.CURRICULUM_WINDOW:
+            return None
+        win_rate = self.failure_counts.get("completed", 0) / max(self.rolling_episode_total, 1)
+        recent = self.score_window[-Config.CURRICULUM_WINDOW:]
+        avg_cs = sum(recent) / len(recent) if recent else 0
+        avg_cc = self.rolling_charge_total / max(self.rolling_episode_total, 1)
+        return {"win_rate": win_rate, "avg_cs": avg_cs, "avg_cc": avg_cc}
+
     def run_episodes(self):
         while True:
             now = time.time()
@@ -488,7 +525,10 @@ class EpisodeRunner:
                             window_payload[f"agent_{key}"] = value
                         self.last_perf_stat_time = now
 
-            sampled_usr_conf, sampled_meta = self.config_sampler.sample(self.episode_cnt + 1)
+            curriculum_metrics = self._get_curriculum_metrics()
+            sampled_usr_conf, sampled_meta = self.config_sampler.sample(
+                self.episode_cnt + 1, metrics=curriculum_metrics
+            )
             sampled_env_conf = deepcopy(sampled_meta["env_conf"])
             env_obs = self.env.reset(sampled_usr_conf)
             if handle_disaster_recovery(env_obs, self.logger):
@@ -726,6 +766,15 @@ class EpisodeRunner:
         if len(self.score_window) > 30:
             self.score_window.pop(0)
         self.is_new_best = False
+
+        # Log curriculum metrics periodically
+        cur_metrics = self._get_curriculum_metrics()
+        if cur_metrics is not None and self.episode_cnt % 10 == 0:
+            self.logger.info(
+                f"[CURRICULUM] ep:{self.episode_cnt} stage:{sampled_meta['stage']} "
+                f"win_rate:{cur_metrics['win_rate']:.2f} "
+                f"avg_cs:{cur_metrics['avg_cs']:.0f} avg_cc:{cur_metrics['avg_cc']:.1f}"
+            )
 
         # Per-map score tracking for generalization monitoring
         if map_id != "?":

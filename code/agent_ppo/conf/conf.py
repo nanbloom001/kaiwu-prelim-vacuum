@@ -41,9 +41,10 @@ class Config:
     BETA_START = 0.012
     CLIP_PARAM = 0.15
     VF_COEF = 0.5
-    # Entropy floor: prevent policy collapse during training
-    ENTROPY_FLOOR = 0.5
-    ENTROPY_FLOOR_COEF = 3.0  # was 1.0; stronger push to prevent collapse
+    # Entropy floor: proportional scaling to prevent policy collapse
+    # When entropy < ENTROPY_FLOOR, bonus scales as COEF * value_loss * gap
+    ENTROPY_FLOOR = 0.15  # trigger protection earlier (was 0.5)
+    ENTROPY_FLOOR_COEF = 0.05  # proportional coef: bonus = 5% * value_loss * gap (was 3.0 absolute)
 
     LABEL_SIZE_LIST = [ACTION_NUM]
     LEGAL_ACTION_SIZE_LIST = LABEL_SIZE_LIST.copy()
@@ -79,6 +80,13 @@ class Config:
     AGENT_LOAD_MODEL_CACHE = True
     PERF_STAT_WINDOW_SECONDS = 60
 
+    # Dynamic curriculum advancement
+    CURRICULUM_WINDOW = 20           # rolling window for curriculum metrics
+    CURRICULUM_ADVANCE_WIN_RATE = 0.90  # advance: WinRate >= 90%
+    CURRICULUM_ADVANCE_AVG_CS = 850     # advance: avg CleanScore >= 850
+    CURRICULUM_ADVANCE_CHARGE = 3.0     # advance: avg ChargeCount >= 3.0
+    CURRICULUM_HOLD_WIN_RATE = 0.70     # hold stage if WinRate < 70%
+
     # Training snapshot / resume strategy
     SAVE_MODEL_INTERVAL_EPISODES = 50
     RESUME_LATEST_SYNC_INTERVAL_EPISODES = 20
@@ -89,4 +97,4 @@ class Config:
     KEEP_BEST_RESUME_SNAPSHOTS = 10
 
     # Resume control: None = train from scratch; filename = resume from that checkpoint
-    RESUME_CHECKPOINT = "model.ckpt-resume.pkl"  # resume from best checkpoint (step 47500)
+    RESUME_CHECKPOINT = "saved_models/v52-step10000/model.ckpt-resume.pkl"  # v52 best: step 10000, entropy=0.15, CS=915
