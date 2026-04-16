@@ -39,9 +39,9 @@ class ExpertPolicy:
 
     # Reliability thresholds for teacher signals
     RELIABLE_NPC_DIST = 4
-    RELIABLE_SLACK_BUFFER = 6.0
-    RELIABLE_RETURN_RATIO = 0.35
-    RELIABLE_PREPARE_RETURN_RATIO = 0.50
+    RELIABLE_SLACK_BUFFER = float(getattr(Config, "EXPERT_RELIABLE_SLACK_BUFFER", 12.0))
+    RELIABLE_RETURN_RATIO = float(getattr(Config, "EXPERT_RELIABLE_RETURN_RATIO", 0.45))
+    RELIABLE_PREPARE_RETURN_RATIO = float(getattr(Config, "EXPERT_RELIABLE_PREPARE_RETURN_RATIO", 0.65))
 
     # Blocked cell memory
     BLOCKED_TTL = 8
@@ -173,6 +173,9 @@ class ExpertPolicy:
         margin = self._charge_margin(charger_path)
         slack = self._estimate_slack(prep, charger_dist)
         min_npc_dist = self._min_npc_dist(prep)
+        unknown_path_ratio = self._unknown_path_ratio(prep, charger_path)
+        target_gap = self._target_gap(prep, charger_target, charger_dist)
+        target_stable = self._target_stable(prep, charger_target)
         suggested_action = None
 
         if charger_path and len(charger_path) >= 2:
@@ -197,6 +200,9 @@ class ExpertPolicy:
             charger_dist=charger_dist,
             slack=slack,
             min_npc_dist=min_npc_dist,
+            unknown_path_ratio=unknown_path_ratio,
+            target_gap=target_gap,
+            target_stable=target_stable,
         )
         mode_reliable = self._is_mode_signal_reliable(
             battery_ratio=battery_ratio,
@@ -204,6 +210,7 @@ class ExpertPolicy:
             min_npc_dist=min_npc_dist,
             target_reliable=target_reliable,
             on_charger=on_charger,
+            reachable=reachable,
         )
 
         return {
@@ -216,6 +223,9 @@ class ExpertPolicy:
             "margin": float(margin),
             "slack": float(slack),
             "min_npc_dist": float(min_npc_dist),
+            "unknown_path_ratio": float(unknown_path_ratio),
+            "target_gap": float(target_gap),
+            "target_stable": bool(target_stable),
             "suggested_action": suggested_action,
             "suggested_action_legal": legal_and_safe,
             "reachable": reachable,
@@ -231,9 +241,9 @@ class ExpertPolicy:
         signal = self.get_charger_signal(prep, legal_action, last_action)
         return bool(signal["mode_reliable"])
 
-    def get_teacher_guidance(self, prep, legal_action=None, last_action=-1):
+    def get_teacher_guidance(self, prep, legal_action=None, last_action=-1, signal=None):
         """Return optional teacher guidance payload for future mode/target supervision."""
-        signal = self.get_charger_signal(prep, legal_action, last_action)
+        signal = signal or self.get_charger_signal(prep, legal_action, last_action)
         if not signal["target_reliable"] and not signal["mode_reliable"]:
             return None
 
@@ -256,7 +266,8 @@ class ExpertPolicy:
             "mode": mode,
             "target": signal["charger_target"],
             "action": signal["suggested_action"],
-            "teacher_mask": float(signal["target_reliable"] or signal["mode_reliable"]),
+            "mode_teacher_mask": float(signal["mode_reliable"]),
+            "target_teacher_mask": float(signal["target_reliable"]),
             "signal": signal,
         }
 
@@ -693,6 +704,9 @@ class ExpertPolicy:
         charger_dist,
         slack,
         min_npc_dist,
+        unknown_path_ratio,
+        target_gap,
+        target_stable,
     ):
         if not reachable or charger_target is None or not legal_and_safe:
             return False
@@ -702,15 +716,60 @@ class ExpertPolicy:
             return False
         if slack <= -self.RELIABLE_SLACK_BUFFER:
             return False
+        if unknown_path_ratio > float(getattr(Config, "TEACHER_UNKNOWN_PATH_RATIO_MAX", 0.20)):
+            return False
+        if not target_stable:
+            return False
+        if target_gap < float(getattr(Config, "TEACHER_TARGET_MARGIN_MIN", 3.0)):
+            return False
         return True
 
-    def _is_mode_signal_reliable(self, battery_ratio, slack, min_npc_dist, target_reliable, on_charger):
+    def _is_mode_signal_reliable(self, battery_ratio, slack, min_npc_dist, target_reliable, on_charger, reachable):
         if min_npc_dist <= 2:
             return True
         if on_charger and battery_ratio < self.RELIABLE_RETURN_RATIO:
             return True
-        if battery_ratio <= self.RELIABLE_PREPARE_RETURN_RATIO:
-            return target_reliable
-        if slack <= self.RELIABLE_SLACK_BUFFER:
-            return target_reliable
+        if battery_ratio <= self.RELIABLE_RETURN_RATIO or slack <= 0.0:
+            return bool(reachable)
+        if battery_ratio <= self.RELIABLE_PREPARE_RETURN_RATIO or slack <= self.RELIABLE_SLACK_BUFFER:
+            return bool(reachable or target_reliable)
         return False
+
+    def _unknown_path_ratio(self, prep, path):
+        if not path or len(path) <= 1:
+            return 0.0
+        unknown = 0
+        total = 0
+        for x, z in path[1:]:
+            total += 1
+            if not (0 <= x < self.GRID and 0 <= z < self.GRID):
+                unknown += 1
+                continue
+            if float(prep.explored_map[x, z]) < 0.5:
+                unknown += 1
+        if total <= 0:
+            return 0.0
+        return float(unknown) / float(total)
+
+    def _target_gap(self, prep, charger_target, charger_dist):
+        if charger_target is None:
+            return 0.0
+        candidates = []
+        for _, dx, dz, cx, cz, _, _ in getattr(prep, "all_charger_info", []):
+            cheb = float(max(abs(dx), abs(dz)))
+            if (cx, cz) == tuple(charger_target) and np.isfinite(charger_dist):
+                candidates.append(float(charger_dist))
+            else:
+                candidates.append(cheb)
+        candidates = sorted(candidates)
+        if len(candidates) < 2:
+            return float("inf")
+        return float(candidates[1] - candidates[0])
+
+    def _target_stable(self, prep, charger_target):
+        if charger_target is None:
+            return False
+        checker = getattr(prep, "is_teacher_target_stable", None)
+        if checker is None:
+            return True
+        return bool(checker(tuple(charger_target)))

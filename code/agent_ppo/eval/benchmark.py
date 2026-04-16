@@ -274,6 +274,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def,
 
         # Write to episode JSONL file
         ep_log_file.write(json.dumps(step_rec, ensure_ascii=False) + "\n")
+        step_records.append(step_rec)
 
         # Log milestone steps (every 100 steps, or near end)
         if step % 100 == 0 or done:

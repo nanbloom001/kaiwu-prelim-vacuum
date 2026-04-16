@@ -2,6 +2,8 @@
 
 ## 2026-04-16
 
+~19:28 | 手动归档当前 LTSPPO 最优 resume 候选点。基于统一口径手动 benchmark（`run_benchmark_parallel.sh --workers 4 --envs-per-worker 10`）对多个候选 checkpoint 复核后，确认 `code/session_best/20260416-183426/best-ep000072-score00832.pkl` 是当前最值得保留的 LTSPPO 节点，已复制到 `code/saved_models/v6-ltsppo-ep72/model.ckpt-resume.pkl`，并新增 `code/saved_models/v6-ltsppo-ep72/README.txt` 记录来源、评估结果、对比结论和当前局限。该点固定 benchmark 结果为 `WR 30.0% / Avg CS 460.0 / 12/40`，优于同批次 `session_best/best_model.pkl` 和 learner 常规 `model.ckpt-10000/19000/24000.pkl`，适合作为后续 LTSPPO 继续训练的手动 resume 基线。
+
 ~17:50 | 补齐 LTSPPO 诊断指标接线。训练侧在 `train_workflow.py` 中为每个 episode 新增并汇总 `late_return_rate`、`target_switch_rate`、`mode_usage_{clean,prepare_return,return,evade}`；monitor 面板在 `conf/monitor_builder.py` 中补齐对应曲线；benchmark 在 `eval/benchmark.py` 中新增同批指标的 episode / per-round / overall 聚合与摘要打印。完成后再次复核训练栈，learner 已稳定推进到 `global step = 2015`，并持续输出 `policy_loss / value_clean_loss / value_survive_loss / mode_teacher_loss / target_teacher_loss` 日志，说明诊断补丁未打断 LTSPPO 训练链。
 
 ~17:35 | LTSPPO Docker/Kaiwu smoke test 已打通。排障链路分 3 步：1) learner 首轮被 `mem_buffer.append: Sample size 168129 exceeds max_sample_size 100000` 阻塞，已将 recurrent chunk 从 `32/8/24` 缩小到 `16/4/12`；2) 随后 learner 卡在 replay buffer 预热，定位为 `configure_app.toml` 仍沿用旧单步 sample 吞吐参数，已下调为 `replay_buffer_capacity=1024`、`preload_ratio=0.25`、`send_sample_size=512`、`train_batch_size=128`；3) learner 真正进入训练后命中 `AttributeError: 'Tensor' object has no attribute 'obs'`，定位为 Kaiwu 实际向 `algorithm.learn()` 传入的是 tensor / tensor sequence，而非纯 `SampleData` 对象列表，已在 `agent.py` 与 `algorithm.py` 增加 batch 兼容解包层，支持对象列表、平铺 batch tensor、字段张量列表/样本张量序列。最终结果：learner 成功训练到 `train count = 279`、`global step = 279`，训练耗时约 `69.62 ms/step`（`data_fetch ≈ 4.33 ms`, `real_train ≈ 65.27 ms`），并成功保存/推送 `model.ckpt-500.pkl` 与 `kaiwu_checkpoint_robot_vacuum_ppo_500.tar.gz`。这标志 LTSPPO 已通过 “收样 -> chunk -> learner 解包 -> sequence PPO 反向传播 -> 存模/推模” 的端到端验证。详细排查日志见 `sessions/LTSPPO_SMOKETEST_DEBUG_LOG_20260416.md`。
@@ -70,3 +72,20 @@
 16:27 | Expert charging overhaul: state machine with hysteresis + A* actual distance + blocked cell memory (TTL=8) + visit count penalty in A* cost + path caching + dynamic margin. BETA 0.005->0.008. NPC cleaned tracking in preprocessor. (commit 9c1083b)
 
 ~14:00 | Coordinate bug fix (3 functions in preprocessor.py) + predict() layer reorder (NPC->Expert->Anti-stuck->RL) + expert uses model softmax probability + charging rewards 2x + BETA 0.007->0.005. (commit 2715e42)
+## 2026-04-16
+
+- LTSPPO training resumed from `code/saved_models/v6-ltsppo-ep188/model.ckpt-resume.pkl` as the new default `RESUME_CHECKPOINT`.
+- Added fail-closed teacher supervision:
+  - split `teacher_mask` into `mode_teacher_mask` and `target_teacher_mask`
+  - `mode_teacher_loss` / `target_teacher_loss` now use separate masks
+- Fixed return-timing signal mismatch:
+  - `charger_slack` now prefers A* charger distance before fallback to nearest charger distance
+  - return/prepare-return thresholds moved earlier
+- Tightened Expert teacher reliability gating:
+  - unknown-path ratio check
+  - target stability window check
+  - target margin check
+- Reweighted exploration incentives:
+  - new-area reward now decays with explored ratio
+  - frontier reward is reduced/disabled at low battery
+- Fixed benchmark diagnostics bug where step diagnostics were written to JSONL but not appended to in-memory aggregation, causing `late_return_rate` / `target_switch_rate` / `mode_usage_*` to remain zero.

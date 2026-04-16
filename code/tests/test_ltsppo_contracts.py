@@ -71,7 +71,8 @@ def _build_step_records(total_steps):
                 "value_survive": 0.0,
                 "mode_teacher": idx % Config.MODE_NUM,
                 "target_teacher": idx % Config.TARGET_DIM,
-                "teacher_mask": 1.0,
+                "mode_teacher_mask": 1.0,
+                "target_teacher_mask": 0.0 if idx % 3 == 0 else 1.0,
                 "battery_risk_label": float(idx % 2),
                 "collision_risk_label": float((idx + 1) % 2),
                 "fallback_mask": 0.0,
@@ -103,7 +104,8 @@ class LtsppoConfigAndDefinitionContractsTests(unittest.TestCase):
             "prob": Config.ACTION_NUM * Config.SEQ_CHUNK_LEN,
             "mode_teacher": Config.SEQ_CHUNK_LEN,
             "target_teacher": Config.SEQ_CHUNK_LEN,
-            "teacher_mask": Config.SEQ_CHUNK_LEN,
+            "mode_teacher_mask": Config.SEQ_CHUNK_LEN,
+            "target_teacher_mask": Config.SEQ_CHUNK_LEN,
             "battery_risk_label": Config.SEQ_CHUNK_LEN,
             "collision_risk_label": Config.SEQ_CHUNK_LEN,
             "fallback_mask": Config.SEQ_CHUNK_LEN,
@@ -156,8 +158,11 @@ class LtsppoSampleProcessChunkingTests(unittest.TestCase):
 
         self.assertEqual(float(second.done[expected_second_real_len - 1]), 1.0)
         self.assertTrue(np.allclose(second.done[expected_second_real_len:], 1.0))
-        self.assertTrue(np.allclose(second.teacher_mask[:expected_second_real_len], 1.0))
-        self.assertTrue(np.allclose(second.teacher_mask[expected_second_real_len:], 0.0))
+        self.assertTrue(np.allclose(second.mode_teacher_mask[:expected_second_real_len], 1.0))
+        self.assertTrue(np.allclose(second.mode_teacher_mask[expected_second_real_len:], 0.0))
+        self.assertAlmostEqual(float(second.target_teacher_mask[0]), 0.0)
+        self.assertTrue(np.allclose(second.target_teacher_mask[1:expected_second_real_len], 1.0))
+        self.assertTrue(np.allclose(second.target_teacher_mask[expected_second_real_len:], 0.0))
         self.assertTrue(np.allclose(second.fallback_mask[:expected_second_real_len], 0.0))
         self.assertTrue(np.allclose(second.fallback_mask[expected_second_real_len:], 1.0))
 

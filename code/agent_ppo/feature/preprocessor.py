@@ -147,6 +147,11 @@ class Preprocessor:
         self._trajectory = []
         self._astar_dist = float("inf")
         self._last_astar_dist = float("inf")
+        self._guidance_cache_step = -1
+        self._guidance_cache = None
+        self._teacher_cache_step = -1
+        self._teacher_cache = None
+        self._teacher_target_history = deque(maxlen=Config.TEACHER_TARGET_STABILITY_WINDOW)
 
     def pb2struct(self, env_obs, last_action):
         observation = env_obs.get("observation") or {}
@@ -172,6 +177,10 @@ class Preprocessor:
 
         self.last_score = self.score
         self.score = int(hero.get("score", env_info.get("clean_score", self.score)))
+        self._guidance_cache_step = -1
+        self._guidance_cache = None
+        self._teacher_cache_step = -1
+        self._teacher_cache = None
 
         self.last_dirt_cleaned = self.dirt_cleaned
         self.dirt_cleaned = int(hero.get("dirt_cleaned", self.dirt_cleaned))
@@ -241,12 +250,12 @@ class Preprocessor:
         self.last_nearest_charger_dist = self.nearest_charger_dist
         self.nearest_charger_dist, self.nearest_charger_dx, self.nearest_charger_dz = self._nearest_charger_metrics()
 
-        self.last_charger_slack = self.charger_slack
-        reserve = max(8.0, 0.04 * self.battery_max)
-        self.charger_slack = float(self.battery - self.nearest_charger_dist - reserve)
-
         self._last_astar_dist = self._astar_dist
         self._astar_dist = self._compute_astar_charger_dist()
+        self.last_charger_slack = self.charger_slack
+        reserve = max(8.0, 0.04 * self.battery_max)
+        base_dist = self._astar_dist if np.isfinite(self._astar_dist) else self.nearest_charger_dist
+        self.charger_slack = float(self.battery - base_dist - reserve)
 
         self.nearest_npc_dist, self.nearest_npc_dx, self.nearest_npc_dz = self._nearest_npc_metrics()
         self.all_npc_info = self._collect_npc_info()
@@ -400,7 +409,7 @@ class Preprocessor:
 
     def _sort_charger_candidates(self):
         hx, hz = self.cur_pos
-        signal = self.expert.get_charger_signal(self, self.get_legal_action(), self._last_action)
+        signal = self._get_guidance()
         target = signal.get("charger_target")
         candidates = []
         for idx, (_, dx, dz, cx, cz, half_w, half_h) in enumerate(self.all_charger_info):
@@ -426,6 +435,44 @@ class Preprocessor:
             )
         candidates.sort(key=lambda item: (-item["reachable"], item["astar_dist"], item["dist"]))
         return candidates[: Config.CHARGER_SLOTS]
+
+    def _get_guidance(self):
+        if self._guidance_cache_step == self.step_no and self._guidance_cache is not None:
+            return self._guidance_cache
+
+        filtered_legal = self.expert.filter_actions(self, self.get_legal_action())
+        guidance = self.expert.get_charger_signal(self, filtered_legal, self._last_action)
+        target = guidance.get("charger_target")
+        self._teacher_target_history.append(tuple(target) if target is not None else None)
+        self._guidance_cache = guidance
+        self._guidance_cache_step = self.step_no
+        self._teacher_cache_step = -1
+        self._teacher_cache = None
+        return guidance
+
+    def _get_teacher_guidance(self):
+        if self._teacher_cache_step == self.step_no:
+            return self._teacher_cache
+        teacher = self.expert.get_teacher_guidance(
+            self,
+            self.get_legal_action(),
+            self._last_action,
+            signal=self._get_guidance(),
+        )
+        self._teacher_cache = teacher
+        self._teacher_cache_step = self.step_no
+        return teacher
+
+    def is_teacher_target_stable(self, target):
+        if target is None:
+            return False
+        target = tuple(target)
+        history = list(self._teacher_target_history)
+        window = Config.TEACHER_TARGET_STABILITY_WINDOW
+        if len(history) < window:
+            return False
+        recent = history[-window:]
+        return all(item == target for item in recent)
 
     def _cell_passable_local(self, dx, dz):
         row = self.VIEW_HALF + dz
@@ -536,7 +583,7 @@ class Preprocessor:
                 val = max(0.0, 1.0 - age * Config.TRAJECTORY_DECAY)
                 trajectory_heat[int(row), int(col)] = max(trajectory_heat[int(row), int(col)], val)
 
-        guidance = self.expert.get_charger_signal(self, self.get_legal_action(), self._last_action)
+        guidance = self._get_guidance()
         path = guidance.get("charger_path") or []
         for age, (px, pz) in enumerate(path[1:8], start=1):
             col = px - (hx - half)
@@ -625,7 +672,7 @@ class Preprocessor:
     def _build_scalar_feature(self, last_action):
         battery_ratio = _norm(self.battery, self.battery_max)
         clean_ratio = _norm(self.dirt_cleaned, self.total_dirt)
-        guidance = self.expert.get_charger_signal(self, self.get_legal_action(), self._last_action)
+        guidance = self._get_guidance()
         slack = float(guidance.get("slack", self.charger_slack))
         min_npc_dist = float(guidance.get("min_npc_dist", self.nearest_npc_dist))
 
@@ -652,7 +699,7 @@ class Preprocessor:
             _clip_signed(self.nearest_charger_dx, self.GRID_SIZE),
             _clip_signed(self.nearest_charger_dz, self.GRID_SIZE),
             _clip_signed(slack, max(self.battery_max, 1)),
-            float(np.clip((8.0 - slack) / 8.0, 0.0, 1.0)),
+            float(np.clip((Config.PREPARE_RETURN_SLACK_THRESHOLD - slack) / max(Config.PREPARE_RETURN_SLACK_THRESHOLD, 1.0), 0.0, 1.0)),
             _norm(min_npc_dist, self.GRID_SIZE),
             _clip_signed(self.nearest_npc_dx, self.GRID_SIZE),
             _clip_signed(self.nearest_npc_dz, self.GRID_SIZE),
@@ -731,9 +778,9 @@ class Preprocessor:
         battery_ratio = self.battery / max(self.battery_max, 1)
         if self.nearest_npc_dist <= 3.0:
             return self.MODE_EVADE
-        if self.charger_slack <= 0.0 or battery_ratio <= 0.18:
+        if self.charger_slack <= Config.RETURN_SLACK_THRESHOLD or battery_ratio <= Config.RETURN_BATTERY_RATIO:
             return self.MODE_RETURN
-        if self.charger_slack <= 8.0 or battery_ratio <= 0.35:
+        if self.charger_slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD or battery_ratio <= Config.PREPARE_RETURN_BATTERY_RATIO:
             return self.MODE_PREPARE_RETURN
         return self.MODE_CLEAN
 
@@ -774,17 +821,39 @@ class Preprocessor:
 
         cleaning_reward = 1.5 * float(self.cleaned_this_step)
         streak_bonus = 0.15 * min(float(self.cleaned_this_step > 0), 1.0) * min(self.consecutive_clean_steps, 5)
-        explore_reward = 0.05 * float(min(self.new_explored_cells, 6))
-        frontier_reward = 0.15 * self.local_frontier_density * (0.5 + 0.5 * _norm(self.dirt_cleaned, self.total_dirt))
+        explore_reward = (
+            Config.EXPLORE_REWARD_SCALE
+            * float(min(self.new_explored_cells, Config.EXPLORE_REWARD_CAP))
+            * max(0.0, 1.0 - self.explored_ratio)
+        )
+        battery_ratio = self.battery / max(self.battery_max, 1)
+        if battery_ratio < Config.FRONTIER_CRITICAL_BATTERY_RATIO:
+            frontier_scale = 0.0
+        elif battery_ratio < Config.FRONTIER_LOW_BATTERY_RATIO:
+            frontier_scale = 0.5
+        else:
+            frontier_scale = 1.0
+        frontier_reward = (
+            Config.FRONTIER_REWARD_SCALE
+            * frontier_scale
+            * self.local_frontier_density
+            * (0.5 + 0.5 * _norm(self.dirt_cleaned, self.total_dirt))
+        )
         dirty_approach_reward = 0.0
         if self._last_action is not None and 0 <= self._last_action < Config.ACTION_NUM:
             dirty_approach_reward = 0.08 * float(self.directional_dirty[self._last_action])
 
         clean_reward += cleaning_reward + streak_bonus + explore_reward + frontier_reward + dirty_approach_reward
 
-        guidance = self.expert.get_charger_signal(self, self.get_legal_action(), self._last_action)
+        guidance = self._get_guidance()
         slack = float(guidance.get("slack", self.charger_slack))
-        charge_pressure = float(np.clip((8.0 - slack) / 8.0, 0.0, 1.0))
+        charge_pressure = float(
+            np.clip(
+                (Config.PREPARE_RETURN_SLACK_THRESHOLD - slack) / max(Config.PREPARE_RETURN_SLACK_THRESHOLD, 1.0),
+                0.0,
+                1.0,
+            )
+        )
         delta_charger_slack = np.clip((slack - self.last_charger_slack) / max(self.battery_max, 1), -1.0, 1.0)
         charger_reward = 0.40 * charge_pressure * float(delta_charger_slack)
         charge_reward = 0.0
@@ -807,7 +876,6 @@ class Preprocessor:
                 urgency_penalty = -0.3
 
         astar_potential_reward = 0.0
-        battery_ratio = self.battery / max(self.battery_max, 1)
         if battery_ratio < Config.ASTAR_POTENTIAL_BATTERY_THRESHOLD and np.isfinite(self._last_astar_dist):
             delta_dist = self._last_astar_dist - self._astar_dist
             astar_potential_reward = Config.ASTAR_POTENTIAL_ALPHA * float(delta_dist)
@@ -820,15 +888,17 @@ class Preprocessor:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 0.0
         clean_reward += 0.3 * max(self._cps_ema - 0.75, 0.0)
 
-        teacher = self.expert.get_teacher_guidance(self, self.get_legal_action(), self._last_action)
+        teacher = self._get_teacher_guidance()
         if teacher is None:
             mode_teacher = -1
             target_teacher = 0
-            teacher_mask = 0.0
+            mode_teacher_mask = 0.0
+            target_teacher_mask = 0.0
         else:
             mode_teacher = self.MODE_NAME_TO_ID.get(teacher.get("mode", "clean"), self.MODE_CLEAN)
             target_teacher = self._target_teacher_from_guidance(teacher)
-            teacher_mask = float(teacher.get("teacher_mask", 0.0))
+            mode_teacher_mask = float(teacher.get("mode_teacher_mask", 0.0))
+            target_teacher_mask = float(teacher.get("target_teacher_mask", 0.0))
 
         battery_risk_label = 1.0 if (battery_ratio <= 0.12 or slack < 0.0) else 0.0
         collision_risk_label = 1.0 if self.nearest_npc_dist <= 2.0 else 0.0
@@ -840,7 +910,8 @@ class Preprocessor:
             "reward_total": reward_total,
             "mode_teacher": int(mode_teacher),
             "target_teacher": int(target_teacher),
-            "teacher_mask": float(teacher_mask),
+            "mode_teacher_mask": float(mode_teacher_mask),
+            "target_teacher_mask": float(target_teacher_mask),
             "battery_risk_label": float(battery_risk_label),
             "collision_risk_label": float(collision_risk_label),
             "fallback_mask": 0.0,

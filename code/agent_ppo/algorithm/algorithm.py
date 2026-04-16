@@ -33,7 +33,8 @@ class Algorithm:
         "prob",
         "mode_teacher",
         "target_teacher",
-        "teacher_mask",
+        "mode_teacher_mask",
+        "target_teacher_mask",
         "battery_risk_label",
         "collision_risk_label",
         "fallback_mask",
@@ -183,8 +184,11 @@ class Algorithm:
         target_teacher = torch.stack(
             [torch.as_tensor(s.target_teacher, dtype=torch.long) for s in list_sample_data]
         ).to(**to_device)
-        teacher_mask = torch.stack(
-            [torch.as_tensor(s.teacher_mask, dtype=torch.float32) for s in list_sample_data]
+        mode_teacher_mask = torch.stack(
+            [torch.as_tensor(s.mode_teacher_mask, dtype=torch.float32) for s in list_sample_data]
+        ).to(**to_device)
+        target_teacher_mask = torch.stack(
+            [torch.as_tensor(s.target_teacher_mask, dtype=torch.float32) for s in list_sample_data]
         ).to(**to_device)
         battery_risk_label = torch.stack(
             [torch.as_tensor(s.battery_risk_label, dtype=torch.float32) for s in list_sample_data]
@@ -211,7 +215,8 @@ class Algorithm:
                 "advantage_survive": advantage_survive,
                 "mode_teacher": mode_teacher,
                 "target_teacher": target_teacher,
-                "teacher_mask": teacher_mask,
+                "mode_teacher_mask": mode_teacher_mask,
+                "target_teacher_mask": target_teacher_mask,
                 "battery_risk_label": battery_risk_label,
                 "collision_risk_label": collision_risk_label,
                 "fallback_mask": fallback_mask,
@@ -266,8 +271,11 @@ class Algorithm:
         field_map["target_teacher"] = batch_tensor[:, begin : begin + Config.SAMPLE_TARGET_DIM].to(dtype=torch.long)
         begin += Config.SAMPLE_TARGET_DIM
 
-        field_map["teacher_mask"] = batch_tensor[:, begin : begin + Config.SAMPLE_TEACHER_MASK_DIM]
-        begin += Config.SAMPLE_TEACHER_MASK_DIM
+        field_map["mode_teacher_mask"] = batch_tensor[:, begin : begin + Config.SAMPLE_MODE_TEACHER_MASK_DIM]
+        begin += Config.SAMPLE_MODE_TEACHER_MASK_DIM
+
+        field_map["target_teacher_mask"] = batch_tensor[:, begin : begin + Config.SAMPLE_TARGET_TEACHER_MASK_DIM]
+        begin += Config.SAMPLE_TARGET_TEACHER_MASK_DIM
 
         field_map["battery_risk_label"] = batch_tensor[:, begin : begin + Config.SAMPLE_AUX_LABEL_DIM]
         begin += Config.SAMPLE_AUX_LABEL_DIM
@@ -297,7 +305,8 @@ class Algorithm:
         advantage_survive = torch.as_tensor(field_map["advantage_survive"], dtype=torch.float32).to(**to_device)
         mode_teacher = torch.as_tensor(field_map["mode_teacher"], dtype=torch.long).to(**to_device)
         target_teacher = torch.as_tensor(field_map["target_teacher"], dtype=torch.long).to(**to_device)
-        teacher_mask = torch.as_tensor(field_map["teacher_mask"], dtype=torch.float32).to(**to_device)
+        mode_teacher_mask = torch.as_tensor(field_map["mode_teacher_mask"], dtype=torch.float32).to(**to_device)
+        target_teacher_mask = torch.as_tensor(field_map["target_teacher_mask"], dtype=torch.float32).to(**to_device)
         battery_risk_label = torch.as_tensor(field_map["battery_risk_label"], dtype=torch.float32).to(**to_device)
         collision_risk_label = torch.as_tensor(field_map["collision_risk_label"], dtype=torch.float32).to(**to_device)
         fallback_mask = torch.as_tensor(field_map["fallback_mask"], dtype=torch.float32).to(**to_device)
@@ -318,7 +327,8 @@ class Algorithm:
             "advantage_survive": advantage_survive.view(batch_size, seq_len),
             "mode_teacher": mode_teacher.view(batch_size, seq_len),
             "target_teacher": target_teacher.view(batch_size, seq_len),
-            "teacher_mask": teacher_mask.view(batch_size, seq_len),
+            "mode_teacher_mask": mode_teacher_mask.view(batch_size, seq_len),
+            "target_teacher_mask": target_teacher_mask.view(batch_size, seq_len),
             "battery_risk_label": battery_risk_label.view(batch_size, seq_len),
             "collision_risk_label": collision_risk_label.view(batch_size, seq_len),
             "fallback_mask": fallback_mask.view(batch_size, seq_len),
@@ -334,7 +344,8 @@ class Algorithm:
         old_value_survive = batch["value_survive"][:, learn_slice]
         adv_clean = batch["advantage_clean"][:, learn_slice]
         adv_survive = batch["advantage_survive"][:, learn_slice]
-        teacher_mask = batch["teacher_mask"][:, learn_slice]
+        mode_teacher_mask = batch["mode_teacher_mask"][:, learn_slice]
+        target_teacher_mask = batch["target_teacher_mask"][:, learn_slice]
         battery_label = batch["battery_risk_label"][:, learn_slice]
         collision_label = batch["collision_risk_label"][:, learn_slice]
         fallback_mask = batch["fallback_mask"][:, learn_slice]
@@ -390,21 +401,23 @@ class Algorithm:
         )
         policy_loss = (policy_loss * valid_mask).sum() / valid_count
 
-        teacher_active = teacher_mask * valid_mask
-        teacher_count = teacher_active.sum().clamp_min(1.0)
+        mode_teacher_active = mode_teacher_mask * valid_mask
+        target_teacher_active = target_teacher_mask * valid_mask
+        mode_teacher_count = mode_teacher_active.sum().clamp_min(1.0)
+        target_teacher_count = target_teacher_active.sum().clamp_min(1.0)
         mode_teacher_loss = F.cross_entropy(
             mode_logits.reshape(-1, Config.MODE_NUM),
             batch["mode_teacher"][:, learn_slice].reshape(-1),
             ignore_index=-1,
             reduction="none",
-        ).view_as(teacher_active)
+        ).view_as(mode_teacher_active)
         target_teacher_loss = F.cross_entropy(
             target_logits.reshape(-1, Config.TARGET_DIM),
             batch["target_teacher"][:, learn_slice].reshape(-1),
             reduction="none",
-        ).view_as(teacher_active)
-        mode_teacher_loss = (mode_teacher_loss * teacher_active).sum() / teacher_count
-        target_teacher_loss = (target_teacher_loss * teacher_active).sum() / teacher_count
+        ).view_as(target_teacher_active)
+        mode_teacher_loss = (mode_teacher_loss * mode_teacher_active).sum() / mode_teacher_count
+        target_teacher_loss = (target_teacher_loss * target_teacher_active).sum() / target_teacher_count
 
         aux_battery_loss = F.binary_cross_entropy_with_logits(aux_battery, battery_label, reduction="none")
         aux_collision_loss = F.binary_cross_entropy_with_logits(aux_collision, collision_label, reduction="none")

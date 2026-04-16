@@ -79,7 +79,7 @@ def build_monitor():
         .add_panel(name="Mode Usage Clean", name_en="mode_usage_clean", type="line")
         .add_metric(metrics_name="mode_usage_clean", expr="avg(mode_usage_clean{})")
         .end_panel()
-        .add_panel(name="Mode Usage Prepare Return", name_en="mode_usage_prepare_return", type="line")
+        .add_panel(name="Mode Prep Return", name_en="mode_usage_prepare_return", type="line")
         .add_metric(metrics_name="mode_usage_prepare_return", expr="avg(mode_usage_prepare_return{})")
         .end_panel()
         .add_panel(name="Mode Usage Return", name_en="mode_usage_return", type="line")
