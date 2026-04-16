@@ -56,6 +56,13 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
     env = envs[0]
     agent = agents[0]
 
+    if os.getenv("KAIWU_BENCHMARK_PARALLEL_MODE", "").strip() in ("1", "true"):
+        from agent_ppo.eval.benchmark_parallel import run_parallel_benchmark
+
+        usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
+        run_parallel_benchmark(envs, agents, usr_conf, logger)
+        return
+
     # Benchmark mode: run fixed eval scenarios, save results, exit
     if os.getenv("KAIWU_BENCHMARK_MODE", "").strip() in ("1", "true"):
         aisrv_index = os.getenv("KAIWU_AISRV_INDEX", "").strip()

@@ -2,8 +2,13 @@
 train/log/
 train/archive/
 train/backup_model/
+train/benchmark_archive/
+train/benchmark_backup_model/
+train/benchmark_logs/
 train/checkpoint/
 train/TRAINING_DATA.json
+train/eval_parallel_logs/
+train/eval_parallel_results.json
 train/*.tar
 train/*.tar.zst
 train/*.zip
