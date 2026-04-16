@@ -63,6 +63,8 @@ x-kaiwu-client:
     KAIWU_PERF_STAT_WINDOW_SECONDS: ${KAIWU_PERF_STAT_WINDOW_SECONDS}
     KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE: ${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE}
     KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE: ${KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE}
+    KAIWU_BENCHMARK_MODE: ${KAIWU_BENCHMARK_MODE:-}
+    KAIWU_BENCHMARK_CHECKPOINT: ${KAIWU_BENCHMARK_CHECKPOINT:-}
 
 services:
   # ==================== Learner 学习器 ====================
@@ -702,6 +704,14 @@ services:
             "replace_toml_key(app_conf, 'reverb_rate_limiter', 'KAIWU_EXPERIMENT_REVERB_RATE_LIMITER')\n"
             "replace_toml_key(app_conf, 'reverb_sampler', 'KAIWU_EXPERIMENT_REVERB_SAMPLER')\n"
             "replace_toml_key(app_conf, 'send_sample_size', 'KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE')\n"
+            "\n"
+            "# Patch monitor_builder: panel names cannot contain parentheses\n"
+            "mb = root / 'agent_ppo/conf/monitor_builder.py'\n"
+            "mb_text = mb.read_text()\n"
+            "mb_text = mb_text.replace('name=\"CPS (WIN)\"', 'name=\"CPS WIN\"')\n"
+            "mb_text = mb_text.replace('name=\"Avg Charge Count (WIN)\"', 'name=\"Avg Charge Count WIN\"')\n"
+            "mb.write_text(mb_text)\n"
+            "print(f'[post-init] Patched monitor_builder panel names')\n"
         )
         print(f"Wrote post-init patcher to {patcher}")
         PY

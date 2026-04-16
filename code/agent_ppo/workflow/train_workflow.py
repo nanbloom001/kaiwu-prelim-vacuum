@@ -55,6 +55,22 @@ class PerfWindow:
 def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
     env = envs[0]
     agent = agents[0]
+
+    # Benchmark mode: run fixed eval scenarios, save results, exit
+    if os.getenv("KAIWU_BENCHMARK_MODE", "").strip() in ("1", "true"):
+        aisrv_index = os.getenv("KAIWU_AISRV_INDEX", "").strip()
+        if aisrv_index not in ("", "1"):
+            logger.info(f"[BENCHMARK] Skipping on aisrv-{aisrv_index}, only aisrv-1 runs benchmark")
+            marker = Path("/workspace/code/.benchmark_done")
+            while not marker.exists():
+                time.sleep(5)
+            logger.info("[BENCHMARK] aisrv-1 benchmark complete, exiting")
+            return
+        from agent_ppo.eval.benchmark import run_benchmark
+        usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
+        run_benchmark(env, agent, usr_conf, logger)
+        return
+
     archive = ExperimentArchive(service_name=os.getenv("KAIWU_SERVICE_NAME") or "aisrv")
 
     usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
@@ -547,7 +563,7 @@ class EpisodeRunner:
             if now - self.last_get_training_metrics_time >= 60:
                 training_metrics = get_training_metrics()
                 self.last_get_training_metrics_time = now
-                if training_metrics is not None:
+                if training_metrics is not None and training_metrics is not False:
                     self.logger.info(f"training_metrics: {training_metrics}")
                     window_payload = {
                         "record_type": "workflow_window",

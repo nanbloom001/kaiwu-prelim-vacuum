@@ -46,6 +46,26 @@ cd code
 python3 -m pytest tests/ -v
 ```
 
+## Benchmark Evaluation
+
+Runs fixed scenarios against a model checkpoint for A/B comparison. Independent from training — no learner data, no curriculum interference.
+
+```bash
+cd train
+
+# Run benchmark (stops training, runs eval, stops stack)
+bash run_benchmark.sh                              # default checkpoint
+bash run_benchmark.sh path/to/checkpoint.pkl       # specific checkpoint
+RESTART=1 bash run_benchmark.sh                    # auto-restart training after
+
+# View results
+python3 compare_benchmarks.py latest               # latest benchmark
+python3 compare_benchmarks.py 0 1                  # compare two runs
+```
+
+Results: `train/eval_results.json`. Detailed logs: `train/eval_logs/{session_id}/`.
+Full documentation: `train/context/BENCHMARK_SYSTEM.md`.
+
 ## Architecture
 
 ### Distributed Training Topology
