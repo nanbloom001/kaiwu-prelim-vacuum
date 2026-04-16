@@ -156,9 +156,9 @@ TcKaiwuFinal/
 
 - [train/context/README.md](/home/user/TcKaiwuFinal/train/context/README.md)
   - context 文档索引。
-- [train/context/BENCHMARK_SYSTEM.md](/home/user/TcKaiwuFinal/train/context/BENCHMARK_SYSTEM.md)
+- [train/context/benchmark/BENCHMARK_SYSTEM.md](/home/user/TcKaiwuFinal/train/context/benchmark/BENCHMARK_SYSTEM.md)
   - 串行 benchmark 说明。
-- [train/context/BENCHMARK_PARALLEL_HANDOFF_20260416.md](/home/user/TcKaiwuFinal/train/context/BENCHMARK_PARALLEL_HANDOFF_20260416.md)
+- [train/context/benchmark/BENCHMARK_PARALLEL_HANDOFF_20260416.md](/home/user/TcKaiwuFinal/train/context/benchmark/BENCHMARK_PARALLEL_HANDOFF_20260416.md)
   - 并行 benchmark 的实现、问题、排障和推荐配置。
 
 ## 当前默认工作流

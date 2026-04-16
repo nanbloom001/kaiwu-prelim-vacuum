@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-16
+
+~13:40 | 整理并行 benchmark 与仓库文档体系。新增根目录 README，补齐 Linux 下训练、串行评估、并行评估的主要入口、命令和结果路径。并行 benchmark 当前推荐固定使用 `4×10`（`--workers 4 --envs-per-worker 10`），完整 40 局墙钟时间约 108s，结果可稳定落地且脚本结束后容器可自动清理。并行 benchmark 实现与问题排查已沉淀到 `benchmark/BENCHMARK_PARALLEL_HANDOFF_20260416.md`。
+~13:55 | 清理明显过期的已跟踪文件：移除 `code/eval_logs/**`、`code/eval_results.json`、`train/.docker-compose.yaml.bak`、`train/backup_20260414/**`、`code/reverb_dataset_v1_optimized.py.disabled`、`train/simple_dashboard.py`、`train/simple_monitor.py`、`log-412996-12336239.zip`。同时在 `.gitignore` 中补充 `code/eval_logs/`、`code/eval_results.json`、`code/.benchmark_done`，避免 benchmark 运行产物再次污染仓库。
+~14:05 | 重组 `train/context/` 为二级分类目录：`analysis/`、`benchmark/`、`data/`、`diagnosis/`、`handoff/`、`operations/`、`optimization/`、`sessions/`，根目录仅保留 `README.md` 和 `CHANGELOG.md`。同步更新 `CLAUDE.md`、根 README 和上下文文档中的主要引用路径。后续涉及仓库结构、主要入口、benchmark 工作流或重要运维变更时，默认同时更新本文件。
+
 ## 2026-04-15
 
 ~14:00 | 训练全周期瓶颈分析报告完成。覆盖 v4→v5.4 全部 7 个瓶颈：entropy 塨缩（已解决）、Expert-RL 梯度对抗（核心结构性问题）、碰撞死亡（v5.4 修复 89%）、电池死亡（当前主瓶颈，bias 3-8 太弱）、GAE 长周期 credit 衰减（γλ^50=4.7%）、Reward 失衡（清扫:充电=60:1）、Peak-Then-Decline 训练曲线。含 18 例碰撞 + 14 例电池死亡完整日志。评估 4 个网络框架改动方向：LSTM 时序层、n-step return、势函数 reward shaping、分层策略。详见 BOTTLENECK_ANALYSIS_FULL_20260415.md。

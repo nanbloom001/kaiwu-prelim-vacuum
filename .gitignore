@@ -17,6 +17,9 @@ code-robot_vacuum-public-*.zip
 
 code/*.pkl
 code/*.meta.json
+code/eval_logs/
+code/eval_results.json
+code/.benchmark_done
 !code/best_model.pkl
 !code/latest_model.pkl
 !code/model.ckpt-resume.pkl

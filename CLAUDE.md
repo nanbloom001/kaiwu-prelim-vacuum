@@ -37,7 +37,7 @@ cd train
 python3 run_replay_stability_experiments.py
 ```
 
-Results go to `train/context/REPLAY_STABILITY_RESULTS.json`. The experiment script controls docker lifecycle (up/down) and collects training metrics from container logs.
+Results go to `train/context/data/REPLAY_STABILITY_RESULTS.json`. The experiment script controls docker lifecycle (up/down) and collects training metrics from container logs.
 
 ## Running Tests
 
@@ -64,7 +64,7 @@ python3 compare_benchmarks.py 0 1                  # compare two runs
 ```
 
 Results: `train/eval_results.json`. Detailed logs: `train/eval_logs/{session_id}/`.
-Full documentation: `train/context/BENCHMARK_SYSTEM.md`.
+Full documentation: `train/context/benchmark/BENCHMARK_SYSTEM.md`.
 
 ## Architecture
 
@@ -117,7 +117,7 @@ The priority is **replay/reverb data pipeline stability**, not algorithm changes
 
 ### Context Files
 
-`train/context/` holds session records, diagnosis reports, and experiment results. Key file: `train/context/DIAGNOSIS_REMEDIATION_REPORT_20260409.md` — contains the full migration diagnosis and remediation history. Keep this directory lightweight and commit-friendly.
+`train/context/` holds session records, diagnosis reports, and experiment results. Key file: `train/context/diagnosis/DIAGNOSIS_REMEDIATION_REPORT_20260409.md` — contains the full migration diagnosis and remediation history. Keep this directory lightweight and commit-friendly.
 
 ### Experiment Script Caveats
 
