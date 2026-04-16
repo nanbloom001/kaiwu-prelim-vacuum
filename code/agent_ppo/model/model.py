@@ -136,11 +136,19 @@ class Model(nn.Module):
         )
 
         # Mode and target
-        self.mode_head = _make_fc(Config.RNN_HIDDEN_DIM, Config.MODE_NUM, gain=0.01)
+        self.route_anchor_head = _make_fc(Config.RNN_HIDDEN_DIM, Config.ROUTE_ANCHOR_DIM, gain=0.01)
+        self.route_anchor_embedding = nn.Parameter(torch.zeros(Config.ROUTE_ANCHOR_DIM, Config.ROUTE_ANCHOR_EMBED_DIM))
+        nn.init.orthogonal_(self.route_anchor_embedding)
+
+        self.mode_head = _make_fc(
+            Config.RNN_HIDDEN_DIM + Config.ROUTE_ANCHOR_EMBED_DIM,
+            Config.MODE_NUM,
+            gain=0.01,
+        )
         self.mode_embedding = nn.Parameter(torch.zeros(Config.MODE_NUM, Config.MODE_EMBED_DIM))
         nn.init.orthogonal_(self.mode_embedding)
 
-        self.target_query = _make_fc(Config.RNN_HIDDEN_DIM, 32)
+        self.target_query = _make_fc(Config.RNN_HIDDEN_DIM + Config.ROUTE_ANCHOR_EMBED_DIM, 32)
         self.target_key = _make_fc(32, 32)
         self.target_none_head = _make_fc(Config.RNN_HIDDEN_DIM, 1, gain=0.01)
         self.target_context_proj = nn.Sequential(
@@ -148,11 +156,21 @@ class Model(nn.Module):
             nn.ReLU(),
         )
 
-        actor_in_dim = Config.RNN_HIDDEN_DIM + Config.TARGET_CONTEXT_DIM + Config.MODE_EMBED_DIM
+        actor_in_dim = (
+            Config.RNN_HIDDEN_DIM
+            + Config.TARGET_CONTEXT_DIM
+            + Config.MODE_EMBED_DIM
+            + Config.ROUTE_ANCHOR_EMBED_DIM
+        )
         self.actor_head = nn.Sequential(
             _make_fc(actor_in_dim, 128),
             nn.ReLU(),
             _make_fc(128, Config.ACTION_NUM, gain=0.01),
+        )
+        self.return_action_aux_head = nn.Sequential(
+            _make_fc(actor_in_dim, 96),
+            nn.ReLU(),
+            _make_fc(96, Config.ACTION_NUM, gain=0.01),
         )
         self.clean_critic = nn.Sequential(
             _make_fc(Config.RNN_HIDDEN_DIM, 64),
@@ -237,11 +255,16 @@ class Model(nn.Module):
         return pre_rnn, charger_tokens
 
     def _decode_heads(self, rnn_out, charger_tokens, next_state, reshape=None):
-        mode_logits = self.mode_head(rnn_out)
+        route_anchor_logits = self.route_anchor_head(rnn_out)
+        route_anchor_probs = torch.softmax(route_anchor_logits, dim=-1)
+        anchor_context = route_anchor_probs @ self.route_anchor_embedding
+
+        mode_input = torch.cat([rnn_out, anchor_context], dim=-1)
+        mode_logits = self.mode_head(mode_input)
         mode_probs = torch.softmax(mode_logits, dim=-1)
         mode_context = mode_probs @ self.mode_embedding
 
-        query = self.target_query(rnn_out).unsqueeze(1)
+        query = self.target_query(torch.cat([rnn_out, anchor_context], dim=-1)).unsqueeze(1)
         keys = self.target_key(charger_tokens)
         target_logits_slots = torch.sum(query * keys, dim=-1)
         none_logit = self.target_none_head(rnn_out)
@@ -250,8 +273,9 @@ class Model(nn.Module):
         charger_probs = target_probs[:, 1:].unsqueeze(-1)
         target_context = self.target_context_proj(torch.sum(charger_tokens * charger_probs, dim=1))
 
-        actor_input = torch.cat([rnn_out, target_context, mode_context], dim=-1)
+        actor_input = torch.cat([rnn_out, target_context, mode_context, anchor_context], dim=-1)
         policy_logits = self.actor_head(actor_input)
+        return_action_logits = self.return_action_aux_head(actor_input)
         value_clean = self.clean_critic(rnn_out)
         value_survive = self.survive_critic(rnn_out)
         aux_battery_risk = self.aux_battery_risk(rnn_out)
@@ -260,12 +284,15 @@ class Model(nn.Module):
         outputs = {
             "policy_logits": policy_logits,
             "mode_logits": mode_logits,
+            "route_anchor_logits": route_anchor_logits,
             "target_logits": target_logits,
+            "return_action_logits": return_action_logits,
             "value_clean": value_clean,
             "value_survive": value_survive,
             "aux_battery_risk": aux_battery_risk,
             "aux_collision_risk": aux_collision_risk,
             "mode_probs": mode_probs,
+            "route_anchor_probs": route_anchor_probs,
             "target_probs": target_probs,
             "next_rnn_state": next_state,
         }
@@ -274,12 +301,15 @@ class Model(nn.Module):
             for key in (
                 "policy_logits",
                 "mode_logits",
+                "route_anchor_logits",
                 "target_logits",
+                "return_action_logits",
                 "value_clean",
                 "value_survive",
                 "aux_battery_risk",
                 "aux_collision_risk",
                 "mode_probs",
+                "route_anchor_probs",
                 "target_probs",
             ):
                 outputs[key] = outputs[key].view(bsz, seq_len, -1)

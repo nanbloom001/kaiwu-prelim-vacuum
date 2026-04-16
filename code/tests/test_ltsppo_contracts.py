@@ -70,9 +70,13 @@ def _build_step_records(total_steps):
                 "value_clean": 0.0,
                 "value_survive": 0.0,
                 "mode_teacher": idx % Config.MODE_NUM,
+                "route_anchor_teacher": idx % Config.ROUTE_ANCHOR_DIM,
                 "target_teacher": idx % Config.TARGET_DIM,
                 "mode_teacher_mask": 1.0,
+                "route_anchor_teacher_mask": 1.0 if idx % 2 == 0 else 0.0,
                 "target_teacher_mask": 0.0 if idx % 3 == 0 else 1.0,
+                "return_action_teacher": idx % Config.ACTION_NUM,
+                "return_action_teacher_mask": 1.0 if idx % 4 else 0.0,
                 "battery_risk_label": float(idx % 2),
                 "collision_risk_label": float((idx + 1) % 2),
                 "fallback_mask": 0.0,
@@ -103,9 +107,13 @@ class LtsppoConfigAndDefinitionContractsTests(unittest.TestCase):
             "advantage_survive": Config.SEQ_CHUNK_LEN,
             "prob": Config.ACTION_NUM * Config.SEQ_CHUNK_LEN,
             "mode_teacher": Config.SEQ_CHUNK_LEN,
+            "route_anchor_teacher": Config.SEQ_CHUNK_LEN,
             "target_teacher": Config.SEQ_CHUNK_LEN,
             "mode_teacher_mask": Config.SEQ_CHUNK_LEN,
+            "route_anchor_teacher_mask": Config.SEQ_CHUNK_LEN,
             "target_teacher_mask": Config.SEQ_CHUNK_LEN,
+            "return_action_teacher": Config.SEQ_CHUNK_LEN,
+            "return_action_teacher_mask": Config.SEQ_CHUNK_LEN,
             "battery_risk_label": Config.SEQ_CHUNK_LEN,
             "collision_risk_label": Config.SEQ_CHUNK_LEN,
             "fallback_mask": Config.SEQ_CHUNK_LEN,
@@ -160,9 +168,15 @@ class LtsppoSampleProcessChunkingTests(unittest.TestCase):
         self.assertTrue(np.allclose(second.done[expected_second_real_len:], 1.0))
         self.assertTrue(np.allclose(second.mode_teacher_mask[:expected_second_real_len], 1.0))
         self.assertTrue(np.allclose(second.mode_teacher_mask[expected_second_real_len:], 0.0))
+        self.assertAlmostEqual(float(second.route_anchor_teacher_mask[0]), 1.0)
+        self.assertAlmostEqual(float(second.route_anchor_teacher_mask[1]), 0.0)
+        self.assertTrue(np.allclose(second.route_anchor_teacher_mask[expected_second_real_len:], 0.0))
         self.assertAlmostEqual(float(second.target_teacher_mask[0]), 0.0)
         self.assertTrue(np.allclose(second.target_teacher_mask[1:expected_second_real_len], 1.0))
         self.assertTrue(np.allclose(second.target_teacher_mask[expected_second_real_len:], 0.0))
+        self.assertAlmostEqual(float(second.return_action_teacher_mask[0]), 1.0)
+        self.assertAlmostEqual(float(second.return_action_teacher_mask[4]), 1.0)
+        self.assertTrue(np.allclose(second.return_action_teacher_mask[expected_second_real_len:], 0.0))
         self.assertTrue(np.allclose(second.fallback_mask[:expected_second_real_len], 0.0))
         self.assertTrue(np.allclose(second.fallback_mask[expected_second_real_len:], 1.0))
 
@@ -181,12 +195,15 @@ class LtsppoModelOutputShapeTests(unittest.TestCase):
 
             self.assertEqual(step_outputs["policy_logits"].shape, (3, Config.ACTION_NUM))
             self.assertEqual(step_outputs["mode_logits"].shape, (3, Config.MODE_NUM))
+            self.assertEqual(step_outputs["route_anchor_logits"].shape, (3, Config.ROUTE_ANCHOR_DIM))
             self.assertEqual(step_outputs["target_logits"].shape, (3, Config.TARGET_DIM))
+            self.assertEqual(step_outputs["return_action_logits"].shape, (3, Config.ACTION_NUM))
             self.assertEqual(step_outputs["value_clean"].shape, (3, 1))
             self.assertEqual(step_outputs["value_survive"].shape, (3, 1))
             self.assertEqual(step_outputs["aux_battery_risk"].shape, (3, 1))
             self.assertEqual(step_outputs["aux_collision_risk"].shape, (3, 1))
             self.assertEqual(step_outputs["mode_probs"].shape, (3, Config.MODE_NUM))
+            self.assertEqual(step_outputs["route_anchor_probs"].shape, (3, Config.ROUTE_ANCHOR_DIM))
             self.assertEqual(step_outputs["target_probs"].shape, (3, Config.TARGET_DIM))
             self.assertEqual(step_outputs["next_rnn_state"].shape, (1, 3, Config.RNN_HIDDEN_DIM))
 
@@ -195,12 +212,15 @@ class LtsppoModelOutputShapeTests(unittest.TestCase):
 
             self.assertEqual(seq_outputs["policy_logits"].shape, (2, 5, Config.ACTION_NUM))
             self.assertEqual(seq_outputs["mode_logits"].shape, (2, 5, Config.MODE_NUM))
+            self.assertEqual(seq_outputs["route_anchor_logits"].shape, (2, 5, Config.ROUTE_ANCHOR_DIM))
             self.assertEqual(seq_outputs["target_logits"].shape, (2, 5, Config.TARGET_DIM))
+            self.assertEqual(seq_outputs["return_action_logits"].shape, (2, 5, Config.ACTION_NUM))
             self.assertEqual(seq_outputs["value_clean"].shape, (2, 5, 1))
             self.assertEqual(seq_outputs["value_survive"].shape, (2, 5, 1))
             self.assertEqual(seq_outputs["aux_battery_risk"].shape, (2, 5, 1))
             self.assertEqual(seq_outputs["aux_collision_risk"].shape, (2, 5, 1))
             self.assertEqual(seq_outputs["mode_probs"].shape, (2, 5, Config.MODE_NUM))
+            self.assertEqual(seq_outputs["route_anchor_probs"].shape, (2, 5, Config.ROUTE_ANCHOR_DIM))
             self.assertEqual(seq_outputs["target_probs"].shape, (2, 5, Config.TARGET_DIM))
             self.assertEqual(seq_outputs["next_rnn_state"].shape, (1, 2, Config.RNN_HIDDEN_DIM))
 

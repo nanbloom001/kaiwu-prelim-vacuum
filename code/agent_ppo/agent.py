@@ -298,15 +298,7 @@ class Agent(BaseAgent):
                 if os.path.isfile(_resume_path):
                     try:
                         state_dict = torch.load(_resume_path, map_location=self.device)
-                        # Migrate checkpoint: expand conv1 from 3ch to 4ch (trajectory heatmap)
-                        if 'local_encoder.0.weight' in state_dict:
-                            w = state_dict['local_encoder.0.weight']
-                            if w.shape[1] == 3 and Config.LOCAL_VIEW_CHANNELS == 4:
-                                new_w = torch.zeros(w.shape[0], 4, w.shape[2], w.shape[3])
-                                new_w[:, :3, :, :] = w
-                                new_w[:, 3, :, :] = w.mean(dim=1)
-                                state_dict['local_encoder.0.weight'] = new_w
-                        self.model.load_state_dict(state_dict)
+                        self._load_state_dict_compat(state_dict)
                         import sys
                         print(f"[RESUME] Loaded from {_resume_path}", file=sys.stderr, flush=True)
                         self.logger and self.logger.info(f"[RESUME] Loaded from {_resume_path}")
@@ -396,6 +388,7 @@ class Agent(BaseAgent):
         value_survive = outputs["value_survive"]
         value_total = value_clean + value_survive
         mode_probs = outputs["mode_probs"]
+        route_anchor_probs = outputs["route_anchor_probs"]
         target_probs = outputs["target_probs"]
         expert = self.preprocessor.expert
         self._last_expert_weight = 0.0
@@ -426,8 +419,11 @@ class Agent(BaseAgent):
                         value_survive=np.array([value_survive], dtype=np.float32),
                         mode=np.array([int(np.argmax(mode_probs))], dtype=np.int64),
                         mode_prob=np.array(mode_probs, dtype=np.float32),
+                        route_anchor=np.array([int(np.argmax(route_anchor_probs))], dtype=np.int64),
+                        route_anchor_prob=np.array(route_anchor_probs, dtype=np.float32),
                         target=np.array([int(np.argmax(target_probs))], dtype=np.int64),
                         target_prob=np.array(target_probs, dtype=np.float32),
+                        return_action_prob=np.array(outputs["return_action_logits"], dtype=np.float32),
                         aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
                         aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
                     )
@@ -448,8 +444,11 @@ class Agent(BaseAgent):
                         value_survive=np.array([value_survive], dtype=np.float32),
                         mode=np.array([int(np.argmax(mode_probs))], dtype=np.int64),
                         mode_prob=np.array(mode_probs, dtype=np.float32),
+                        route_anchor=np.array([int(np.argmax(route_anchor_probs))], dtype=np.int64),
+                        route_anchor_prob=np.array(route_anchor_probs, dtype=np.float32),
                         target=np.array([int(np.argmax(target_probs))], dtype=np.int64),
                         target_prob=np.array(target_probs, dtype=np.float32),
+                        return_action_prob=np.array(outputs["return_action_logits"], dtype=np.float32),
                         aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
                         aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
                     )
@@ -464,6 +463,7 @@ class Agent(BaseAgent):
 
         mode = int(np.argmax(mode_probs))
         target = int(np.argmax(target_probs))
+        route_anchor = int(np.argmax(route_anchor_probs))
         return [
             ActData(
                 action=[action],
@@ -474,8 +474,11 @@ class Agent(BaseAgent):
                 value_survive=np.array([value_survive], dtype=np.float32),
                 mode=np.array([mode], dtype=np.int64),
                 mode_prob=np.array(mode_probs, dtype=np.float32),
+                route_anchor=np.array([route_anchor], dtype=np.int64),
+                route_anchor_prob=np.array(route_anchor_probs, dtype=np.float32),
                 target=np.array([target], dtype=np.int64),
                 target_prob=np.array(target_probs, dtype=np.float32),
+                return_action_prob=np.array(outputs["return_action_logits"], dtype=np.float32),
                 aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
                 aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
             )
@@ -537,6 +540,28 @@ class Agent(BaseAgent):
         )
         self.logger.info(f"save model {model_file_path} successfully")
 
+    def _load_state_dict_compat(self, state_dict):
+        model_state = self.model.state_dict()
+        compatible = {}
+        skipped = []
+        for key, value in state_dict.items():
+            if key not in model_state:
+                skipped.append(key)
+                continue
+            if tuple(model_state[key].shape) != tuple(value.shape):
+                skipped.append(key)
+                continue
+            compatible[key] = value
+        missing, unexpected = self.model.load_state_dict(compatible, strict=False)
+        if self.logger:
+            self.logger.info(
+                "[RESUME] compat_load matched=%d skipped=%d missing=%d unexpected=%d",
+                len(compatible),
+                len(skipped),
+                len(missing),
+                len(unexpected),
+            )
+
     def load_model(self, path=None, id="1"):
         """Load model checkpoint.
 
@@ -557,7 +582,7 @@ class Agent(BaseAgent):
             should_reload = self._should_reload_model(model_file_path, model_mtime_ns)
 
         if should_reload:
-            self.model.load_state_dict(torch.load(model_file_path, map_location=self.device))
+            self._load_state_dict_compat(torch.load(model_file_path, map_location=self.device))
             self._last_loaded_model_path = model_file_path
             self._last_loaded_model_mtime_ns = model_mtime_ns
             self._model_load_reload_count += 1
@@ -613,7 +638,9 @@ class Agent(BaseAgent):
         return {
             "policy_logits": rst["policy_logits"].cpu().numpy()[0],
             "mode_probs": rst["mode_probs"].cpu().numpy()[0],
+            "route_anchor_probs": rst["route_anchor_probs"].cpu().numpy()[0],
             "target_probs": rst["target_probs"].cpu().numpy()[0],
+            "return_action_logits": rst["return_action_logits"].cpu().numpy()[0],
             "value_clean": float(rst["value_clean"].cpu().numpy()[0][0]),
             "value_survive": float(rst["value_survive"].cpu().numpy()[0][0]),
             "aux_battery_risk": float(rst["aux_battery_risk"].cpu().numpy()[0][0]),

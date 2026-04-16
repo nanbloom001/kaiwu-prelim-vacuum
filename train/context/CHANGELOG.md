@@ -74,6 +74,22 @@
 ~14:00 | Coordinate bug fix (3 functions in preprocessor.py) + predict() layer reorder (NPC->Expert->Anti-stuck->RL) + expert uses model softmax probability + charging rewards 2x + BETA 0.007->0.005. (commit 2715e42)
 ## 2026-04-16
 
+- LTSPPO 几何感知长期规划重构第一阶段已落地到代码主链：
+  - 观测升级到 `Local 21x21x9 / Global 16x16x8 / Entity 8x10 / Scalar 128`
+  - 新增 `route_anchor_head`、`return_action_aux_head`
+  - mode 体系升级为 `depart / expand / harvest / contract / return / evade`
+  - 训练样本新增 `route_anchor_teacher` 与 `return_action_teacher` 及其独立 mask
+- 几何语义统一到 8 方向等代价：
+  - Expert A* 对角移动代价从 `1.414` 改为使用配置项 `DIAGONAL_MOVE_COST=1.0`
+  - return / slack / teacher 相关信号与对角运动优势开始对齐
+- Teacher/Expert 统一为弱监督方案，不再新增第二个控制型 Expert：
+  - route anchor / target / return action 全部独立 fail-closed mask
+  - Agent 侧增加兼容加载逻辑，允许旧 checkpoint 按 shape 交集部分加载
+- 训练/评估诊断升级：
+  - 新增 `late_contract_rate`、`anchor_switch_rate`
+  - 新增 `diag_rate_*`、`return_progress_per_step`、`return_efficiency_ratio`
+  - 新增 `recoverability_score_avg`、`recoverability_violation_rate`
+  - benchmark / workflow / monitor 统一接入新 6-mode 指标
 - LTSPPO training resumed from `code/saved_models/v6-ltsppo-ep188/model.ckpt-resume.pkl` as the new default `RESUME_CHECKPOINT`.
 - Added fail-closed teacher supervision:
   - split `teacher_mask` into `mode_teacher_mask` and `target_teacher_mask`

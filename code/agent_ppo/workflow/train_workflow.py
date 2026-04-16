@@ -515,9 +515,21 @@ class EpisodeRunner:
             "avg_clean_per_step": sum(ep["clean_per_step"] for ep in buf) / n,
             "avg_expert_weight": sum(ep["expert_weight"] for ep in buf) / n,
             "late_return_rate": sum(ep.get("late_return_rate", 0.0) for ep in buf) / n,
+            "late_contract_rate": sum(ep.get("late_contract_rate", 0.0) for ep in buf) / n,
+            "anchor_switch_rate": sum(ep.get("anchor_switch_rate", 0.0) for ep in buf) / n,
             "target_switch_rate": sum(ep.get("target_switch_rate", 0.0) for ep in buf) / n,
-            "mode_usage_clean": sum(ep.get("mode_usage_clean", 0.0) for ep in buf) / n,
-            "mode_usage_prepare_return": sum(ep.get("mode_usage_prepare_return", 0.0) for ep in buf) / n,
+            "diag_rate_all": sum(ep.get("diag_rate_all", 0.0) for ep in buf) / n,
+            "diag_rate_contract": sum(ep.get("diag_rate_contract", 0.0) for ep in buf) / n,
+            "diag_rate_return": sum(ep.get("diag_rate_return", 0.0) for ep in buf) / n,
+            "return_progress_per_step": sum(ep.get("return_progress_per_step", 0.0) for ep in buf) / n,
+            "return_efficiency_ratio": sum(ep.get("return_efficiency_ratio", 0.0) for ep in buf) / n,
+            "return_stall_rate": sum(ep.get("return_stall_rate", 0.0) for ep in buf) / n,
+            "recoverability_score_avg": sum(ep.get("recoverability_score_avg", 0.0) for ep in buf) / n,
+            "recoverability_violation_rate": sum(ep.get("recoverability_violation_rate", 0.0) for ep in buf) / n,
+            "mode_usage_depart": sum(ep.get("mode_usage_depart", 0.0) for ep in buf) / n,
+            "mode_usage_expand": sum(ep.get("mode_usage_expand", 0.0) for ep in buf) / n,
+            "mode_usage_harvest": sum(ep.get("mode_usage_harvest", 0.0) for ep in buf) / n,
+            "mode_usage_contract": sum(ep.get("mode_usage_contract", 0.0) for ep in buf) / n,
             "mode_usage_return": sum(ep.get("mode_usage_return", 0.0) for ep in buf) / n,
             "mode_usage_evade": sum(ep.get("mode_usage_evade", 0.0) for ep in buf) / n,
             "battery_fail_rate": sum(1 for ep in buf if ep["result"] == "battery") / n,
@@ -711,13 +723,21 @@ class EpisodeRunner:
                         "target": int(self._scalar_from_any(getattr(act_data, "target", 0), default=0)),
                         "charger_slack": float(getattr(self.agent.preprocessor, "charger_slack", 0.0)),
                         "mode_teacher": int(reward_payload["mode_teacher"]),
+                        "route_anchor_teacher": int(reward_payload["route_anchor_teacher"]),
                         "target_teacher": int(reward_payload["target_teacher"]),
                         "mode_teacher_mask": float(reward_payload["mode_teacher_mask"]),
+                        "route_anchor_teacher_mask": float(reward_payload["route_anchor_teacher_mask"]),
                         "target_teacher_mask": float(reward_payload["target_teacher_mask"]),
+                        "return_action_teacher": int(reward_payload["return_action_teacher"]),
+                        "return_action_teacher_mask": float(reward_payload["return_action_teacher_mask"]),
                         "battery_risk_label": float(reward_payload["battery_risk_label"]),
                         "collision_risk_label": float(reward_payload["collision_risk_label"]),
                         "fallback_mask": float(reward_payload["fallback_mask"]),
                         "expert_weight": float(getattr(self.agent, "_last_expert_weight", 0.0)),
+                        "route_anchor": int(self._scalar_from_any(getattr(act_data, "route_anchor", 0), default=0)),
+                        "future_recoverability_score": float(getattr(self.agent.preprocessor, "future_recoverability_score", 0.0)),
+                        "anchor_return_dist": float(getattr(self.agent.preprocessor, "anchor_return_dist", 0.0)),
+                        "is_diag_action": 1.0 if int(np.asarray(act_data.action).reshape(-1)[0]) in (1, 3, 5, 7) else 0.0,
                     }
                 )
 
@@ -834,9 +854,21 @@ class EpisodeRunner:
             "profile": sampled_meta['profile'],
             "total_reward": total_reward + final_reward,
             "late_return_rate": diagnostics["late_return_rate"],
+            "late_contract_rate": diagnostics["late_contract_rate"],
+            "anchor_switch_rate": diagnostics["anchor_switch_rate"],
             "target_switch_rate": diagnostics["target_switch_rate"],
-            "mode_usage_clean": diagnostics["mode_usage_clean"],
-            "mode_usage_prepare_return": diagnostics["mode_usage_prepare_return"],
+            "diag_rate_all": diagnostics["diag_rate_all"],
+            "diag_rate_contract": diagnostics["diag_rate_contract"],
+            "diag_rate_return": diagnostics["diag_rate_return"],
+            "return_progress_per_step": diagnostics["return_progress_per_step"],
+            "return_efficiency_ratio": diagnostics["return_efficiency_ratio"],
+            "return_stall_rate": diagnostics["return_stall_rate"],
+            "recoverability_score_avg": diagnostics["recoverability_score_avg"],
+            "recoverability_violation_rate": diagnostics["recoverability_violation_rate"],
+            "mode_usage_depart": diagnostics["mode_usage_depart"],
+            "mode_usage_expand": diagnostics["mode_usage_expand"],
+            "mode_usage_harvest": diagnostics["mode_usage_harvest"],
+            "mode_usage_contract": diagnostics["mode_usage_contract"],
             "mode_usage_return": diagnostics["mode_usage_return"],
             "mode_usage_evade": diagnostics["mode_usage_evade"],
         })
@@ -982,9 +1014,13 @@ class EpisodeRunner:
                 "reward_survive": reward_survive,
                 "reward_total": reward_total,
                 "mode_teacher": int(reward.get("mode_teacher", -1)),
+                "route_anchor_teacher": int(reward.get("route_anchor_teacher", 0)),
                 "target_teacher": int(reward.get("target_teacher", 0)),
                 "mode_teacher_mask": float(reward.get("mode_teacher_mask", 0.0)),
+                "route_anchor_teacher_mask": float(reward.get("route_anchor_teacher_mask", 0.0)),
                 "target_teacher_mask": float(reward.get("target_teacher_mask", 0.0)),
+                "return_action_teacher": int(reward.get("return_action_teacher", -1)),
+                "return_action_teacher_mask": float(reward.get("return_action_teacher_mask", 0.0)),
                 "battery_risk_label": float(reward.get("battery_risk_label", 0.0)),
                 "collision_risk_label": float(reward.get("collision_risk_label", 0.0)),
                 "fallback_mask": float(reward.get("fallback_mask", 0.0)),
@@ -996,9 +1032,13 @@ class EpisodeRunner:
             "reward_survive": 0.0,
             "reward_total": reward_scalar,
             "mode_teacher": -1,
+            "route_anchor_teacher": 0,
             "target_teacher": 0,
             "mode_teacher_mask": 0.0,
+            "route_anchor_teacher_mask": 0.0,
             "target_teacher_mask": 0.0,
+            "return_action_teacher": -1,
+            "return_action_teacher_mask": 0.0,
             "battery_risk_label": 0.0,
             "collision_risk_label": 0.0,
             "fallback_mask": 0.0,
@@ -1009,35 +1049,89 @@ class EpisodeRunner:
         if not step_records:
             return {
                 "late_return_rate": 0.0,
+                "late_contract_rate": 0.0,
+                "anchor_switch_rate": 0.0,
                 "target_switch_rate": 0.0,
-                "mode_usage_clean": 0.0,
-                "mode_usage_prepare_return": 0.0,
+                "diag_rate_all": 0.0,
+                "diag_rate_contract": 0.0,
+                "diag_rate_return": 0.0,
+                "return_progress_per_step": 0.0,
+                "return_efficiency_ratio": 0.0,
+                "return_stall_rate": 0.0,
+                "recoverability_score_avg": 0.0,
+                "recoverability_violation_rate": 0.0,
+                "mode_usage_depart": 0.0,
+                "mode_usage_expand": 0.0,
+                "mode_usage_harvest": 0.0,
+                "mode_usage_contract": 0.0,
                 "mode_usage_return": 0.0,
                 "mode_usage_evade": 0.0,
             }
 
         modes = [int(rec.get("mode", -1)) for rec in step_records]
         targets = [int(rec.get("target", 0)) for rec in step_records]
+        anchors = [int(rec.get("route_anchor", 0)) for rec in step_records]
         slacks = [float(rec.get("charger_slack", 0.0)) for rec in step_records]
+        recoverability = [float(rec.get("future_recoverability_score", 0.0)) for rec in step_records]
+        anchor_dists = [float(rec.get("anchor_return_dist", 0.0)) for rec in step_records]
+        diag_actions = [float(rec.get("is_diag_action", 0.0)) for rec in step_records]
         total = float(len(step_records))
 
         target_steps = [t for t in targets if t > 0]
         target_switches = sum(1 for a, b in zip(target_steps, target_steps[1:]) if a != b)
         target_switch_rate = target_switches / max(len(target_steps) - 1, 1)
+        anchor_steps = [a for a in anchors if a > 0]
+        anchor_switches = sum(1 for a, b in zip(anchor_steps, anchor_steps[1:]) if a != b)
+        anchor_switch_rate = anchor_switches / max(len(anchor_steps) - 1, 1)
 
-        first_return_idx = next((idx for idx, mode in enumerate(modes) if mode in (1, 2)), None)
+        first_contract_idx = next((idx for idx, mode in enumerate(modes) if mode in (3, 4)), None)
+        late_contract_rate = 1.0 if first_contract_idx is not None and recoverability[first_contract_idx] < 0.0 else 0.0
+        first_return_idx = next((idx for idx, mode in enumerate(modes) if mode == 4), None)
         if first_return_idx is None:
             late_return_rate = 1.0
         else:
             late_return_rate = 1.0 if slacks[first_return_idx] < 0.0 else 0.0
 
+        contract_steps = [idx for idx, mode in enumerate(modes) if mode == 3]
+        return_steps = [idx for idx, mode in enumerate(modes) if mode == 4]
+        diag_rate_all = sum(diag_actions) / total
+        diag_rate_contract = sum(diag_actions[idx] for idx in contract_steps) / max(len(contract_steps), 1)
+        diag_rate_return = sum(diag_actions[idx] for idx in return_steps) / max(len(return_steps), 1)
+        route_phase_steps = [idx for idx, mode in enumerate(modes) if mode in (3, 4)]
+        progress_deltas = []
+        stall_count = 0
+        for prev_idx, cur_idx in zip(route_phase_steps, route_phase_steps[1:]):
+            progress = anchor_dists[prev_idx] - anchor_dists[cur_idx]
+            progress_deltas.append(progress)
+            if progress <= 0.0:
+                stall_count += 1
+        return_progress_per_step = float(sum(progress_deltas) / max(len(progress_deltas), 1))
+        return_efficiency_ratio = float(
+            (anchor_dists[route_phase_steps[0]] / max(len(route_phase_steps), 1))
+            if route_phase_steps and anchor_dists[route_phase_steps[0]] > 0.0
+            else 0.0
+        )
+        return_stall_rate = float(stall_count / max(len(progress_deltas), 1))
+
         return {
             "late_return_rate": float(late_return_rate),
+            "late_contract_rate": float(late_contract_rate),
+            "anchor_switch_rate": float(anchor_switch_rate),
             "target_switch_rate": float(target_switch_rate),
-            "mode_usage_clean": sum(1 for mode in modes if mode == 0) / total,
-            "mode_usage_prepare_return": sum(1 for mode in modes if mode == 1) / total,
-            "mode_usage_return": sum(1 for mode in modes if mode == 2) / total,
-            "mode_usage_evade": sum(1 for mode in modes if mode == 3) / total,
+            "diag_rate_all": float(diag_rate_all),
+            "diag_rate_contract": float(diag_rate_contract),
+            "diag_rate_return": float(diag_rate_return),
+            "return_progress_per_step": float(return_progress_per_step),
+            "return_efficiency_ratio": float(return_efficiency_ratio),
+            "return_stall_rate": float(return_stall_rate),
+            "recoverability_score_avg": float(sum(recoverability) / max(len(recoverability), 1)),
+            "recoverability_violation_rate": float(sum(1 for x in recoverability if x < 0.0) / max(len(recoverability), 1)),
+            "mode_usage_depart": sum(1 for mode in modes if mode == 0) / total,
+            "mode_usage_expand": sum(1 for mode in modes if mode == 1) / total,
+            "mode_usage_harvest": sum(1 for mode in modes if mode == 2) / total,
+            "mode_usage_contract": sum(1 for mode in modes if mode == 3) / total,
+            "mode_usage_return": sum(1 for mode in modes if mode == 4) / total,
+            "mode_usage_evade": sum(1 for mode in modes if mode == 5) / total,
         }
 
     def _build_monitor_payload(self, reward):
@@ -1062,9 +1156,21 @@ class EpisodeRunner:
             "avg_clean_score_win": round(m["avg_clean_score_win"], 2),
             "avg_expert_weight": round(m["avg_expert_weight"], 2),
             "late_return_rate": round(m["late_return_rate"], 4),
+            "late_contract_rate": round(m["late_contract_rate"], 4),
+            "anchor_switch_rate": round(m["anchor_switch_rate"], 4),
             "target_switch_rate": round(m["target_switch_rate"], 4),
-            "mode_usage_clean": round(m["mode_usage_clean"], 4),
-            "mode_usage_prepare_return": round(m["mode_usage_prepare_return"], 4),
+            "diag_rate_all": round(m["diag_rate_all"], 4),
+            "diag_rate_contract": round(m["diag_rate_contract"], 4),
+            "diag_rate_return": round(m["diag_rate_return"], 4),
+            "return_progress_per_step": round(m["return_progress_per_step"], 4),
+            "return_efficiency_ratio": round(m["return_efficiency_ratio"], 4),
+            "return_stall_rate": round(m["return_stall_rate"], 4),
+            "recoverability_score_avg": round(m["recoverability_score_avg"], 4),
+            "recoverability_violation_rate": round(m["recoverability_violation_rate"], 4),
+            "mode_usage_depart": round(m["mode_usage_depart"], 4),
+            "mode_usage_expand": round(m["mode_usage_expand"], 4),
+            "mode_usage_harvest": round(m["mode_usage_harvest"], 4),
+            "mode_usage_contract": round(m["mode_usage_contract"], 4),
             "mode_usage_return": round(m["mode_usage_return"], 4),
             "mode_usage_evade": round(m["mode_usage_evade"], 4),
             "anchor_win_rate": round(m["anchor_win_rate"], 4) if m["anchor_win_rate"] >= 0 else -1,

@@ -27,8 +27,11 @@ ActData = create_cls(
     value_survive=None,
     mode=None,
     mode_prob=None,
+    route_anchor=None,
+    route_anchor_prob=None,
     target=None,
     target_prob=None,
+    return_action_prob=None,
     aux_battery_risk=None,
     aux_collision_risk=None,
 )
@@ -48,9 +51,13 @@ SampleData = create_cls(
     advantage_survive=Config.SAMPLE_VALUE_DIM,
     prob=Config.SAMPLE_PROB_DIM,
     mode_teacher=Config.SAMPLE_MODE_DIM,
+    route_anchor_teacher=Config.SAMPLE_ROUTE_ANCHOR_DIM,
     target_teacher=Config.SAMPLE_TARGET_DIM,
     mode_teacher_mask=Config.SAMPLE_MODE_TEACHER_MASK_DIM,
+    route_anchor_teacher_mask=Config.SAMPLE_ROUTE_ANCHOR_MASK_DIM,
     target_teacher_mask=Config.SAMPLE_TARGET_TEACHER_MASK_DIM,
+    return_action_teacher=Config.SAMPLE_RETURN_ACTION_DIM,
+    return_action_teacher_mask=Config.SAMPLE_RETURN_ACTION_MASK_DIM,
     battery_risk_label=Config.SAMPLE_AUX_LABEL_DIM,
     collision_risk_label=Config.SAMPLE_AUX_LABEL_DIM,
     fallback_mask=Config.FALLBACK_MASK_DIM,
@@ -124,9 +131,13 @@ def sample_process(step_records, episode_idx=0):
     value_clean_seq = _to_scalar_sequence(step_records, "value_clean")
     value_survive_seq = _to_scalar_sequence(step_records, "value_survive")
     mode_teacher_seq = _to_int_sequence(step_records, "mode_teacher")
+    route_anchor_teacher_seq = _to_int_sequence(step_records, "route_anchor_teacher")
     target_teacher_seq = _to_int_sequence(step_records, "target_teacher")
     mode_teacher_mask_seq = _to_scalar_sequence(step_records, "mode_teacher_mask")
+    route_anchor_teacher_mask_seq = _to_scalar_sequence(step_records, "route_anchor_teacher_mask")
     target_teacher_mask_seq = _to_scalar_sequence(step_records, "target_teacher_mask")
+    return_action_teacher_seq = _to_int_sequence(step_records, "return_action_teacher")
+    return_action_teacher_mask_seq = _to_scalar_sequence(step_records, "return_action_teacher_mask")
     battery_risk_label_seq = _to_scalar_sequence(step_records, "battery_risk_label")
     collision_risk_label_seq = _to_scalar_sequence(step_records, "collision_risk_label")
     fallback_mask_seq = _to_scalar_sequence(step_records, "fallback_mask")
@@ -137,7 +148,9 @@ def sample_process(step_records, episode_idx=0):
 
     teacher_scale = _teacher_scale(episode_idx)
     mode_teacher_mask_seq = mode_teacher_mask_seq * teacher_scale
+    route_anchor_teacher_mask_seq = route_anchor_teacher_mask_seq * teacher_scale
     target_teacher_mask_seq = target_teacher_mask_seq * teacher_scale
+    return_action_teacher_mask_seq = return_action_teacher_mask_seq * teacher_scale
 
     samples = []
     chunk_len = Config.SEQ_CHUNK_LEN
@@ -161,9 +174,13 @@ def sample_process(step_records, episode_idx=0):
         adv_clean_chunk = _pad_seq(adv_clean_seq[sl], chunk_len, dtype=np.float32)
         adv_survive_chunk = _pad_seq(adv_survive_seq[sl], chunk_len, dtype=np.float32)
         mode_teacher_chunk = _pad_seq(mode_teacher_seq[sl], chunk_len, dtype=np.int64)
+        route_anchor_teacher_chunk = _pad_seq(route_anchor_teacher_seq[sl], chunk_len, dtype=np.int64)
         target_teacher_chunk = _pad_seq(target_teacher_seq[sl], chunk_len, dtype=np.int64)
         mode_teacher_mask_chunk = _pad_seq(mode_teacher_mask_seq[sl], chunk_len, dtype=np.float32)
+        route_anchor_teacher_mask_chunk = _pad_seq(route_anchor_teacher_mask_seq[sl], chunk_len, dtype=np.float32)
         target_teacher_mask_chunk = _pad_seq(target_teacher_mask_seq[sl], chunk_len, dtype=np.float32)
+        return_action_teacher_chunk = _pad_seq(return_action_teacher_seq[sl], chunk_len, dtype=np.int64)
+        return_action_teacher_mask_chunk = _pad_seq(return_action_teacher_mask_seq[sl], chunk_len, dtype=np.float32)
         battery_risk_chunk = _pad_seq(battery_risk_label_seq[sl], chunk_len, dtype=np.float32)
         collision_risk_chunk = _pad_seq(collision_risk_label_seq[sl], chunk_len, dtype=np.float32)
         fallback_mask_chunk = _pad_seq(fallback_mask_seq[sl], chunk_len, dtype=np.float32)
@@ -172,7 +189,9 @@ def sample_process(step_records, episode_idx=0):
         if actual_len < chunk_len:
             done_chunk[actual_len:] = 1.0
             mode_teacher_mask_chunk[actual_len:] = 0.0
+            route_anchor_teacher_mask_chunk[actual_len:] = 0.0
             target_teacher_mask_chunk[actual_len:] = 0.0
+            return_action_teacher_mask_chunk[actual_len:] = 0.0
             fallback_mask_chunk[actual_len:] = 1.0
 
         samples.append(
@@ -189,9 +208,13 @@ def sample_process(step_records, episode_idx=0):
                 advantage_survive=adv_survive_chunk.astype(np.float32),
                 prob=prob_chunk.reshape(-1).astype(np.float32),
                 mode_teacher=mode_teacher_chunk.astype(np.int64),
+                route_anchor_teacher=route_anchor_teacher_chunk.astype(np.int64),
                 target_teacher=target_teacher_chunk.astype(np.int64),
                 mode_teacher_mask=mode_teacher_mask_chunk.astype(np.float32),
+                route_anchor_teacher_mask=route_anchor_teacher_mask_chunk.astype(np.float32),
                 target_teacher_mask=target_teacher_mask_chunk.astype(np.float32),
+                return_action_teacher=return_action_teacher_chunk.astype(np.int64),
+                return_action_teacher_mask=return_action_teacher_mask_chunk.astype(np.float32),
                 battery_risk_label=battery_risk_chunk.astype(np.float32),
                 collision_risk_label=collision_risk_chunk.astype(np.float32),
                 fallback_mask=fallback_mask_chunk.astype(np.float32),

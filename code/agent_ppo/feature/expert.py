@@ -52,6 +52,7 @@ class ExpertPolicy:
     _NPC_DANGER_DECAY = 2.0
     _NPC_DANGER_RADIUS = 8
     _UNEXPLORED_COST = 1.8
+    _RECENT_TARGET_STEPS = 4
 
     def __init__(self):
         self._charger_list = []
@@ -176,6 +177,8 @@ class ExpertPolicy:
         unknown_path_ratio = self._unknown_path_ratio(prep, charger_path)
         target_gap = self._target_gap(prep, charger_target, charger_dist)
         target_stable = self._target_stable(prep, charger_target)
+        anchor_stable = self._anchor_stable(prep, charger_target)
+        action_margin = self._best_action_margin(prep, legal_action, charger_target)
         suggested_action = None
 
         if charger_path and len(charger_path) >= 2:
@@ -204,6 +207,16 @@ class ExpertPolicy:
             target_gap=target_gap,
             target_stable=target_stable,
         )
+        anchor_reliable = self._is_anchor_signal_reliable(
+            reachable=reachable,
+            charger_target=charger_target,
+            charger_dist=charger_dist,
+            target_gap=target_gap,
+            target_stable=target_stable,
+            anchor_stable=anchor_stable,
+            unknown_path_ratio=unknown_path_ratio,
+            min_npc_dist=min_npc_dist,
+        )
         mode_reliable = self._is_mode_signal_reliable(
             battery_ratio=battery_ratio,
             slack=slack,
@@ -211,6 +224,12 @@ class ExpertPolicy:
             target_reliable=target_reliable,
             on_charger=on_charger,
             reachable=reachable,
+        )
+        return_action_reliable = bool(
+            target_reliable
+            and suggested_action is not None
+            and legal_and_safe
+            and action_margin >= float(getattr(Config, "TEACHER_RETURN_ACTION_MARGIN_MIN", 1.0))
         )
 
         return {
@@ -226,11 +245,16 @@ class ExpertPolicy:
             "unknown_path_ratio": float(unknown_path_ratio),
             "target_gap": float(target_gap),
             "target_stable": bool(target_stable),
+            "anchor_stable": bool(anchor_stable),
+            "action_margin": float(action_margin),
             "suggested_action": suggested_action,
             "suggested_action_legal": legal_and_safe,
             "reachable": reachable,
             "target_reliable": bool(target_reliable),
+            "anchor_reliable": bool(anchor_reliable),
             "mode_reliable": bool(mode_reliable),
+            "return_action_reliable": bool(return_action_reliable),
+            "route_anchor": charger_target,
         }
 
     def is_target_teacher_reliable(self, prep, legal_action=None, last_action=-1):
@@ -251,23 +275,40 @@ class ExpertPolicy:
         slack = signal["slack"]
         on_charger = signal["on_charger"]
 
+        local_dirt_density = float(getattr(prep, "local_dirt_density", 0.0))
+        recoverability = float(getattr(prep, "future_recoverability_score", 0.0))
+        contract_pressure = float(getattr(prep, "route_contract_pressure", 0.0))
+        depart_steps = int(getattr(prep, "steps_since_charge", 999))
+
         if signal["min_npc_dist"] <= 2:
             mode = "evade"
-        elif on_charger and battery_ratio < self.RELIABLE_RETURN_RATIO:
+        elif battery_ratio <= Config.RETURN_BATTERY_RATIO or slack <= Config.RETURN_SLACK_THRESHOLD or recoverability <= Config.RETURN_RECOVERABILITY_THRESHOLD:
             mode = "return"
-        elif battery_ratio <= self.RELIABLE_RETURN_RATIO or slack <= 0:
-            mode = "return"
-        elif battery_ratio <= self.RELIABLE_PREPARE_RETURN_RATIO or slack <= self.RELIABLE_SLACK_BUFFER:
-            mode = "prepare_return"
+        elif (
+            battery_ratio <= Config.CONTRACT_BATTERY_RATIO
+            or slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD
+            or recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
+            or contract_pressure >= 0.5
+        ):
+            mode = "contract"
+        elif depart_steps <= Config.DEPART_STEPS:
+            mode = "depart"
+        elif local_dirt_density >= Config.HARVEST_DIRT_DENSITY:
+            mode = "harvest"
         else:
-            mode = "clean"
+            mode = "expand"
 
         return {
             "mode": mode,
+            "route_mode": mode,
+            "route_anchor": signal["charger_target"],
             "target": signal["charger_target"],
             "action": signal["suggested_action"],
+            "return_action": signal["suggested_action"],
             "mode_teacher_mask": float(signal["mode_reliable"]),
             "target_teacher_mask": float(signal["target_reliable"]),
+            "route_anchor_teacher_mask": float(signal["anchor_reliable"]),
+            "return_action_teacher_mask": float(signal["return_action_reliable"]),
             "signal": signal,
         }
 
@@ -556,7 +597,7 @@ class ExpertPolicy:
                     c2 = (0 <= z + dz < G) and cost_map[x, z + dz] < self._INF_COST
                     if not c1 and not c2:
                         continue
-                move = 1.414 if (dx != 0 and dz != 0) else 1.0
+                move = float(Config.DIAGONAL_MOVE_COST if (dx != 0 and dz != 0) else Config.ORTHOGONAL_MOVE_COST)
                 new_d = cur_d + step_cost * move
                 if new_d < dist_arr[nx, nz]:
                     dist_arr[nx, nz] = new_d
@@ -614,7 +655,7 @@ class ExpertPolicy:
                     c2 = (0 <= z + dz < G) and cost_map[x, z + dz] < self._INF_COST
                     if not c1 and not c2:
                         continue
-                move = 1.414 if (dx != 0 and dz != 0) else 1.0
+                move = float(Config.DIAGONAL_MOVE_COST if (dx != 0 and dz != 0) else Config.ORTHOGONAL_MOVE_COST)
                 new_d = cur_d + step_cost * move
                 if new_d < dist_arr[nx, nz]:
                     dist_arr[nx, nz] = new_d
@@ -735,6 +776,29 @@ class ExpertPolicy:
             return bool(reachable or target_reliable)
         return False
 
+    def _is_anchor_signal_reliable(
+        self,
+        reachable,
+        charger_target,
+        charger_dist,
+        target_gap,
+        target_stable,
+        anchor_stable,
+        unknown_path_ratio,
+        min_npc_dist,
+    ):
+        if not reachable or charger_target is None or not np.isfinite(charger_dist):
+            return False
+        if min_npc_dist <= self.RELIABLE_NPC_DIST:
+            return False
+        if unknown_path_ratio > float(getattr(Config, "TEACHER_UNKNOWN_PATH_RATIO_MAX", 0.20)):
+            return False
+        if target_gap < float(getattr(Config, "TEACHER_ANCHOR_MARGIN_MIN", 4.0)):
+            return False
+        if not target_stable or not anchor_stable:
+            return False
+        return True
+
     def _unknown_path_ratio(self, prep, path):
         if not path or len(path) <= 1:
             return 0.0
@@ -773,3 +837,28 @@ class ExpertPolicy:
         if checker is None:
             return True
         return bool(checker(tuple(charger_target)))
+
+    def _anchor_stable(self, prep, charger_target):
+        if charger_target is None:
+            return False
+        checker = getattr(prep, "is_route_anchor_stable", None)
+        if checker is None:
+            return True
+        return bool(checker(tuple(charger_target)))
+
+    def _best_action_margin(self, prep, legal_action, charger_target):
+        if legal_action is None or charger_target is None:
+            return 0.0
+        hx, hz = prep.cur_pos
+        tx, tz = charger_target
+        scores = []
+        for idx, (dx, dz) in enumerate(self.DELTAS):
+            if not legal_action[idx]:
+                continue
+            nx, nz = hx + dx, hz + dz
+            progress = max(abs(hx - tx), abs(hz - tz)) - max(abs(nx - tx), abs(nz - tz))
+            scores.append(float(progress))
+        if len(scores) < 2:
+            return float("inf") if scores else 0.0
+        scores.sort(reverse=True)
+        return float(scores[0] - scores[1])
