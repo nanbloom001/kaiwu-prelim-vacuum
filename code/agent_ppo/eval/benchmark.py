@@ -241,7 +241,18 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def,
         step += 1
         done = terminated or truncated
 
-        reward_scalar = float(agent.last_reward)
+        if isinstance(agent.last_reward, dict):
+            reward_scalar = float(
+                agent.last_reward.get(
+                    "reward_total",
+                    agent.last_reward.get(
+                        "total",
+                        agent.last_reward.get("reward_clean", 0.0) + agent.last_reward.get("reward_survive", 0.0),
+                    ),
+                )
+            )
+        else:
+            reward_scalar = float(agent.last_reward)
         total_reward += reward_scalar
 
         # Collect per-step diagnostics
@@ -255,6 +266,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def,
             "dirt_cleaned": fm.dirt_cleaned,
             "total_dirt": fm.total_dirt,
             "mode": fm.current_mode,
+            "target": int(np.asarray(getattr(act_data, "target", 0)).reshape(-1)[0]) if hasattr(act_data, "target") else 0,
             "charger_slack": round(fm.charger_slack, 2),
             "nearest_npc_dist": round(fm.nearest_npc_dist, 1),
             "invalid_move_count": fm.invalid_move_count,
@@ -291,6 +303,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def,
     finished_steps = float(env_info.get("finished_steps", step))
     charge_count = float(env_info.get("charge_count", 0))
     remaining_charge = float(env_info.get("remaining_charge", hero.get("battery", 0)))
+    diagnostics = _sequence_diagnostics(step_records)
 
     result = {
         "round": round_name,
@@ -306,6 +319,12 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def,
         "dirt_ratio": round(fm.dirt_cleaned / max(fm.total_dirt, 1), 4),
         "invalid_move_count": fm.invalid_move_count,
         "invalid_move_rate": round(fm.invalid_move_count / max(step, 1), 4),
+        "late_return_rate": round(diagnostics["late_return_rate"], 4),
+        "target_switch_rate": round(diagnostics["target_switch_rate"], 4),
+        "mode_usage_clean": round(diagnostics["mode_usage_clean"], 4),
+        "mode_usage_prepare_return": round(diagnostics["mode_usage_prepare_return"], 4),
+        "mode_usage_return": round(diagnostics["mode_usage_return"], 4),
+        "mode_usage_evade": round(diagnostics["mode_usage_evade"], 4),
         "step_log": str(ep_log_path.relative_to(session_dir)),
     }
 
@@ -345,6 +364,12 @@ def _aggregate_results(episode_results):
             "battery_fail_rate": round(len(fails_battery) / len(eps), 4) if eps else 0,
             "collision_fail_rate": round(len(fails_collision) / len(eps), 4) if eps else 0,
             "avg_invalid_move_rate": round(sum(e["invalid_move_rate"] for e in eps) / len(eps), 4),
+            "late_return_rate": round(sum(e.get("late_return_rate", 0.0) for e in eps) / len(eps), 4),
+            "target_switch_rate": round(sum(e.get("target_switch_rate", 0.0) for e in eps) / len(eps), 4),
+            "mode_usage_clean": round(sum(e.get("mode_usage_clean", 0.0) for e in eps) / len(eps), 4),
+            "mode_usage_prepare_return": round(sum(e.get("mode_usage_prepare_return", 0.0) for e in eps) / len(eps), 4),
+            "mode_usage_return": round(sum(e.get("mode_usage_return", 0.0) for e in eps) / len(eps), 4),
+            "mode_usage_evade": round(sum(e.get("mode_usage_evade", 0.0) for e in eps) / len(eps), 4),
             "episode_count": len(eps),
             "win_episode_count": len(wins),
         }
@@ -356,6 +381,8 @@ def _aggregate_results(episode_results):
         "avg_clean_score": round(sum(e["clean_score"] for e in all_eps) / len(all_eps), 1) if all_eps else 0,
         "avg_steps": round(sum(e["steps"] for e in all_eps) / len(all_eps), 1) if all_eps else 0,
         "avg_charge_count": round(sum(e["charge_count"] for e in all_eps) / len(all_eps), 2) if all_eps else 0,
+        "late_return_rate": round(sum(e.get("late_return_rate", 0.0) for e in all_eps) / len(all_eps), 4) if all_eps else 0,
+        "target_switch_rate": round(sum(e.get("target_switch_rate", 0.0) for e in all_eps) / len(all_eps), 4) if all_eps else 0,
         "episode_count": len(all_eps),
         "win_episode_count": len(wins),
     }
@@ -387,8 +414,46 @@ def _print_summary(aggregated, logger, elapsed):
     )
     logger.info(f"[BENCHMARK] ========== Done ({elapsed:.0f}s) ==========")
     logger.info(f"[BENCHMARK] Overall WR={o['win_rate']:.0%} CS={o['avg_clean_score']:.0f} "
-                f"({o['win_episode_count']}/{o['episode_count']})")
+                f"({o['win_episode_count']}/{o['episode_count']}) "
+                f"late_return={o.get('late_return_rate', 0):.0%} "
+                f"target_switch={o.get('target_switch_rate', 0):.0%}")
     logger.info(f"[BENCHMARK] {parts}")
+
+
+def _sequence_diagnostics(step_records):
+    if not step_records:
+        return {
+            "late_return_rate": 0.0,
+            "target_switch_rate": 0.0,
+            "mode_usage_clean": 0.0,
+            "mode_usage_prepare_return": 0.0,
+            "mode_usage_return": 0.0,
+            "mode_usage_evade": 0.0,
+        }
+
+    modes = [int(rec.get("mode", -1)) for rec in step_records]
+    targets = [int(rec.get("target", 0)) for rec in step_records]
+    slacks = [float(rec.get("charger_slack", 0.0)) for rec in step_records]
+    total = float(len(step_records))
+
+    target_steps = [t for t in targets if t > 0]
+    target_switches = sum(1 for a, b in zip(target_steps, target_steps[1:]) if a != b)
+    target_switch_rate = target_switches / max(len(target_steps) - 1, 1)
+
+    first_return_idx = next((idx for idx, mode in enumerate(modes) if mode in (1, 2)), None)
+    if first_return_idx is None:
+        late_return_rate = 1.0
+    else:
+        late_return_rate = 1.0 if slacks[first_return_idx] < 0.0 else 0.0
+
+    return {
+        "late_return_rate": float(late_return_rate),
+        "target_switch_rate": float(target_switch_rate),
+        "mode_usage_clean": sum(1 for mode in modes if mode == 0) / total,
+        "mode_usage_prepare_return": sum(1 for mode in modes if mode == 1) / total,
+        "mode_usage_return": sum(1 for mode in modes if mode == 2) / total,
+        "mode_usage_evade": sum(1 for mode in modes if mode == 3) / total,
+    }
 
 
 # ---------------------------------------------------------------------------

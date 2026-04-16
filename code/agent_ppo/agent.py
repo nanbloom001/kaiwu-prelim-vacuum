@@ -186,6 +186,10 @@ def _patch_remote_agent_batch_learn() -> None:
                 del kwargs["framework"]
             if isinstance(list_sample_data, (torch.Tensor, np.ndarray)):
                 return business_learn(self, list_sample_data, *args, **kwargs)
+            if isinstance(list_sample_data, (list, tuple)) and list_sample_data:
+                first = list_sample_data[0]
+                if isinstance(first, (torch.Tensor, np.ndarray)):
+                    return business_learn(self, list_sample_data, *args, **kwargs)
 
         return original_learn(self, list_sample_data, *args, **kwargs)
 
@@ -267,6 +271,10 @@ class Agent(BaseAgent):
         self.archive = ExperimentArchive()
         self.last_action = -1
         self.last_reward = 0.0
+        self.reward_components = {}
+        self.rnn_state = None
+        self._last_expert_weight = 0.0
+        self._last_fallback_active = 0.0
         self.current_model_ref = {
             "path": None,
             "id": None,
@@ -333,6 +341,10 @@ class Agent(BaseAgent):
         self.preprocessor.expert.reset()
         self.last_action = -1
         self.last_reward = 0.0
+        self.reward_components = {}
+        self.rnn_state = None
+        self._last_expert_weight = 0.0
+        self._last_fallback_active = 0.0
 
     def observation_process(self, env_obs):
         """Convert raw env_obs to ObsData (enhanced feature vector + legal action mask).
@@ -340,8 +352,17 @@ class Agent(BaseAgent):
         将原始 env_obs 转换为 ObsData（69D 特征 + 合法动作掩码）。
         """
         feature, legal_action, reward, reward_components = self.preprocessor.feature_process(env_obs, self.last_action)
-        self.last_reward = reward
-        self.reward_components = reward_components
+        if isinstance(reward_components, dict):
+            reward_payload = dict(reward_components)
+            reward_payload.setdefault("reward_total", float(reward))
+            reward_payload.setdefault("reward_clean", float(reward))
+            reward_payload.setdefault("reward_survive", 0.0)
+            reward_payload["fallback_mask"] = float(self._last_fallback_active)
+            self.last_reward = reward_payload
+            self.reward_components = reward_payload
+        else:
+            self.last_reward = float(reward)
+            self.reward_components = {}
 
         obs_data = ObsData(
             feature=list(feature),
@@ -369,52 +390,50 @@ class Agent(BaseAgent):
         feature = obs_data.feature
         legal_action = obs_data.legal_action
 
-        logits, value = self._run_model(feature)
+        outputs = self._run_model(feature)
+        logits = outputs["policy_logits"]
+        value_clean = outputs["value_clean"]
+        value_survive = outputs["value_survive"]
+        value_total = value_clean + value_survive
+        mode_probs = outputs["mode_probs"]
+        target_probs = outputs["target_probs"]
         expert = self.preprocessor.expert
-        self._last_expert_weight = 0.0  # default: no expert bias
+        self._last_expert_weight = 0.0
+        self._last_fallback_active = 0.0
 
-        # Layer 1: NPC safety filter — block moves toward nearby NPCs (first!)
         filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
+        legal_arr = np.array(filtered_legal, dtype=np.float32)
+        clean_prob = self._legal_soft_max(logits, legal_arr)
+
+        fallback = expert.get_emergency_fallback(
+            self.preprocessor,
+            filtered_legal,
+            last_action=self.last_action,
+        )
+        if fallback.get("active") and fallback.get("action") is not None:
+            self._last_fallback_active = 1.0
 
         if use_hard_override:
-            # Evaluation mode: hard expert override for max survival
-            should_override, expert_action = expert.get_override(
-                self.preprocessor, filtered_legal, last_action=self.last_action
-            )
-            if should_override:
-                legal_arr = np.array(filtered_legal, dtype=np.float32)
-                prob = self._legal_soft_max(logits, legal_arr)
+            if fallback.get("active") and fallback.get("action") is not None:
+                expert_action = int(fallback["action"])
                 return [
                     ActData(
                         action=[expert_action],
                         d_action=[expert_action],
-                        prob=list(prob),
-                        value=value,
+                        prob=list(clean_prob),
+                        value=np.array([value_total], dtype=np.float32),
+                        value_clean=np.array([value_clean], dtype=np.float32),
+                        value_survive=np.array([value_survive], dtype=np.float32),
+                        mode=np.array([int(np.argmax(mode_probs))], dtype=np.int64),
+                        mode_prob=np.array(mode_probs, dtype=np.float32),
+                        target=np.array([int(np.argmax(target_probs))], dtype=np.int64),
+                        target_prob=np.array(target_probs, dtype=np.float32),
+                        aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
+                        aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
                     )
                 ]
-        else:
-            # Training mode: soft expert logit bias with clean prob storage
-            expert_bias = expert.get_logit_bias(
-                self.preprocessor, filtered_legal, last_action=self.last_action
-            )
 
-            # Expert annealing: gradually reduce bias as training progresses
-            if Config.EXPERT_ANNEAL_START_EPISODE > 0:
-                episode = getattr(self, '_predict_episode_idx', 0)
-                if episode >= Config.EXPERT_ANNEAL_START_EPISODE:
-                    progress = min(
-                        (episode - Config.EXPERT_ANNEAL_START_EPISODE)
-                        / max(Config.EXPERT_ANNEAL_END_EPISODE - Config.EXPERT_ANNEAL_START_EPISODE, 1),
-                        1.0,
-                    )
-                    scale = 1.0 - progress * (1.0 - Config.EXPERT_ANNEAL_MIN_SCALE)
-                    expert_bias = expert_bias * scale
-
-            self._last_expert_weight = float(max(0.0, np.max(expert_bias)))
-
-        # Layer 2: Anti-stuck — random legal action if stuck too long
-        # Skip anti-stuck during expert return_mode (Expert handles stuck via blocked cells + A*)
-        if self.preprocessor.stuck_steps >= 10 and not expert.return_mode:
+        if self.preprocessor.stuck_steps >= 10 and not fallback.get("active"):
             legal_indices = [i for i, l in enumerate(filtered_legal) if l]
             if legal_indices:
                 random_action = int(np.random.choice(legal_indices))
@@ -424,30 +443,41 @@ class Agent(BaseAgent):
                         action=[random_action],
                         d_action=[random_action],
                         prob=prob,
-                        value=value,
+                        value=np.array([value_total], dtype=np.float32),
+                        value_clean=np.array([value_clean], dtype=np.float32),
+                        value_survive=np.array([value_survive], dtype=np.float32),
+                        mode=np.array([int(np.argmax(mode_probs))], dtype=np.int64),
+                        mode_prob=np.array(mode_probs, dtype=np.float32),
+                        target=np.array([int(np.argmax(target_probs))], dtype=np.int64),
+                        target_prob=np.array(target_probs, dtype=np.float32),
+                        aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
+                        aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
                     )
                 ]
 
-        # RL decision
-        legal_arr = np.array(filtered_legal, dtype=np.float32)
-        clean_prob = self._legal_soft_max(logits, legal_arr)
-
-        if not use_hard_override and np.any(expert_bias > 0):
-            # Training with bias: sample from biased distribution
-            biased_logits = logits + np.array(expert_bias, dtype=np.float32)
-            biased_prob = self._legal_soft_max(biased_logits, legal_arr)
-            action = self._legal_sample(biased_prob, use_max=False)
-            d_action = self._legal_sample(biased_prob, use_max=True)
+        if fallback.get("active") and fallback.get("action") is not None:
+            action = int(fallback["action"])
+            d_action = action
         else:
             action = self._legal_sample(clean_prob, use_max=False)
             d_action = self._legal_sample(clean_prob, use_max=True)
 
+        mode = int(np.argmax(mode_probs))
+        target = int(np.argmax(target_probs))
         return [
             ActData(
                 action=[action],
                 d_action=[d_action],
                 prob=list(clean_prob),
-                value=value,
+                value=np.array([value_total], dtype=np.float32),
+                value_clean=np.array([value_clean], dtype=np.float32),
+                value_survive=np.array([value_survive], dtype=np.float32),
+                mode=np.array([mode], dtype=np.int64),
+                mode_prob=np.array(mode_probs, dtype=np.float32),
+                target=np.array([target], dtype=np.int64),
+                target_prob=np.array(target_probs, dtype=np.float32),
+                aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
+                aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
             )
         ]
 
@@ -571,20 +601,24 @@ class Agent(BaseAgent):
         return self._last_loaded_model_mtime_ns != model_mtime_ns
 
     def _run_model(self, feature):
-        """Gradient-free forward pass, returns (logits_np, value_np).
-
-        无梯度推理，返回 (logits_np, value_np)。
-        """
+        """Gradient-free forward pass using the recurrent LTSPPO model."""
         self.model.set_eval_mode()
         obs_tensor = (
             torch.tensor(np.array([feature], dtype=np.float32)).view(1, Config.DIM_OF_OBSERVATION).to(self.device)
         )
         self._log_runtime_probe("predict", {"input": _describe_runtime_value(obs_tensor)})
         with torch.no_grad():
-            rst = self.model(obs_tensor, inference=True)
-        logits = rst[0].cpu().numpy()[0]
-        value = rst[1].cpu().numpy()[0]
-        return logits, value
+            rst = self.model(obs_tensor, rnn_state=self.rnn_state, inference=True)
+        self.rnn_state = rst["next_rnn_state"]
+        return {
+            "policy_logits": rst["policy_logits"].cpu().numpy()[0],
+            "mode_probs": rst["mode_probs"].cpu().numpy()[0],
+            "target_probs": rst["target_probs"].cpu().numpy()[0],
+            "value_clean": float(rst["value_clean"].cpu().numpy()[0][0]),
+            "value_survive": float(rst["value_survive"].cpu().numpy()[0][0]),
+            "aux_battery_risk": float(rst["aux_battery_risk"].cpu().numpy()[0][0]),
+            "aux_collision_risk": float(rst["aux_collision_risk"].cpu().numpy()[0][0]),
+        }
 
     def _uniform_over_legal(self, legal_action):
         """Uniform distribution over legal actions (for stable PPO ratio)."""

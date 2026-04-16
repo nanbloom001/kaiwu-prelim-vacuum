@@ -18,7 +18,7 @@ import numpy as np
 import torch
 
 from agent_ppo.conf.conf import Config
-from agent_ppo.feature.definition import SampleData, sample_process
+from agent_ppo.feature.definition import sample_process
 from agent_ppo.utils.experiment_archive import ExperimentArchive, infer_fail_reason
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
 from tools.metrics_utils import get_training_metrics
@@ -514,6 +514,12 @@ class EpisodeRunner:
             "avg_charge_efficiency": sum(ep["charge_efficiency"] for ep in buf) / n,
             "avg_clean_per_step": sum(ep["clean_per_step"] for ep in buf) / n,
             "avg_expert_weight": sum(ep["expert_weight"] for ep in buf) / n,
+            "late_return_rate": sum(ep.get("late_return_rate", 0.0) for ep in buf) / n,
+            "target_switch_rate": sum(ep.get("target_switch_rate", 0.0) for ep in buf) / n,
+            "mode_usage_clean": sum(ep.get("mode_usage_clean", 0.0) for ep in buf) / n,
+            "mode_usage_prepare_return": sum(ep.get("mode_usage_prepare_return", 0.0) for ep in buf) / n,
+            "mode_usage_return": sum(ep.get("mode_usage_return", 0.0) for ep in buf) / n,
+            "mode_usage_evade": sum(ep.get("mode_usage_evade", 0.0) for ep in buf) / n,
             "battery_fail_rate": sum(1 for ep in buf if ep["result"] == "battery") / n,
             "collision_fail_rate": sum(1 for ep in buf if ep["result"] == "collision") / n,
             "cps_win": (sum(ep["clean_per_step"] for ep in wins) / w) if w else 0.0,
@@ -620,7 +626,7 @@ class EpisodeRunner:
             obs_data, _ = self.agent.observation_process(env_obs)
             self.perf_window.add("observation_process", (time.perf_counter() - obs_begin) * 1000.0)
 
-            collector = []
+            step_records = []
             self.episode_cnt += 1
             self.agent._predict_episode_idx = self.episode_cnt
             done = False
@@ -673,8 +679,9 @@ class EpisodeRunner:
                 self.perf_window.add("observation_process", (time.perf_counter() - next_obs_begin) * 1000.0)
                 next_obs_data.frame_no = frame_no
 
-                reward_scalar = float(self.agent.last_reward)
-                total_reward += reward_scalar
+                reward_payload = self._normalize_reward_payload(getattr(self.agent, "last_reward", 0.0))
+                reward_total = float(reward_payload["reward_total"])
+                total_reward += reward_total
 
                 final_reward = 0.0
                 if done:
@@ -686,29 +693,35 @@ class EpisodeRunner:
                         total_reward=total_reward,
                         sampled_env_conf=sampled_env_conf,
                         sampled_meta=sampled_meta,
+                        step_records=step_records,
                     )
 
-                reward_arr = np.array([reward_scalar], dtype=np.float32)
-                value_arr = act_data.value.flatten()[: Config.VALUE_NUM]
-
-                collector.append(
-                    SampleData(
-                        obs=np.array(obs_data.feature, dtype=np.float32),
-                        legal_action=np.array(obs_data.legal_action, dtype=np.float32),
-                        act=np.array(act_data.action),
-                        reward=reward_arr,
-                        done=np.array([float(done)]),
-                        reward_sum=np.zeros(Config.VALUE_NUM, dtype=np.float32),
-                        value=value_arr,
-                        next_value=np.zeros(Config.VALUE_NUM, dtype=np.float32),
-                        advantage=np.zeros(Config.VALUE_NUM, dtype=np.float32),
-                        prob=np.array(act_data.prob, dtype=np.float32),
-                        expert_weight=np.array([getattr(self.agent, '_last_expert_weight', 0.0)], dtype=np.float32),
-                    )
+                step_records.append(
+                    {
+                        "obs": np.array(obs_data.feature, dtype=np.float32),
+                        "legal_action": np.array(obs_data.legal_action, dtype=np.float32),
+                        "act": int(np.asarray(act_data.action).reshape(-1)[0]),
+                        "prob": np.array(act_data.prob, dtype=np.float32).reshape(-1),
+                        "done": float(done),
+                        "reward_clean": float(reward_payload["reward_clean"]),
+                        "reward_survive": float(reward_payload["reward_survive"]),
+                        "value_clean": float(self._scalar_from_any(getattr(act_data, "value_clean", None))),
+                        "value_survive": float(self._scalar_from_any(getattr(act_data, "value_survive", None))),
+                        "mode": int(self._scalar_from_any(getattr(act_data, "mode", -1), default=-1)),
+                        "target": int(self._scalar_from_any(getattr(act_data, "target", 0), default=0)),
+                        "charger_slack": float(getattr(self.agent.preprocessor, "charger_slack", 0.0)),
+                        "mode_teacher": int(reward_payload["mode_teacher"]),
+                        "target_teacher": int(reward_payload["target_teacher"]),
+                        "teacher_mask": float(reward_payload["teacher_mask"]),
+                        "battery_risk_label": float(reward_payload["battery_risk_label"]),
+                        "collision_risk_label": float(reward_payload["collision_risk_label"]),
+                        "fallback_mask": float(reward_payload["fallback_mask"]),
+                        "expert_weight": float(getattr(self.agent, "_last_expert_weight", 0.0)),
+                    }
                 )
 
                 if done:
-                    collector[-1].reward = collector[-1].reward + np.array([final_reward], dtype=np.float32)
+                    step_records[-1]["reward_survive"] = float(step_records[-1]["reward_survive"]) + float(final_reward)
 
                     if self.is_new_best:
                         self._save_best_model(self.last_clean_score)
@@ -732,9 +745,9 @@ class EpisodeRunner:
                         self.monitor.put_data({os.getpid(): self._build_monitor_payload(total_reward + final_reward)})
                         self.last_report_monitor_time = now
 
-                    if collector:
+                    if step_records:
                         sample_process_begin = time.perf_counter()
-                        collector = sample_process(collector)
+                        collector = sample_process(step_records, episode_idx=self.episode_cnt)
                         self.perf_window.add("sample_process", (time.perf_counter() - sample_process_begin) * 1000.0)
                         self.perf_window.add("episodes_yielded", 0.0, count=1)
                         self.perf_window.add("samples_built", 0.0, count=len(collector))
@@ -743,7 +756,7 @@ class EpisodeRunner:
 
                 obs_data = next_obs_data
 
-    def _handle_episode_end(self, env_obs, terminated, truncated, step, total_reward, sampled_env_conf, sampled_meta):
+    def _handle_episode_end(self, env_obs, terminated, truncated, step, total_reward, sampled_env_conf, sampled_meta, step_records):
         observation = env_obs.get("observation") or {}
         frame_state = observation.get("frame_state") or {}
         env_info = observation.get("env_info") or {}
@@ -805,6 +818,7 @@ class EpisodeRunner:
         remaining_charge = float(env_info.get("remaining_charge", battery or 0))
         charge_efficiency = clean_score / max(charge_count, 1.0)
         clean_per_step = clean_score / max(finished_steps, 1.0)
+        diagnostics = self._episode_sequence_diagnostics(step_records)
 
         self.episode_history.append({
             "result": fail_reason,
@@ -818,6 +832,12 @@ class EpisodeRunner:
             "expert_weight": getattr(self.agent, '_last_expert_weight', 0.0),
             "profile": sampled_meta['profile'],
             "total_reward": total_reward + final_reward,
+            "late_return_rate": diagnostics["late_return_rate"],
+            "target_switch_rate": diagnostics["target_switch_rate"],
+            "mode_usage_clean": diagnostics["mode_usage_clean"],
+            "mode_usage_prepare_return": diagnostics["mode_usage_prepare_return"],
+            "mode_usage_return": diagnostics["mode_usage_return"],
+            "mode_usage_evade": diagnostics["mode_usage_evade"],
         })
 
         map_id = extra_info.get("map_id") or extra_info.get("map_code") or "?"
@@ -940,6 +960,83 @@ class EpisodeRunner:
 
         return final_reward
 
+    @staticmethod
+    def _scalar_from_any(value, default=0.0):
+        if value is None:
+            return float(default)
+        arr = np.asarray(value, dtype=np.float32).reshape(-1)
+        if arr.size == 0:
+            return float(default)
+        return float(arr[0])
+
+    def _normalize_reward_payload(self, reward):
+        if isinstance(reward, dict):
+            reward_clean = float(reward.get("reward_clean", reward.get("clean", 0.0)))
+            reward_survive = float(
+                reward.get("reward_survive", reward.get("survive", reward.get("total", reward_clean)))
+            )
+            reward_total = float(reward.get("reward_total", reward.get("total", reward_clean + reward_survive)))
+            return {
+                "reward_clean": reward_clean,
+                "reward_survive": reward_survive,
+                "reward_total": reward_total,
+                "mode_teacher": int(reward.get("mode_teacher", -1)),
+                "target_teacher": int(reward.get("target_teacher", 0)),
+                "teacher_mask": float(reward.get("teacher_mask", 0.0)),
+                "battery_risk_label": float(reward.get("battery_risk_label", 0.0)),
+                "collision_risk_label": float(reward.get("collision_risk_label", 0.0)),
+                "fallback_mask": float(reward.get("fallback_mask", 0.0)),
+            }
+
+        reward_scalar = float(reward)
+        return {
+            "reward_clean": reward_scalar,
+            "reward_survive": 0.0,
+            "reward_total": reward_scalar,
+            "mode_teacher": -1,
+            "target_teacher": 0,
+            "teacher_mask": 0.0,
+            "battery_risk_label": 0.0,
+            "collision_risk_label": 0.0,
+            "fallback_mask": 0.0,
+        }
+
+    @staticmethod
+    def _episode_sequence_diagnostics(step_records):
+        if not step_records:
+            return {
+                "late_return_rate": 0.0,
+                "target_switch_rate": 0.0,
+                "mode_usage_clean": 0.0,
+                "mode_usage_prepare_return": 0.0,
+                "mode_usage_return": 0.0,
+                "mode_usage_evade": 0.0,
+            }
+
+        modes = [int(rec.get("mode", -1)) for rec in step_records]
+        targets = [int(rec.get("target", 0)) for rec in step_records]
+        slacks = [float(rec.get("charger_slack", 0.0)) for rec in step_records]
+        total = float(len(step_records))
+
+        target_steps = [t for t in targets if t > 0]
+        target_switches = sum(1 for a, b in zip(target_steps, target_steps[1:]) if a != b)
+        target_switch_rate = target_switches / max(len(target_steps) - 1, 1)
+
+        first_return_idx = next((idx for idx, mode in enumerate(modes) if mode in (1, 2)), None)
+        if first_return_idx is None:
+            late_return_rate = 1.0
+        else:
+            late_return_rate = 1.0 if slacks[first_return_idx] < 0.0 else 0.0
+
+        return {
+            "late_return_rate": float(late_return_rate),
+            "target_switch_rate": float(target_switch_rate),
+            "mode_usage_clean": sum(1 for mode in modes if mode == 0) / total,
+            "mode_usage_prepare_return": sum(1 for mode in modes if mode == 1) / total,
+            "mode_usage_return": sum(1 for mode in modes if mode == 2) / total,
+            "mode_usage_evade": sum(1 for mode in modes if mode == 3) / total,
+        }
+
     def _build_monitor_payload(self, reward):
         m = self._window_metrics()
         if not m:
@@ -961,6 +1058,12 @@ class EpisodeRunner:
             "avg_charge_count_win": round(m["avg_charge_count_win"], 2),
             "avg_clean_score_win": round(m["avg_clean_score_win"], 2),
             "avg_expert_weight": round(m["avg_expert_weight"], 2),
+            "late_return_rate": round(m["late_return_rate"], 4),
+            "target_switch_rate": round(m["target_switch_rate"], 4),
+            "mode_usage_clean": round(m["mode_usage_clean"], 4),
+            "mode_usage_prepare_return": round(m["mode_usage_prepare_return"], 4),
+            "mode_usage_return": round(m["mode_usage_return"], 4),
+            "mode_usage_evade": round(m["mode_usage_evade"], 4),
             "anchor_win_rate": round(m["anchor_win_rate"], 4) if m["anchor_win_rate"] >= 0 else -1,
             "mild_win_rate": round(m["mild_win_rate"], 4) if m["mild_win_rate"] >= 0 else -1,
             "broad_win_rate": round(m["broad_win_rate"], 4) if m["broad_win_rate"] >= 0 else -1,

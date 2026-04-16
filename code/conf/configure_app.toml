@@ -2,11 +2,14 @@
 
 # Replay buffer configurations
 # 样本池容量
-replay_buffer_capacity = 50000
+# LTSPPO 将单步样本改为 16-step chunk，单个 sample 体积显著增大。
+# 旧的 50000 容量会让 learner 长时间停在 buffer 预热阶段，难以启动训练。
+replay_buffer_capacity = 1024
 
 # The ratio of the sample pool capacity that triggers training
 # 当样本池中的样本占总容量的比例达到该值时，启动训练
-preload_ratio = 1.0
+# recurrent chunk 产样速度比旧单步 sample 慢，预热阈值需要同步下调。
+preload_ratio = 0.25
 
 # When new samples are added to the sample pool, the logic for removing old samples: reverb.selectors.Lifo, reverb.selectors.Fifo
 # 当新样本加入样本池时，旧样本的移除逻辑，可选项：reverb.selectors.Lifo, reverb.selectors.Fifo
@@ -21,7 +24,7 @@ reverb_remover = "reverb.selectors.Fifo"
 # reverb.selectors.Fifo：Samples are selected in the order they were added to the replay buffer.
 # reverb.selectors.Fifo：按照先进先出从回放缓冲区中选择样本。
 reverb_sampler = "reverb.selectors.Fifo"
-send_sample_size = 4096
+send_sample_size = 512
 
 # Control strategy for balancing data insertion and sampling in experience replay. Options: SampleToInsertRatio, MinSize
 # 控制经验回放库中数据插入与采样的动态平衡策略，可选项：SampleToInsertRatio, MinSize
@@ -41,7 +44,8 @@ reverb_error_buffer = 5
 
 # Training batch size limit for Learner
 # Learner训练时样本批处理大小
-train_batch_size = 4096
+# 对 chunk sample 保持较小 batch，先保证训练能稳定启动。
+train_batch_size = 128
 
 # Model dump frequency (steps)
 # 训练间隔多少步输出模型参数文件

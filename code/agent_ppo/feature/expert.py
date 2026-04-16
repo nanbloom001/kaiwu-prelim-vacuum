@@ -1,14 +1,20 @@
-"""Expert policy: NPC safety filter + weighted A* charger navigation with hysteresis.
+"""LTSPPO expert utilities: NPC safety filter + charger planning signals + emergency fallback.
 
-Three layers:
-  - Layer 1: NPC collision safety (always active, blocks dangerous NPC directions)
-  - Layer 2: Battery return with hysteresis state machine + A* actual path distance
-  - Layer 3: Blocked cell memory + path caching for efficient replanning
+This module intentionally no longer provides regular charging policy guidance.
 
-Charging state machine:
-  - return_mode flag persists once triggered until battery >= 95% AND on charger
-  - Uses A* actual path distance (not Chebyshev) for accurate threshold
-  - Dynamic margin based on path complexity
+What remains:
+  - NPC collision safety filter for legal-action masking
+  - Weighted A* charger planning as a signal / fallback utility
+  - Blocked-cell memory to stabilize replanning
+  - Explicit extreme-emergency fallback path for agent runtime use
+  - Helper methods for teacher / target reliability checks
+
+What is removed from policy guidance:
+  - No regular charging logit bias
+  - No regular return-mode hysteresis controlling normal policy behavior
+
+`return_mode` is kept only as a compatibility flag for "extreme emergency fallback
+currently active", so existing runtime code can still suppress anti-stuck logic.
 """
 from __future__ import annotations
 
@@ -25,41 +31,48 @@ class ExpertPolicy:
         (-1, 0), (-1, 1), (0, 1), (1, 1),
     )
 
-    # Charging state machine parameters
-    EXIT_RETURN_RATIO = 0.95       # Leave return_mode when battery >= 95% and on charger
-    LOW_BATTERY_RATIO = 0.32       # Force return_mode when battery < 32%
-    BASE_RETURN_MARGIN = 18.0      # Base safety margin for return threshold
+    # Compatibility / fallback control
+    EXIT_EMERGENCY_RATIO = 0.12
+    EMERGENCY_RATIO = float(getattr(Config, "EXPERT_EMERGENCY_BATTERY_RATIO", 0.05))
+    EMERGENCY_SLACK_MARGIN = 0.0
+    EMERGENCY_PATH_MARGIN = 2.0
+
+    # Reliability thresholds for teacher signals
+    RELIABLE_NPC_DIST = 4
+    RELIABLE_SLACK_BUFFER = 6.0
+    RELIABLE_RETURN_RATIO = 0.35
+    RELIABLE_PREPARE_RETURN_RATIO = 0.50
 
     # Blocked cell memory
-    BLOCKED_TTL = 8                # Steps before blocked cell expires
+    BLOCKED_TTL = 8
 
     # Cost-map parameters
     _INF_COST = 1e6
-    _NPC_DANGER_MAX = 15.0         # peak danger cost at NPC position
-    _NPC_DANGER_DECAY = 2.0        # exponential decay rate
-    _NPC_DANGER_RADIUS = 8         # Chebyshev radius of danger zone
-    _UNEXPLORED_COST = 1.8         # moderate cost for unexplored (passable but uncertain)
+    _NPC_DANGER_MAX = 15.0
+    _NPC_DANGER_DECAY = 2.0
+    _NPC_DANGER_RADIUS = 8
+    _UNEXPLORED_COST = 1.8
 
     def __init__(self):
         self._charger_list = []
-        # Charging state machine
-        self.return_mode = False
-        # Path caching
-        self._cached_path = []          # List[(x, z)]
-        self._cached_distance = float('inf')
-        self._cached_target = None
-        # Blocked cell memory
-        self.blocked_cells = {}         # Dict[(x, z), int] TTL countdown
-        self._prev_pos = None
-
-    def reset(self):
-        """Reset per-episode state."""
         self.return_mode = False
         self._cached_path = []
-        self._cached_distance = float('inf')
+        self._cached_distance = float("inf")
         self._cached_target = None
         self.blocked_cells = {}
         self._prev_pos = None
+        self._last_emergency_reason = None
+
+    def reset(self):
+        """Reset per-episode state."""
+        self._charger_list = []
+        self.return_mode = False
+        self._cached_path = []
+        self._cached_distance = float("inf")
+        self._cached_target = None
+        self.blocked_cells = {}
+        self._prev_pos = None
+        self._last_emergency_reason = None
 
     # ------------------------------------------------------------------
     # Charger tracking
@@ -77,9 +90,7 @@ class ExpertPolicy:
             self._charger_list.append((cx, cz, w, h))
 
     def _is_on_charger(self, x, z):
-        """Check if position is within any charger region."""
-        return any(abs(x - cx) <= w and abs(z - cz) <= h
-                   for cx, cz, w, h in self._charger_list)
+        return any(abs(x - cx) <= w and abs(z - cz) <= h for cx, cz, w, h in self._charger_list)
 
     # ------------------------------------------------------------------
     # Layer 1: NPC safety filter
@@ -99,11 +110,9 @@ class ExpertPolicy:
                 if not legal[idx]:
                     continue
                 nx2, nz2 = hx + dx, hz + dz
-                # Block stepping directly onto NPC
                 if nx2 == nx and nz2 == nz:
                     legal[idx] = 0
                     continue
-                # Block all moves that reduce Chebyshev distance when NPC is very close
                 if npc_dist <= 3:
                     new_dist = max(abs(nx2 - nx), abs(nz2 - nz))
                     if new_dist < npc_dist:
@@ -126,14 +135,12 @@ class ExpertPolicy:
         """Track cells that blocked movement (action executed but position unchanged)."""
         cur = prep.cur_pos
 
-        # Decay TTL
         expired = [k for k, v in self.blocked_cells.items() if v <= 1]
         for k in expired:
             del self.blocked_cells[k]
         for k in list(self.blocked_cells):
             self.blocked_cells[k] -= 1
 
-        # Detect blocked movement
         if self._prev_pos is not None and cur == self._prev_pos and last_action is not None and last_action >= 0:
             dx, dz = self.DELTAS[last_action]
             tx, tz = cur[0] + dx, cur[1] + dz
@@ -143,168 +150,229 @@ class ExpertPolicy:
         self._prev_pos = cur
 
     # ------------------------------------------------------------------
-    # Layer 2: Battery charging evaluation (shared logic)
+    # Public planning / reliability helpers
     # ------------------------------------------------------------------
 
-    def _evaluate_return(self, prep, legal_action, last_action=-1):
-        """Shared charging evaluation logic.
-
-        Returns (should_return, expert_action, charger_dist, margin).
-        Used by both get_override() and get_logit_bias().
-        """
+    def get_charger_signal(self, prep, legal_action=None, last_action=-1, refresh_state=False):
+        """Return structured charger-planning information without controlling policy."""
         self.update_chargers(prep)
-        self.update_blocked(prep, last_action)
+        if refresh_state:
+            self.update_blocked(prep, last_action)
 
         hx, hz = prep.cur_pos
-        battery_ratio = prep.battery / max(prep.battery_max, 1.0)
+        battery = float(getattr(prep, "battery", 0.0))
+        battery_max = max(float(getattr(prep, "battery_max", 1.0)), 1.0)
+        battery_ratio = battery / battery_max
         on_charger = self._is_on_charger(hx, hz)
 
-        # Exit return_mode: fully charged and on charger
-        if self.return_mode and on_charger and battery_ratio >= self.EXIT_RETURN_RATIO:
-            self.return_mode = False
-            self._cached_path = []
-            self._cached_target = None
-
-        # Exit return_mode: high battery regardless of charger position
-        if self.return_mode and battery_ratio >= 0.85:
-            self.return_mode = False
-            self._cached_path = []
-            self._cached_target = None
-
-        # Try to get A* path to nearest charger (with caching)
         charger_path, charger_dist, charger_target = self._plan_to_charger_cached(prep)
-
-        # If no A* path found, fall back to Chebyshev distance
         if not charger_path:
-            charger_dist = prep.nearest_charger_dist
+            charger_dist = float(getattr(prep, "nearest_charger_dist", float("inf")))
+            charger_target = charger_target or self._nearest_charger_center(hx, hz)
 
-        # Compute dynamic margin based on path complexity
         margin = self._charge_margin(charger_path)
+        slack = self._estimate_slack(prep, charger_dist)
+        min_npc_dist = self._min_npc_dist(prep)
+        suggested_action = None
 
-        # Dynamic LOW_BATTERY_RATIO: small batteries need earlier trigger
-        effective_low_ratio = max(
-            self.LOW_BATTERY_RATIO,
-            min(50.0 / max(prep.battery_max, 1), 0.45)
-        )
-
-        # Trigger conditions
-        should_return = (
-            self.return_mode
-            or (charger_dist < float('inf')
-                and prep.battery <= charger_dist + margin
-                and battery_ratio <= 0.65)
-            or battery_ratio <= effective_low_ratio
-        )
-
-        if not should_return:
-            return False, None, charger_dist, margin
-
-        self.return_mode = True
-
-        # Already on charger — don't need to navigate
-        if on_charger and battery_ratio < self.EXIT_RETURN_RATIO:
-            return True, None, charger_dist, margin
-
-        # Find best action via multi-level fallback
-        expert_action = None
-
-        # 1. Cached path
         if charger_path and len(charger_path) >= 2:
-            expert_action = self._path_to_action(hx, hz, charger_path[1])
-            if expert_action is not None and not legal_action[expert_action]:
-                expert_action = None
+            suggested_action = self._path_to_action(hx, hz, charger_path[1])
 
-        # 2. A* planner (3-level NPC avoidance)
-        if expert_action is None:
-            expert_action = self._plan_to_charger(prep)
-            if expert_action is not None and not legal_action[expert_action]:
-                expert_action = None
+        if suggested_action is None:
+            suggested_action = self._plan_to_charger(prep)
 
-        # 3. Greedy toward charger
-        if expert_action is None:
-            if prep.nearest_charger_dx != 0 or prep.nearest_charger_dz != 0:
-                expert_action = self._greedy_toward_charger(prep, legal_action)
+        if suggested_action is None and legal_action is not None:
+            suggested_action = self._greedy_toward_charger(prep, legal_action)
 
-        return True, expert_action, charger_dist, margin
+        legal_and_safe = False
+        if legal_action is not None and suggested_action is not None:
+            legal_and_safe = bool(legal_action[suggested_action])
+
+        reachable = bool(charger_path) or np.isfinite(charger_dist)
+        target_reliable = self._is_target_signal_reliable(
+            prep,
+            legal_and_safe=legal_and_safe,
+            reachable=reachable,
+            charger_target=charger_target,
+            charger_dist=charger_dist,
+            slack=slack,
+            min_npc_dist=min_npc_dist,
+        )
+        mode_reliable = self._is_mode_signal_reliable(
+            battery_ratio=battery_ratio,
+            slack=slack,
+            min_npc_dist=min_npc_dist,
+            target_reliable=target_reliable,
+            on_charger=on_charger,
+        )
+
+        return {
+            "battery_ratio": battery_ratio,
+            "battery": battery,
+            "on_charger": on_charger,
+            "charger_dist": float(charger_dist),
+            "charger_target": charger_target,
+            "charger_path": charger_path,
+            "margin": float(margin),
+            "slack": float(slack),
+            "min_npc_dist": float(min_npc_dist),
+            "suggested_action": suggested_action,
+            "suggested_action_legal": legal_and_safe,
+            "reachable": reachable,
+            "target_reliable": bool(target_reliable),
+            "mode_reliable": bool(mode_reliable),
+        }
+
+    def is_target_teacher_reliable(self, prep, legal_action=None, last_action=-1):
+        signal = self.get_charger_signal(prep, legal_action, last_action)
+        return bool(signal["target_reliable"])
+
+    def is_mode_teacher_reliable(self, prep, legal_action=None, last_action=-1):
+        signal = self.get_charger_signal(prep, legal_action, last_action)
+        return bool(signal["mode_reliable"])
+
+    def get_teacher_guidance(self, prep, legal_action=None, last_action=-1):
+        """Return optional teacher guidance payload for future mode/target supervision."""
+        signal = self.get_charger_signal(prep, legal_action, last_action)
+        if not signal["target_reliable"] and not signal["mode_reliable"]:
+            return None
+
+        battery_ratio = signal["battery_ratio"]
+        slack = signal["slack"]
+        on_charger = signal["on_charger"]
+
+        if signal["min_npc_dist"] <= 2:
+            mode = "evade"
+        elif on_charger and battery_ratio < self.RELIABLE_RETURN_RATIO:
+            mode = "return"
+        elif battery_ratio <= self.RELIABLE_RETURN_RATIO or slack <= 0:
+            mode = "return"
+        elif battery_ratio <= self.RELIABLE_PREPARE_RETURN_RATIO or slack <= self.RELIABLE_SLACK_BUFFER:
+            mode = "prepare_return"
+        else:
+            mode = "clean"
+
+        return {
+            "mode": mode,
+            "target": signal["charger_target"],
+            "action": signal["suggested_action"],
+            "teacher_mask": float(signal["target_reliable"] or signal["mode_reliable"]),
+            "signal": signal,
+        }
 
     # ------------------------------------------------------------------
-    # Layer 2a: Hard override (for evaluation/exploit mode)
+    # Extreme emergency fallback
+    # ------------------------------------------------------------------
+
+    def get_emergency_fallback(self, prep, legal_action, last_action=-1):
+        """Return explicit charger fallback only in extreme emergency.
+
+        This is runtime-oriented and intentionally much narrower than the old
+        return-mode controller. It only activates when the robot is close to
+        battery death and charger reachability is already critical.
+        """
+        legal_action = list(legal_action)
+        signal = self.get_charger_signal(prep, legal_action, last_action, refresh_state=True)
+
+        battery_ratio = signal["battery_ratio"]
+        on_charger = signal["on_charger"]
+        slack = signal["slack"]
+        charger_dist = signal["charger_dist"]
+        margin = signal["margin"]
+        suggested_action = signal["suggested_action"]
+
+        if self.return_mode:
+            should_keep = (
+                not on_charger
+                and battery_ratio < self.EXIT_EMERGENCY_RATIO
+                and (
+                    slack <= self.RELIABLE_SLACK_BUFFER
+                    or battery_ratio <= self.EMERGENCY_RATIO * 1.5
+                )
+            )
+            if not should_keep:
+                self.return_mode = False
+                self._last_emergency_reason = None
+
+        should_trigger = (
+            not on_charger
+            and suggested_action is not None
+            and legal_action[suggested_action]
+            and (
+                (battery_ratio <= self.EMERGENCY_RATIO and slack <= self.EMERGENCY_SLACK_MARGIN)
+                or (battery_ratio <= self.EMERGENCY_RATIO * 0.8)
+                or (np.isfinite(charger_dist) and prep.battery <= charger_dist + self.EMERGENCY_PATH_MARGIN)
+            )
+        )
+
+        if should_trigger:
+            self.return_mode = True
+            if battery_ratio <= self.EMERGENCY_RATIO and slack <= self.EMERGENCY_SLACK_MARGIN:
+                reason = "battery_and_slack_critical"
+            elif battery_ratio <= self.EMERGENCY_RATIO * 0.8:
+                reason = "battery_ratio_critical"
+            else:
+                reason = "path_margin_critical"
+            self._last_emergency_reason = reason
+            return {
+                "active": True,
+                "action": suggested_action,
+                "reason": reason,
+                "signal": signal,
+            }
+
+        return {
+            "active": False,
+            "action": None,
+            "reason": self._last_emergency_reason,
+            "signal": signal,
+        }
+
+    # ------------------------------------------------------------------
+    # Legacy-compatible interfaces used by runtime
     # ------------------------------------------------------------------
 
     def get_override(self, prep, legal_action, last_action=-1):
-        """Hard override for battery emergency — used in evaluation mode.
-
-        Returns (should_override, expert_action).
-        Once return_mode is activated, it persists until battery >= 95% AND on charger.
-        """
-        should_return, expert_action, _, _ = self._evaluate_return(
-            prep, legal_action, last_action
-        )
-        if should_return and expert_action is not None:
-            return True, expert_action
+        """Legacy compatibility: only returns extreme-emergency fallback now."""
+        fallback = self.get_emergency_fallback(prep, legal_action, last_action)
+        if fallback["active"] and fallback["action"] is not None:
+            return True, fallback["action"]
         return False, None
 
-    # ------------------------------------------------------------------
-    # Layer 2b: Soft logit bias (for training mode)
-    # ------------------------------------------------------------------
-
     def get_logit_bias(self, prep, legal_action, last_action=-1):
-        """Soft logit bias for charging — replaces hard override during training.
+        """Return only NPC avoidance bias; no regular charging / return bias."""
+        # Keep compatibility flag aligned with emergency state only.
+        _ = self.get_emergency_fallback(prep, legal_action, last_action)
 
-        Returns np.ndarray[8] with bias values.
-        Urgency-based scaling: emergency → bias=100 (hard override equivalent),
-        non-emergency → bias=3-8 (strong guidance but RL can deviate).
-        """
         bias = np.zeros(8, dtype=np.float32)
-        should_return, expert_action, charger_dist, margin = self._evaluate_return(
-            prep, legal_action, last_action
-        )
-
-        if should_return and expert_action is not None:
-            # Check if any NPC is dangerously close — suppress charge bias if so
-            min_npc_dist = float('inf')
-            hx, hz = prep.cur_pos
-            for npc in prep._npcs:
-                _p = npc.get("pos") or {}
-                _nd = max(abs(int(_p.get("x", 0)) - hx), abs(int(_p.get("z", 0)) - hz))
-                min_npc_dist = min(min_npc_dist, _nd)
-
-            if min_npc_dist <= 4:
-                pass  # NPC too close — let NPC avoidance bias dominate
-            else:
-                slack = prep.battery - charger_dist
-                urgency = float(np.clip(1 - slack / max(margin, 1), 0.2, 1.0))
-
-                if slack <= 3 or (prep.battery / max(prep.battery_max, 1)) <= 0.10:
-                    bias[expert_action] = 100.0     # Emergency: near-equivalent to hard override
-                else:
-                    bias[expert_action] = Config.EXPERT_BIAS_MIN + (Config.EXPERT_BIAS_MAX - Config.EXPERT_BIAS_MIN) * urgency
-
-        # NPC avoidance bias: penalize moving toward nearby NPCs
         hx, hz = prep.cur_pos
+
         for npc in prep._npcs:
-            _pos = npc.get("pos") or {}
-            _nx, _nz = int(_pos.get("x", 0)), int(_pos.get("z", 0))
-            _ndx, _ndz = _nx - hx, _nz - hz
-            _npc_dist = max(abs(_ndx), abs(_ndz))
-            if _npc_dist > 6 or _npc_dist < 1:
+            pos = npc.get("pos") or {}
+            nx, nz = int(pos.get("x", 0)), int(pos.get("z", 0))
+            ndx, ndz = nx - hx, nz - hz
+            npc_dist = max(abs(ndx), abs(ndz))
+            if npc_dist > 6 or npc_dist < 1:
                 continue
-            for _idx, (_dx, _dz) in enumerate(self.DELTAS):
-                if not legal_action[_idx]:
+            for idx, (dx, dz) in enumerate(self.DELTAS):
+                if not legal_action[idx]:
                     continue
-                _nlen = max(max(abs(_ndx), abs(_ndz)), 1.0)
-                _dot = (_dx * _ndx + _dz * _ndz) / _nlen
-                if _dot > 0:
-                    _close = (6.0 - _npc_dist) / 6.0
-                    bias[_idx] -= 2.0 * _dot * _close
+                nlen = max(max(abs(ndx), abs(ndz)), 1.0)
+                dot = (dx * ndx + dz * ndz) / nlen
+                if dot > 0:
+                    close = (6.0 - npc_dist) / 6.0
+                    bias[idx] -= 2.0 * dot * close
 
         return bias
 
+    # ------------------------------------------------------------------
+    # Planner helpers
+    # ------------------------------------------------------------------
+
     def _greedy_toward_charger(self, prep, legal_action):
-        """Fallback: pick legal action that moves closest to nearest charger."""
         hx, hz = prep.cur_pos
         best_act = None
-        best_dist = float('inf')
+        best_dist = float("inf")
         for idx, (dx, dz) in enumerate(self.DELTAS):
             if not legal_action[idx]:
                 continue
@@ -325,15 +393,17 @@ class ExpertPolicy:
         for i in range(1, len(path)):
             cur = path[i - 1]
             nxt = path[i]
-            delta = (int(np.clip(nxt[0] - cur[0], -1, 1)),
-                     int(np.clip(nxt[1] - cur[1], -1, 1)))
+            delta = (
+                int(np.clip(nxt[0] - cur[0], -1, 1)),
+                int(np.clip(nxt[1] - cur[1], -1, 1)),
+            )
             if prev_delta is not None and delta != prev_delta:
                 turns += 1
             prev_delta = delta
             if nxt in self.blocked_cells:
                 blocked_count += 1
-        margin = self.BASE_RETURN_MARGIN + 0.35 * float(turns) + 1.2 * float(blocked_count)
-        return min(margin, 40.0)  # Cap at 40
+        margin = 18.0 + 0.35 * float(turns) + 1.2 * float(blocked_count)
+        return min(margin, 40.0)
 
     # ------------------------------------------------------------------
     # Path caching
@@ -344,54 +414,45 @@ class ExpertPolicy:
         hx, hz = prep.cur_pos
 
         if self._cached_path:
-            # Try to find current position in cached path
             try:
                 idx = self._cached_path.index((hx, hz))
                 remaining = self._cached_path[idx:]
-                # Check next step is not blocked
                 if len(remaining) >= 2:
                     nxt = remaining[1]
                     if nxt not in self.blocked_cells:
                         return remaining, float(len(remaining) - 1), self._cached_target
             except ValueError:
                 pass
-            # Cache miss — fall through to replan
 
-        # Plan fresh path using A*
         chargers = self._charger_list
         if not chargers:
-            return [], float('inf'), None
+            return [], float("inf"), None
 
         def is_goal(x, z):
-            return any(abs(x - cx) <= w and abs(z - cz) <= h
-                       for cx, cz, w, h in chargers)
+            return any(abs(x - cx) <= w and abs(z - cz) <= h for cx, cz, w, h in chargers)
 
         h_func = self._charger_heuristic
 
-        # Try with full NPC danger
         cost_map = self._build_cost_map(prep, npc_weight=1.0)
         act, path, dist = self._weighted_astar_full(prep, cost_map, is_goal, h_func)
         if act is not None and path:
             self._cached_path = path
             self._cached_distance = dist
-            self._cached_target = path[-1] if path else None
+            self._cached_target = self._match_target_to_charger(path[-1])
             return path, dist, self._cached_target
 
-        # Fallback: reduced NPC danger
         cost_map = self._build_cost_map(prep, npc_weight=0.3)
         act, path, dist = self._weighted_astar_full(prep, cost_map, is_goal, h_func)
         if act is not None and path:
             self._cached_path = path
             self._cached_distance = dist
-            self._cached_target = path[-1] if path else None
+            self._cached_target = self._match_target_to_charger(path[-1])
             return path, dist, self._cached_target
 
-        # No safe path found — fall through to greedy (protected by filter_actions)
-        return [], float('inf'), None
+        return [], float("inf"), None
 
     @staticmethod
     def _path_to_action(hx, hz, next_pos):
-        """Convert a path step to action index."""
         dx = int(np.clip(next_pos[0] - hx, -1, 1))
         dz = int(np.clip(next_pos[1] - hz, -1, 1))
         for idx, (adx, adz) in enumerate(ExpertPolicy.DELTAS):
@@ -400,19 +461,10 @@ class ExpertPolicy:
         return None
 
     # ------------------------------------------------------------------
-    # Cost-map construction (with visit_count + blocked penalties)
+    # Cost-map construction
     # ------------------------------------------------------------------
 
     def _build_cost_map(self, prep, npc_weight=1.0):
-        """Build 128x128 weighted cost map.
-
-        Cell costs:
-          - 1.0 + visit_penalty    : explored + passable (visit penalty encourages unexplored paths)
-          - _UNEXPLORED_COST       : unexplored (passable but uncertain)
-          - _INF_COST              : explored + impassable (known wall)
-          - + blocked_penalty      : cells that previously blocked movement
-          - + danger               : passable cell near NPC (danger decays exponentially)
-        """
         G = self.GRID
         cost = np.full((G, G), self._UNEXPLORED_COST, dtype=np.float32)
 
@@ -420,33 +472,29 @@ class ExpertPolicy:
         base_passable = explored & (prep.passable_map >= 0.5)
         cost[base_passable] = 1.0
 
-        # Visit count penalty: encourage taking less-visited paths
         visit_penalty = np.clip(prep.visit_count * 0.15, 0, 0.75)
         cost[base_passable] += visit_penalty[base_passable]
 
-        # Explored + impassable
         cost[explored & (prep.passable_map < 0.5)] = self._INF_COST
 
-        # Blocked cell penalty
         for (bx, bz), ttl in self.blocked_cells.items():
             if 0 <= bx < G and 0 <= bz < G and cost[bx, bz] < self._INF_COST:
                 cost[bx, bz] += 4.0
 
-        # NPC danger
         if npc_weight > 0:
             for npc in prep._npcs:
                 pos = npc.get("pos") or {}
                 nx, nz = int(pos.get("x", 0)), int(pos.get("z", 0))
-                R = self._NPC_DANGER_RADIUS
-                x0, x1 = max(nx - R, 0), min(nx + R + 1, G)
-                z0, z1 = max(nz - R, 0), min(nz + R + 1, G)
+                radius = self._NPC_DANGER_RADIUS
+                x0, x1 = max(nx - radius, 0), min(nx + radius + 1, G)
+                z0, z1 = max(nz - radius, 0), min(nz + radius + 1, G)
 
                 lx = np.arange(x0, x1, dtype=np.float32)
                 lz = np.arange(z0, z1, dtype=np.float32)
-                xx, zz = np.meshgrid(lx, lz, indexing='ij')
+                xx, zz = np.meshgrid(lx, lz, indexing="ij")
                 dist = np.maximum(np.abs(xx - nx), np.abs(zz - nz))
                 danger = npc_weight * self._NPC_DANGER_MAX * np.exp(-dist / self._NPC_DANGER_DECAY)
-                danger[dist > R] = 0.0
+                danger[dist > radius] = 0.0
 
                 region = cost[x0:x1, z0:z1]
                 safe = region < self._INF_COST
@@ -455,33 +503,31 @@ class ExpertPolicy:
         return cost
 
     # ------------------------------------------------------------------
-    # Weighted A* search — returns full path for caching
+    # Weighted A* search
     # ------------------------------------------------------------------
 
     def _weighted_astar_full(self, prep, cost_map, is_goal, h_func):
-        """A* on weighted cost map. Returns (first_action, path, distance)."""
         sx, sz = prep.cur_pos
         if is_goal(sx, sz):
             return 0, [(sx, sz)], 0.0
 
         G = self.GRID
-        INF = 1e9
-        dist_arr = np.full((G, G), INF, dtype=np.float32)
+        inf = 1e9
+        dist_arr = np.full((G, G), inf, dtype=np.float32)
         dist_arr[sx, sz] = 0.0
         first_act = np.full((G, G), -1, dtype=np.int8)
-        parent = {}  # Dict[(x,z), (x,z)] for path reconstruction
+        parent = {}
         closed = np.zeros((G, G), dtype=np.bool_)
 
         counter = 0
         heap = [(h_func(sx, sz), counter, sx, sz)]
 
         while heap:
-            f, _, x, z = heapq.heappop(heap)
+            _, _, x, z = heapq.heappop(heap)
             if closed[x, z]:
                 continue
             closed[x, z] = True
             if is_goal(x, z):
-                # Reconstruct path
                 path = self._reconstruct_path(parent, (sx, sz), (x, z))
                 fa = int(first_act[x, z])
                 return fa if fa >= 0 else 0, path, float(dist_arr[x, z])
@@ -494,7 +540,6 @@ class ExpertPolicy:
                 step_cost = cost_map[nx, nz]
                 if step_cost >= self._INF_COST:
                     continue
-                # Diagonal: at least one adjacent cardinal cell must be passable
                 if dx != 0 and dz != 0:
                     c1 = (0 <= x + dx < G) and cost_map[x + dx, z] < self._INF_COST
                     c2 = (0 <= z + dz < G) and cost_map[x, z + dz] < self._INF_COST
@@ -509,11 +554,10 @@ class ExpertPolicy:
                     counter += 1
                     heapq.heappush(heap, (new_d + h_func(nx, nz), counter, nx, nz))
 
-        return None, [], float('inf')
+        return None, [], float("inf")
 
     @staticmethod
     def _reconstruct_path(parent, start, goal):
-        """Trace back from goal to start using parent dict."""
         path = [goal]
         cur = goal
         while cur != start:
@@ -522,19 +566,14 @@ class ExpertPolicy:
         path.reverse()
         return path
 
-    # ------------------------------------------------------------------
-    # Original A* (returns first_action only — used by fallback)
-    # ------------------------------------------------------------------
-
     def _weighted_astar(self, prep, cost_map, is_goal, h_func):
-        """A* on weighted cost map. Returns the first-action index to reach goal."""
         sx, sz = prep.cur_pos
         if is_goal(sx, sz):
             return None
 
         G = self.GRID
-        INF = 1e9
-        dist_arr = np.full((G, G), INF, dtype=np.float32)
+        inf = 1e9
+        dist_arr = np.full((G, G), inf, dtype=np.float32)
         dist_arr[sx, sz] = 0.0
         first_act = np.full((G, G), -1, dtype=np.int8)
         closed = np.zeros((G, G), dtype=np.bool_)
@@ -543,7 +582,7 @@ class ExpertPolicy:
         heap = [(h_func(sx, sz), counter, sx, sz)]
 
         while heap:
-            f, _, x, z = heapq.heappop(heap)
+            _, _, x, z = heapq.heappop(heap)
             if closed[x, z]:
                 continue
             closed[x, z] = True
@@ -575,48 +614,103 @@ class ExpertPolicy:
         return None
 
     # ------------------------------------------------------------------
-    # Charger heuristic
+    # Charger heuristic / planning
     # ------------------------------------------------------------------
 
     def _charger_heuristic(self, x, z):
-        """Chebyshev distance to nearest charger boundary (admissible)."""
         if not self._charger_list:
             return 0.0
-        return min(
-            max(abs(x - cx) - w, abs(z - cz) - h, 0)
-            for cx, cz, w, h in self._charger_list
-        )
-
-    # ------------------------------------------------------------------
-    # Charger path planning (fallback, returns first_action only)
-    # ------------------------------------------------------------------
+        return min(max(abs(x - cx) - w, abs(z - cz) - h, 0) for cx, cz, w, h in self._charger_list)
 
     def _plan_to_charger(self, prep):
-        """Plan path to nearest charger with graduated fallback.
-
-        Returns first action index only (for non-cached fallback).
-        """
         chargers = self._charger_list
         if not chargers:
             return None
 
         def is_goal(x, z):
-            return any(abs(x - cx) <= w and abs(z - cz) <= h
-                       for cx, cz, w, h in chargers)
+            return any(abs(x - cx) <= w and abs(z - cz) <= h for cx, cz, w, h in chargers)
 
         h_func = self._charger_heuristic
 
-        # Primary: full NPC danger avoidance
         cost_map = self._build_cost_map(prep, npc_weight=1.0)
         act = self._weighted_astar(prep, cost_map, is_goal, h_func)
         if act is not None:
             return act
 
-        # Fallback 1: reduced NPC danger
         cost_map = self._build_cost_map(prep, npc_weight=0.3)
         act = self._weighted_astar(prep, cost_map, is_goal, h_func)
         if act is not None:
             return act
 
-        # No safe path found — fall through to greedy (protected by filter_actions)
         return None
+
+    # ------------------------------------------------------------------
+    # Internal reliability helpers
+    # ------------------------------------------------------------------
+
+    def _estimate_slack(self, prep, charger_dist):
+        if hasattr(prep, "charger_slack"):
+            try:
+                return float(prep.charger_slack)
+            except (TypeError, ValueError):
+                pass
+        if not np.isfinite(charger_dist):
+            return float("-inf")
+        return float(getattr(prep, "battery", 0.0) - charger_dist)
+
+    def _min_npc_dist(self, prep):
+        hx, hz = prep.cur_pos
+        min_npc_dist = float("inf")
+        for npc in prep._npcs:
+            pos = npc.get("pos") or {}
+            nx, nz = int(pos.get("x", 0)), int(pos.get("z", 0))
+            min_npc_dist = min(min_npc_dist, max(abs(nx - hx), abs(nz - hz)))
+        return min_npc_dist
+
+    def _nearest_charger_center(self, hx, hz):
+        if not self._charger_list:
+            return None
+        return min(
+            ((cx, cz) for cx, cz, _, _ in self._charger_list),
+            key=lambda item: max(abs(item[0] - hx), abs(item[1] - hz)),
+        )
+
+    def _match_target_to_charger(self, pos):
+        if pos is None:
+            return None
+        x, z = pos
+        for cx, cz, w, h in self._charger_list:
+            if abs(x - cx) <= w and abs(z - cz) <= h:
+                return (cx, cz)
+        return self._nearest_charger_center(x, z)
+
+    def _is_target_signal_reliable(
+        self,
+        prep,
+        legal_and_safe,
+        reachable,
+        charger_target,
+        charger_dist,
+        slack,
+        min_npc_dist,
+    ):
+        if not reachable or charger_target is None or not legal_and_safe:
+            return False
+        if not np.isfinite(charger_dist):
+            return False
+        if min_npc_dist <= self.RELIABLE_NPC_DIST:
+            return False
+        if slack <= -self.RELIABLE_SLACK_BUFFER:
+            return False
+        return True
+
+    def _is_mode_signal_reliable(self, battery_ratio, slack, min_npc_dist, target_reliable, on_charger):
+        if min_npc_dist <= 2:
+            return True
+        if on_charger and battery_ratio < self.RELIABLE_RETURN_RATIO:
+            return True
+        if battery_ratio <= self.RELIABLE_PREPARE_RETURN_RATIO:
+            return target_reliable
+        if slack <= self.RELIABLE_SLACK_BUFFER:
+            return target_reliable
+        return False
