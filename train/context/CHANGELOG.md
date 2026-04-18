@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-17
+
+~22:14 | 基于两轮标准 `4×10 / eval` benchmark（`20260417-200128`、`20260417-212241`）及后续角落循环补跑，新增 `optimization/V6_BEHAVIOR_REMEDIATION_PLAN_20260417.md`。该方案不再泛泛讨论“更早回充”，而是将当前行为缺陷收敛为 4 个核心矛盾：旧墙边低价值打磨、planner 长期被策略否决、charger target 粘滞、充电提前量不足；同时明确当前 benchmark 不支持“充电桩竞争”和“显式切比雪夫 fallback”作为主因。文档给出 6 组优先级明确的修复方向（边界语义重构、已清扫旧路代价、充电提前量、target 去粘滞、多 charger 路径认知扩展、病态循环下 planner 强接管）以及对应 benchmark 验收指标，可直接作为下一轮实现与回归验证基线。
+
+~16:45 | 手动归档当前几何感知长期规划训练的主 resume 候选点。基于 `session_best/20260417-110429/best_model.pkl` 的后期成熟窗口日志复核后，确认该点更适合作为下一轮继续训练的主基线，而不是只保留单局高分 peak。归档目录为 `code/saved_models/v6-geo-bestmodel-576/`，其中包含 `model.ckpt-resume.pkl` 与中文说明文件 `README.txt`。选择依据不只看 clean score，还综合了 `eval_hard` 阶段的 `win_rate / avg_cs / avg_cc`、`training_metrics` 中的 `total_score / charge_count / remaining_charge`、`MAP_STATS` 的 `variance / min_avg / spread`、learner 侧 `entropy / teacher active rate`，以及失败轨迹中的负 `slack` return death 结构。该点对应 session 摘要为 `best_robust_score=3494.05`、`best_avg_score=1228.2`、`episode_cnt=576`，当前判断它是“最适合作为继续训练主 resume”的稳定型 checkpoint。
+
 ## 2026-04-16
 
 ~19:28 | 手动归档当前 LTSPPO 最优 resume 候选点。基于统一口径手动 benchmark（`run_benchmark_parallel.sh --workers 4 --envs-per-worker 10`）对多个候选 checkpoint 复核后，确认 `code/session_best/20260416-183426/best-ep000072-score00832.pkl` 是当前最值得保留的 LTSPPO 节点，已复制到 `code/saved_models/v6-ltsppo-ep72/model.ckpt-resume.pkl`，并新增 `code/saved_models/v6-ltsppo-ep72/README.txt` 记录来源、评估结果、对比结论和当前局限。该点固定 benchmark 结果为 `WR 30.0% / Avg CS 460.0 / 12/40`，优于同批次 `session_best/best_model.pkl` 和 learner 常规 `model.ckpt-10000/19000/24000.pkl`，适合作为后续 LTSPPO 继续训练的手动 resume 基线。
@@ -105,3 +111,4 @@
   - new-area reward now decays with explored ratio
   - frontier reward is reduced/disabled at low battery
 - Fixed benchmark diagnostics bug where step diagnostics were written to JSONL but not appended to in-memory aggregation, causing `late_return_rate` / `target_switch_rate` / `mode_usage_*` to remain zero.
+- Added [LOCAL_CUSTOM_MAP_FEASIBILITY_REPORT_20260417.md](/home/user/TcKaiwuFinal/train/context/analysis/LOCAL_CUSTOM_MAP_FEASIBILITY_REPORT_20260417.md), documenting live `gamecore`-container findings that official public maps are plain JSON assets under `kaiwu_arena/robot_vacuum/simulator/map_json`, the adapter loads them by `map_id`, and local custom-map training is feasible by extending validator/map whitelists plus adding new map JSON files.

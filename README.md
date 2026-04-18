@@ -54,7 +54,11 @@ RESTART=1 bash run_benchmark.sh
 
 ```bash
 cd train
-bash run_benchmark_parallel.sh --workers 4 --envs-per-worker 10 --max-wait 1800
+bash run_benchmark_parallel.sh \
+  --workers 4 \
+  --envs-per-worker 10 \
+  --max-wait 1800 \
+  --policy-mode eval
 ```
 
 指定 checkpoint：
@@ -64,8 +68,34 @@ cd train
 bash run_benchmark_parallel.sh saved_models/v53-robust3450/model.ckpt-resume.pkl \
   --workers 4 \
   --envs-per-worker 10 \
-  --max-wait 1800
+  --max-wait 1800 \
+  --policy-mode eval
 ```
+
+说明：
+
+- `--policy-mode eval`：走评估态动作口径，使用 `d_action`，并启用 `use_hard_override=True`，更接近官方线上评测。
+- `--policy-mode train`：走训练态随机动作口径，仅用于分析训练时策略分布，不建议拿来和线上成绩直接对比。
+- 当前默认建议始终显式写 `--policy-mode eval`，避免混淆。
+
+如果只想临时跑一个自定义 round，而不改 benchmark 源码，可以直接用环境变量覆盖：
+
+```bash
+cd train
+KAIWU_BENCHMARK_ROUNDS_JSON='[{"name":"online_4r","desc":"4 chargers / 4 robots / 1000 steps / 200 battery","charger_count":4,"robot_count":4,"max_step":1000,"battery_max":200}]' \
+KAIWU_BENCHMARK_MAPS='1,2,3,4,5,6,7,8,9,10' \
+bash run_benchmark_parallel.sh saved_models/v53-robust3450/model.ckpt-resume.pkl \
+  --workers 4 \
+  --envs-per-worker 10 \
+  --max-wait 1800 \
+  --policy-mode eval
+```
+
+结果输出位置：
+
+- 详细结果：`train/eval_parallel_logs/<session>/result.json`
+- AI 摘要：`train/eval_parallel_logs/<session>/ai_summary.json`
+- 最新汇总：`train/eval_parallel_results.json`
 
 ### 5. 查看 benchmark 结果
 

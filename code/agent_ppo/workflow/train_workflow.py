@@ -19,6 +19,13 @@ import torch
 
 from agent_ppo.conf.conf import Config
 from agent_ppo.feature.definition import sample_process
+from agent_ppo.workflow.checkpoint_score import compute_checkpoint_scores, compute_legacy_robust_score
+from agent_ppo.workflow.curriculum_policy import (
+    STAGE_INDEX,
+    profile_weights_for_stage,
+    stage_progress,
+)
+from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
 from agent_ppo.utils.experiment_archive import ExperimentArchive, infer_fail_reason
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
 from tools.metrics_utils import get_training_metrics
@@ -93,7 +100,7 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
             "training_strategy": {
                 "policy_blending": "model_logits_plus_heuristic_bias",
                 "curriculum": "anchor_mild_broad_randomization",
-                "selection_target": "clean_score_with_robustness",
+                "selection_target": "checkpoint_preservation_score_v2",
             },
         }
     )
@@ -158,8 +165,7 @@ class EnvConfigSampler:
         self.base_battery_max = int(self.base_env_conf.get("battery_max", 200))
         self.rng = np.random.default_rng(seed=20260409)
 
-    def sample(self, episode_idx, metrics=None):
-        stage = self._stage_name(episode_idx, metrics)
+    def sample(self, stage):
         profile = self._pick_profile(stage)
         env_conf = deepcopy(self.base_env_conf)
 
@@ -182,68 +188,14 @@ class EnvConfigSampler:
         }
         return sampled_usr_conf, meta
 
-    def _stage_name(self, episode_idx, metrics=None):
-        """Dynamic curriculum: metric-driven advancement, episode count fallback."""
-        if metrics is None:
-            if episode_idx <= 40:
-                return "warmup"
-            if episode_idx <= 200:
-                return "blend"
-            if episode_idx <= 400:
-                return "robust"
-            return "eval_hard"
-
-        win_rate = metrics.get("win_rate", 0)
-        avg_cs = metrics.get("avg_cs", 0)
-        avg_cc = metrics.get("avg_cc", 0)
-
-        can_advance = (
-            win_rate >= Config.CURRICULUM_ADVANCE_WIN_RATE
-            and avg_cs >= Config.CURRICULUM_ADVANCE_AVG_CS
-            and avg_cc >= Config.CURRICULUM_ADVANCE_CHARGE
-        )
-        must_hold = win_rate < Config.CURRICULUM_HOLD_WIN_RATE
-
-        if episode_idx <= 40:
-            return "warmup"
-        if episode_idx <= 200:
-            if can_advance:
-                return "robust"
-            return "blend"
-        if episode_idx <= 400:
-            if must_hold:
-                return "blend"
-            if can_advance:
-                return "eval_hard"
-            return "robust"
-        return "eval_hard"
-
     def _pick_profile(self, stage):
         draw = self.rng.random()
-        if stage == "warmup":
-            if draw < 0.70:
-                return "anchor"
-            if draw < 0.92:
-                return "mild"
-            return "broad"
-        if stage == "blend":
-            if draw < 0.35:
-                return "anchor"
-            if draw < 0.75:
-                return "mild"
-            return "broad"
-        if stage == "robust":
-            if draw < 0.10:
-                return "anchor"
-            if draw < 0.45:
-                return "mild"
-            return "broad"
-        # eval_hard
-        if draw < 0.05:
-            return "anchor"
-        if draw < 0.25:
-            return "mild"
-        return "broad_eval"
+        cumulative = 0.0
+        for profile, weight in profile_weights_for_stage(stage):
+            cumulative += float(weight)
+            if draw < cumulative:
+                return profile
+        return profile_weights_for_stage(stage)[-1][0]
 
     def _sample_robot_count(self, profile):
         if profile == "mild":
@@ -319,10 +271,27 @@ class EpisodeRunner:
 
         self.best_avg_score = 0.0
         self.best_robust_score = float("-inf")
+        self.best_resume_readiness_score = float("-inf")
+        self.best_submission_score = float("-inf")
+        self.best_preservation_score = float("-inf")
+        self.last_checkpoint_scores = {
+            "resume_readiness_score": 0.0,
+            "submission_score": 0.0,
+            "checkpoint_preservation_score": 0.0,
+            "resume_eligible": False,
+            "submission_eligible": False,
+        }
         self.last_clean_score = 0.0
         self.is_new_best = False
         self.per_map_scores: dict[str, list[float]] = {}
+        self.latest_training_metrics = {}
+        self.latest_learning_metrics = {}
+        self.learning_metric_history = deque(maxlen=8)
+        self.resume_global_step_base = None
+        self.resume_fast_track = True
         self.code_path = resolve_shared_code_dir()
+        self.curriculum_store = SharedCurriculumStateStore(self.code_path)
+        self.signal_source_id = f"aisrv-{os.getenv('KAIWU_AISRV_INDEX', 'x')}-pid-{os.getpid()}"
         self.code_dir = str(self.code_path)
         self.session_id = time.strftime("%Y%m%d-%H%M%S")
         self.session_dir = self.code_path / "session_best" / self.session_id
@@ -357,6 +326,9 @@ class EpisodeRunner:
         data = {
             "best_robust_score": self.best_robust_score,
             "best_avg_score": self.best_avg_score,
+            "best_resume_readiness_score": self.best_resume_readiness_score,
+            "best_submission_score": self.best_submission_score,
+            "best_preservation_score": self.best_preservation_score,
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "episode_cnt": self.episode_cnt,
         }
@@ -376,6 +348,9 @@ class EpisodeRunner:
         entries[self.session_id] = {
             "best_robust_score": round(self.best_robust_score, 4),
             "best_avg_score": round(self.best_avg_score, 4),
+            "best_resume_readiness_score": round(self.best_resume_readiness_score, 4),
+            "best_submission_score": round(self.best_submission_score, 4),
+            "best_preservation_score": round(self.best_preservation_score, 4),
             "episode_cnt": self.episode_cnt,
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -384,7 +359,7 @@ class EpisodeRunner:
             json.dump(entries, f, ensure_ascii=True, indent=2)
         os.replace(tmp, manifest_path)
 
-    def _save_best_model(self, clean_score):
+    def _save_best_model(self, clean_score, score_payload):
         best_path = self.session_dir / "best_model.pkl"
         state_dict = {k: v.clone().cpu() for k, v in self.agent.model.state_dict().items()}
         torch.save(state_dict, best_path)
@@ -392,7 +367,16 @@ class EpisodeRunner:
         self._update_manifest()
         self.logger.info(
             f"[BEST] session={self.session_id} ep={self.episode_cnt} avg={self.best_avg_score:.2f} "
-            f"robust={self.best_robust_score:.2f} score={clean_score:.1f} saved to {best_path}"
+            f"robust={self.best_robust_score:.2f} resume={score_payload['resume_readiness_score']:.2f} "
+            f"preserve={score_payload['checkpoint_preservation_score']:.2f} score={clean_score:.1f} saved to {best_path}"
+        )
+        self.archive.log_checkpoint(
+            {
+                "episode_cnt": self.episode_cnt,
+                "clean_score": round(float(clean_score), 4),
+                "best_path": str(best_path),
+                **score_payload,
+            }
         )
 
     def _snapshot_state_dict(self):
@@ -505,6 +489,7 @@ class EpisodeRunner:
         wins = [ep for ep in buf if ep["result"] == "completed"]
         w = len(wins)
         return {
+            "_count": n,
             "win_rate": w / n,
             "avg_clean_score": sum(ep["clean_score"] for ep in buf) / n,
             "avg_finished_steps": sum(ep["finished_steps"] for ep in buf) / n,
@@ -526,6 +511,17 @@ class EpisodeRunner:
             "return_stall_rate": sum(ep.get("return_stall_rate", 0.0) for ep in buf) / n,
             "recoverability_score_avg": sum(ep.get("recoverability_score_avg", 0.0) for ep in buf) / n,
             "recoverability_violation_rate": sum(ep.get("recoverability_violation_rate", 0.0) for ep in buf) / n,
+            "wall_hugging_clean_floor_rate": sum(ep.get("wall_hugging_clean_floor_rate", 0.0) for ep in buf) / n,
+            "stale_boundary_follow_rate": sum(ep.get("stale_boundary_follow_rate", 0.0) for ep in buf) / n,
+            "narrow_unknown_commit_rate": sum(ep.get("narrow_unknown_commit_rate", 0.0) for ep in buf) / n,
+            "missed_charge_opportunity_rate": sum(ep.get("missed_charge_opportunity_rate", 0.0) for ep in buf) / n,
+            "charger_nearby_not_charged_rate": sum(ep.get("charger_nearby_not_charged_rate", 0.0) for ep in buf) / n,
+            "suboptimal_target_hold_rate": sum(ep.get("suboptimal_target_hold_rate", 0.0) for ep in buf) / n,
+            "planner_policy_divergence_rate": sum(ep.get("planner_policy_divergence_rate", 0.0) for ep in buf) / n,
+            "avg_path_cross_count_50": sum(ep.get("avg_path_cross_count_50", 0.0) for ep in buf) / n,
+            "avg_coverage_efficiency_20": sum(ep.get("avg_coverage_efficiency_20", 0.0) for ep in buf) / n,
+            "avg_all_charger_known_path_count": sum(ep.get("avg_all_charger_known_path_count", 0.0) for ep in buf) / n,
+            "avg_unknown_on_target_path_ratio": sum(ep.get("avg_unknown_on_target_path_ratio", 0.0) for ep in buf) / n,
             "mode_usage_depart": sum(ep.get("mode_usage_depart", 0.0) for ep in buf) / n,
             "mode_usage_expand": sum(ep.get("mode_usage_expand", 0.0) for ep in buf) / n,
             "mode_usage_harvest": sum(ep.get("mode_usage_harvest", 0.0) for ep in buf) / n,
@@ -553,34 +549,83 @@ class EpisodeRunner:
 
     def _curriculum_progress_payload(self):
         """Compute curriculum stage and progress towards advancement."""
-        stage_names = {"warmup": 0, "blend": 1, "robust": 2, "eval_hard": 3}
-        recent = list(self.episode_history)[-Config.CURRICULUM_WINDOW:] if self.episode_history else []
-        if len(recent) < Config.CURRICULUM_WINDOW:
-            return {"curriculum_stage_idx": 0, "curriculum_progress": 0.0}
-
-        m = self._window_metrics(recent)
-        wr_ratio = m["win_rate"] / Config.CURRICULUM_ADVANCE_WIN_RATE
-        cs_ratio = m["avg_clean_score"] / Config.CURRICULUM_ADVANCE_AVG_CS
-        cc_ratio = m["avg_charge_count"] / Config.CURRICULUM_ADVANCE_CHARGE
-        progress = min(wr_ratio, cs_ratio, cc_ratio)
-
-        cur_metrics = {"win_rate": m["win_rate"], "avg_cs": m["avg_clean_score"],
-                       "avg_cc": m["avg_charge_count"]}
-        stage = self.config_sampler._stage_name(self.episode_cnt, cur_metrics)
-
+        state = self.curriculum_store.read_state()
+        stage = state.get("stage", "warmup")
+        progress = float(state.get("curriculum_progress", 0.0))
         return {
-            "curriculum_stage_idx": stage_names.get(stage, 0),
+            "curriculum_stage_idx": STAGE_INDEX.get(stage, 0),
             "curriculum_progress": round(min(progress, 1.0), 4),
         }
 
     def _get_curriculum_metrics(self):
-        """Compute rolling metrics for dynamic curriculum advancement."""
-        if len(self.episode_history) < Config.CURRICULUM_WINDOW:
+        return self._window_metrics(list(self.episode_history)[-Config.CURRICULUM_WINDOW:]) if len(self.episode_history) >= Config.CURRICULUM_WINDOW else None
+
+    def _get_bootstrap_curriculum_metrics(self):
+        min_count = min(10, len(self.episode_history))
+        if min_count < 10:
             return None
-        recent = list(self.episode_history)[-Config.CURRICULUM_WINDOW:]
-        m = self._window_metrics(recent)
-        return {"win_rate": m["win_rate"], "avg_cs": m["avg_clean_score"],
-                "avg_cc": m["avg_charge_count"]}
+        return self._window_metrics(list(self.episode_history)[-min_count:])
+
+    def _get_curriculum_context(self):
+        return {
+            "window_metrics": self._get_curriculum_metrics(),
+            "bootstrap_metrics": self._get_bootstrap_curriculum_metrics(),
+            "learning_metrics": deepcopy(self.latest_learning_metrics),
+            "global_step_since_resume": self._global_step_since_resume(),
+            "resume_fast_track": self.resume_fast_track,
+        }
+
+    def _emit_curriculum_signal(self):
+        payload = {
+            "window_metrics": self._get_curriculum_metrics() or {},
+            "bootstrap_metrics": self._get_bootstrap_curriculum_metrics() or {},
+            "learning_metrics": deepcopy(self.latest_learning_metrics),
+            "runtime": {
+                "global_step_since_resume": self._global_step_since_resume(),
+            },
+            "session_id": self.session_id,
+            "episode_cnt_local": self.episode_cnt,
+        }
+        self.curriculum_store.write_signal(self.signal_source_id, payload)
+        return self.curriculum_store.refresh_state()
+
+    def _global_step_since_resume(self):
+        current = _extract_numeric_metric(self.latest_training_metrics, "learner", "global_step", default=0.0)
+        if self.resume_global_step_base is None:
+            self.resume_global_step_base = int(current)
+        return max(int(current) - int(self.resume_global_step_base), 0)
+
+    def _refresh_learning_metrics(self, training_metrics):
+        snapshot = {
+            "global_step": _extract_numeric_metric(training_metrics, "learner", "global_step")
+            if _extract_numeric_metric(training_metrics, "learner", "global_step") is not None
+            else _extract_numeric_metric(training_metrics, "basic", "train_global_step", default=0.0),
+            "entropy_loss": _extract_numeric_metric(training_metrics, "learner", "entropy_loss")
+            if _extract_numeric_metric(training_metrics, "learner", "entropy_loss") is not None
+            else _extract_numeric_metric(training_metrics, "algorithm", "entropy_loss"),
+            "value_clean_loss": _extract_numeric_metric(training_metrics, "learner", "value_clean_loss"),
+            "value_survive_loss": _extract_numeric_metric(training_metrics, "learner", "value_survive_loss"),
+            "mode_teacher_active_rate": _extract_numeric_metric(training_metrics, "learner", "mode_teacher_active_rate"),
+            "route_anchor_teacher_active_rate": _extract_numeric_metric(training_metrics, "learner", "route_anchor_teacher_active_rate"),
+            "target_teacher_active_rate": _extract_numeric_metric(training_metrics, "learner", "target_teacher_active_rate"),
+            "return_action_teacher_active_rate": _extract_numeric_metric(training_metrics, "learner", "return_action_teacher_active_rate"),
+            "env_total_score": _extract_numeric_metric(training_metrics, "env", "total_score"),
+        }
+        self.latest_training_metrics = deepcopy(training_metrics)
+        self.learning_metric_history.append(snapshot)
+
+        prev_clean = _history_average(self.learning_metric_history, "value_clean_loss", exclude_latest=True)
+        prev_survive = _history_average(self.learning_metric_history, "value_survive_loss", exclude_latest=True)
+        prev_entropy = _history_average(self.learning_metric_history, "entropy_loss", exclude_latest=True)
+        prev_env = _history_average(self.learning_metric_history, "env_total_score", exclude_latest=True)
+
+        self.latest_learning_metrics = {
+            **snapshot,
+            "value_clean_loss_trend_ratio": _ratio(snapshot.get("value_clean_loss"), prev_clean),
+            "value_survive_loss_trend_ratio": _ratio(snapshot.get("value_survive_loss"), prev_survive),
+            "entropy_trend_ratio": _ratio(snapshot.get("entropy_loss"), prev_entropy),
+            "env_total_score_trend_ratio": _ratio(snapshot.get("env_total_score"), prev_env),
+        }
 
     def run_episodes(self):
         while True:
@@ -589,6 +634,7 @@ class EpisodeRunner:
                 training_metrics = get_training_metrics()
                 self.last_get_training_metrics_time = now
                 if training_metrics is not None and training_metrics is not False:
+                    self._refresh_learning_metrics(training_metrics)
                     self.logger.info(f"training_metrics: {training_metrics}")
                     window_payload = {
                         "record_type": "workflow_window",
@@ -610,9 +656,9 @@ class EpisodeRunner:
                             window_payload[f"agent_{key}"] = value
                         self.last_perf_stat_time = now
 
-            curriculum_metrics = self._get_curriculum_metrics()
+            curriculum_state = self.curriculum_store.refresh_state()
             sampled_usr_conf, sampled_meta = self.config_sampler.sample(
-                self.episode_cnt + 1, metrics=curriculum_metrics
+                curriculum_state.get("stage", "warmup")
             )
             sampled_env_conf = deepcopy(sampled_meta["env_conf"])
             env_obs = self.env.reset(sampled_usr_conf)
@@ -647,7 +693,8 @@ class EpisodeRunner:
 
             self.logger.info(
                 f"Episode {self.episode_cnt} start "
-                f"stage={sampled_meta['stage']} profile={sampled_meta['profile']} env={sampled_env_conf}"
+                f"stage={sampled_meta['stage']} global_progress={curriculum_state.get('curriculum_progress', 0.0):.2f} "
+                f"profile={sampled_meta['profile']} env={sampled_env_conf}"
             )
 
             while not done:
@@ -694,6 +741,40 @@ class EpisodeRunner:
                 reward_payload = self._normalize_reward_payload(getattr(self.agent, "last_reward", 0.0))
                 reward_total = float(reward_payload["reward_total"])
                 total_reward += reward_total
+                guidance = self.agent.preprocessor._get_guidance() if hasattr(self.agent.preprocessor, "_get_guidance") else {}
+                battery_ratio = float(getattr(self.agent.preprocessor, "battery", 0.0)) / max(
+                    float(getattr(self.agent.preprocessor, "battery_max", 1.0)), 1.0
+                )
+                wall_adjacent = int(getattr(self.agent.preprocessor, "wall_adjacent", 0))
+                dirty_adjacent = int(getattr(self.agent.preprocessor, "dirty_adjacent", 0))
+                cleaned_this_step = int(getattr(self.agent.preprocessor, "cleaned_this_step", 0))
+                local_frontier_density = float(getattr(self.agent.preprocessor, "local_frontier_density", 0.0))
+                wall_follow_streak = 0
+                for rec in reversed(step_records):
+                    if rec.get("wall_adjacent", 0) > 0:
+                        wall_follow_streak += 1
+                    else:
+                        break
+                if wall_adjacent > 0:
+                    wall_follow_streak += 1
+                wall_hugging_clean_floor = (
+                    wall_adjacent > 0 and wall_follow_streak >= 4 and cleaned_this_step == 0 and dirty_adjacent == 0
+                )
+                stale_boundary_follow = wall_hugging_clean_floor and local_frontier_density <= 0.05
+                local_passage_width = float(guidance.get("local_passage_width", 0.0))
+                narrow_unknown_commit = bool(self.agent.preprocessor._is_narrow_unknown_commit(guidance, battery_ratio))
+                missed_charge_opportunity = bool(self.agent.preprocessor._is_missed_charge_opportunity(guidance, battery_ratio))
+                charger_nearby_not_charged = bool(
+                    self.agent.preprocessor._is_charger_nearby_not_charged(guidance, battery_ratio)
+                )
+                suboptimal_target_hold = bool(self.agent.preprocessor._is_suboptimal_target_hold(guidance))
+                planner_suggested_action = int(guidance.get("suggested_action", -1) if guidance.get("suggested_action") is not None else -1)
+                selected_action = int(np.asarray(act_data.action).reshape(-1)[0])
+                planner_action_match = planner_suggested_action < 0 or planner_suggested_action == selected_action
+                all_charger_known_path_count = int(guidance.get("all_charger_known_path_count", 0))
+                unknown_on_target_path_ratio = float(guidance.get("unknown_path_ratio", 0.0))
+                target_selection_gap = float(guidance.get("target_gap", 0.0))
+                charge_margin_now = float(guidance.get("margin", getattr(self.agent.preprocessor, "charger_slack", 0.0)))
 
                 final_reward = 0.0
                 if done:
@@ -738,6 +819,27 @@ class EpisodeRunner:
                         "future_recoverability_score": float(getattr(self.agent.preprocessor, "future_recoverability_score", 0.0)),
                         "anchor_return_dist": float(getattr(self.agent.preprocessor, "anchor_return_dist", 0.0)),
                         "is_diag_action": 1.0 if int(np.asarray(act_data.action).reshape(-1)[0]) in (1, 3, 5, 7) else 0.0,
+                        "wall_adjacent": wall_adjacent,
+                        "dirty_adjacent": dirty_adjacent,
+                        "cleaned_this_step": cleaned_this_step,
+                        "local_frontier_density": local_frontier_density,
+                        "same_region_streak": float(getattr(self.agent.preprocessor, "same_region_streak", 0.0)),
+                        "path_cross_count_50": float(getattr(self.agent.preprocessor, "path_cross_count_50", 0.0)),
+                        "coverage_efficiency_20": float(getattr(self.agent.preprocessor, "coverage_efficiency_20", 1.0)),
+                        "wall_hugging_clean_floor": 1.0 if wall_hugging_clean_floor else 0.0,
+                        "stale_boundary_follow": 1.0 if stale_boundary_follow else 0.0,
+                        "narrow_unknown_commit": 1.0 if narrow_unknown_commit else 0.0,
+                        "missed_charge_opportunity": 1.0 if missed_charge_opportunity else 0.0,
+                        "charger_nearby_not_charged": 1.0 if charger_nearby_not_charged else 0.0,
+                        "suboptimal_target_hold": 1.0 if suboptimal_target_hold else 0.0,
+                        "planner_policy_divergence": 0.0 if planner_action_match else 1.0,
+                        "planner_suggested_action": planner_suggested_action,
+                        "planner_action_margin": float(guidance.get("action_margin", 0.0)),
+                        "all_charger_known_path_count": float(all_charger_known_path_count),
+                        "unknown_on_target_path_ratio": float(unknown_on_target_path_ratio),
+                        "target_selection_gap": float(target_selection_gap),
+                        "charge_margin_now": float(charge_margin_now),
+                        "local_passage_width": float(local_passage_width),
                     }
                 )
 
@@ -745,7 +847,7 @@ class EpisodeRunner:
                     step_records[-1]["reward_survive"] = float(step_records[-1]["reward_survive"]) + float(final_reward)
 
                     if self.is_new_best:
-                        self._save_best_model(self.last_clean_score)
+                        self._save_best_model(self.last_clean_score, self.last_checkpoint_scores)
                         self._save_resume_artifacts("best", self.last_clean_score, with_named_snapshot=True)
 
                     self._maybe_save_progress_snapshots()
@@ -865,6 +967,17 @@ class EpisodeRunner:
             "return_stall_rate": diagnostics["return_stall_rate"],
             "recoverability_score_avg": diagnostics["recoverability_score_avg"],
             "recoverability_violation_rate": diagnostics["recoverability_violation_rate"],
+            "wall_hugging_clean_floor_rate": diagnostics["wall_hugging_clean_floor_rate"],
+            "stale_boundary_follow_rate": diagnostics["stale_boundary_follow_rate"],
+            "narrow_unknown_commit_rate": diagnostics["narrow_unknown_commit_rate"],
+            "missed_charge_opportunity_rate": diagnostics["missed_charge_opportunity_rate"],
+            "charger_nearby_not_charged_rate": diagnostics["charger_nearby_not_charged_rate"],
+            "suboptimal_target_hold_rate": diagnostics["suboptimal_target_hold_rate"],
+            "planner_policy_divergence_rate": diagnostics["planner_policy_divergence_rate"],
+            "avg_path_cross_count_50": diagnostics["avg_path_cross_count_50"],
+            "avg_coverage_efficiency_20": diagnostics["avg_coverage_efficiency_20"],
+            "avg_all_charger_known_path_count": diagnostics["avg_all_charger_known_path_count"],
+            "avg_unknown_on_target_path_ratio": diagnostics["avg_unknown_on_target_path_ratio"],
             "mode_usage_depart": diagnostics["mode_usage_depart"],
             "mode_usage_expand": diagnostics["mode_usage_expand"],
             "mode_usage_harvest": diagnostics["mode_usage_harvest"],
@@ -872,6 +985,7 @@ class EpisodeRunner:
             "mode_usage_return": diagnostics["mode_usage_return"],
             "mode_usage_evade": diagnostics["mode_usage_evade"],
         })
+        curriculum_state = self._emit_curriculum_signal()
 
         map_id = extra_info.get("map_id") or extra_info.get("map_code") or "?"
         actual_robot_count = int(env_info.get("npc_count", sampled_env_conf.get("robot_count", 1)))
@@ -892,9 +1006,13 @@ class EpisodeRunner:
         cur_metrics = self._get_curriculum_metrics()
         if cur_metrics is not None and self.episode_cnt % 10 == 0:
             self.logger.info(
-                f"[CURRICULUM] ep:{self.episode_cnt} stage:{sampled_meta['stage']} "
+                f"[CURRICULUM] ep:{self.episode_cnt} local_stage:{sampled_meta['stage']} "
+                f"global_stage:{curriculum_state.get('stage', 'warmup')} "
+                f"progress:{curriculum_state.get('curriculum_progress', 0.0):.2f} "
                 f"win_rate:{cur_metrics['win_rate']:.2f} "
-                f"avg_cs:{cur_metrics['avg_cs']:.0f} avg_cc:{cur_metrics['avg_cc']:.1f}"
+                f"avg_cs:{cur_metrics['avg_clean_score']:.0f} avg_cc:{cur_metrics['avg_charge_count']:.1f} "
+                f"battery_fail:{cur_metrics['battery_fail_rate']:.2f} "
+                f"return_stall:{cur_metrics['return_stall_rate']:.2f}"
             )
 
         # Per-map score tracking for generalization monitoring
@@ -920,20 +1038,41 @@ class EpisodeRunner:
                 )
 
         scores = [ep["clean_score"] for ep in self.episode_history]
+        robust_score = float("-inf")
         if len(scores) >= 20:
             rolling_avg = sum(scores) / len(scores)
-            robust_score = (
-                rolling_avg
-                + 3.0 * _percentile(scores, 0.10)
-                - 8.0 * invalid_move_rate
-                - 20.0 * (1.0 if fail_reason == "battery" else 0.0)
-                - 30.0 * (1.0 if fail_reason == "collision" else 0.0)
-            )
+            robust_score = compute_legacy_robust_score(scores, invalid_move_rate, fail_reason)
             if rolling_avg > self.best_avg_score:
                 self.best_avg_score = rolling_avg
             if robust_score > self.best_robust_score:
                 self.best_robust_score = robust_score
-                self.is_new_best = True
+
+        window_metrics = self._window_metrics()
+        try:
+            checkpoint_scores = compute_checkpoint_scores(window_metrics, self.latest_learning_metrics)
+        except Exception as exc:
+            self.logger.warning(f"[CHECKPOINT_SCORE] ep:{self.episode_cnt} fallback due to error: {exc}")
+            checkpoint_scores = {
+                "resume_eligible": False,
+                "submission_eligible": False,
+                "resume_readiness_score": 0.0,
+                "submission_score": 0.0,
+                "training_stability_bonus": 0.0,
+                "benchmark_stability_bonus": 0.0,
+                "checkpoint_preservation_score": 0.0,
+            }
+        self.last_checkpoint_scores = checkpoint_scores
+        self.best_resume_readiness_score = max(
+            self.best_resume_readiness_score, checkpoint_scores["resume_readiness_score"]
+        )
+        self.best_submission_score = max(
+            self.best_submission_score, checkpoint_scores["submission_score"]
+        )
+        if checkpoint_scores["resume_eligible"] and (
+            checkpoint_scores["checkpoint_preservation_score"] > self.best_preservation_score
+        ):
+            self.best_preservation_score = checkpoint_scores["checkpoint_preservation_score"]
+            self.is_new_best = True
 
         checkpoint_ref = getattr(self.agent, "current_model_ref", {}) or {}
         actual_battery_max = int(hero.get("battery_max", env_info.get("battery_max", sampled_env_conf.get("battery_max", 200))))
@@ -961,6 +1100,11 @@ class EpisodeRunner:
             "invalid_move_rate": round(invalid_move_rate, 4),
             "charge_efficiency": round(charge_efficiency, 4),
             "clean_per_step": round(clean_per_step, 4),
+            "legacy_robust_score": round(float(robust_score), 4) if robust_score != float("-inf") else None,
+            "resume_readiness_score": checkpoint_scores["resume_readiness_score"],
+            "submission_score": checkpoint_scores["submission_score"],
+            "checkpoint_preservation_score": checkpoint_scores["checkpoint_preservation_score"],
+            "resume_eligible": checkpoint_scores["resume_eligible"],
             "mode": int(getattr(fm, "current_mode", -1)),
             "sampled_env_conf": deepcopy(sampled_env_conf),
         }
@@ -1060,6 +1204,17 @@ class EpisodeRunner:
                 "return_stall_rate": 0.0,
                 "recoverability_score_avg": 0.0,
                 "recoverability_violation_rate": 0.0,
+                "wall_hugging_clean_floor_rate": 0.0,
+                "stale_boundary_follow_rate": 0.0,
+                "narrow_unknown_commit_rate": 0.0,
+                "missed_charge_opportunity_rate": 0.0,
+                "charger_nearby_not_charged_rate": 0.0,
+                "suboptimal_target_hold_rate": 0.0,
+                "planner_policy_divergence_rate": 0.0,
+                "avg_path_cross_count_50": 0.0,
+                "avg_coverage_efficiency_20": 0.0,
+                "avg_all_charger_known_path_count": 0.0,
+                "avg_unknown_on_target_path_ratio": 0.0,
                 "mode_usage_depart": 0.0,
                 "mode_usage_expand": 0.0,
                 "mode_usage_harvest": 0.0,
@@ -1112,6 +1267,27 @@ class EpisodeRunner:
             else 0.0
         )
         return_stall_rate = float(stall_count / max(len(progress_deltas), 1))
+        wall_hugging_clean_floor_rate = float(
+            sum(float(rec.get("wall_hugging_clean_floor", 0.0)) for rec in step_records) / total
+        )
+        stale_boundary_follow_rate = float(
+            sum(float(rec.get("stale_boundary_follow", 0.0)) for rec in step_records) / total
+        )
+        narrow_unknown_commit_rate = float(
+            sum(float(rec.get("narrow_unknown_commit", 0.0)) for rec in step_records) / total
+        )
+        missed_charge_opportunity_rate = float(
+            sum(float(rec.get("missed_charge_opportunity", 0.0)) for rec in step_records) / total
+        )
+        charger_nearby_not_charged_rate = float(
+            sum(float(rec.get("charger_nearby_not_charged", 0.0)) for rec in step_records) / total
+        )
+        suboptimal_target_hold_rate = float(
+            sum(float(rec.get("suboptimal_target_hold", 0.0)) for rec in step_records) / total
+        )
+        planner_policy_divergence_rate = float(
+            sum(float(rec.get("planner_policy_divergence", 0.0)) for rec in step_records) / total
+        )
 
         return {
             "late_return_rate": float(late_return_rate),
@@ -1126,6 +1302,21 @@ class EpisodeRunner:
             "return_stall_rate": float(return_stall_rate),
             "recoverability_score_avg": float(sum(recoverability) / max(len(recoverability), 1)),
             "recoverability_violation_rate": float(sum(1 for x in recoverability if x < 0.0) / max(len(recoverability), 1)),
+            "wall_hugging_clean_floor_rate": wall_hugging_clean_floor_rate,
+            "stale_boundary_follow_rate": stale_boundary_follow_rate,
+            "narrow_unknown_commit_rate": narrow_unknown_commit_rate,
+            "missed_charge_opportunity_rate": missed_charge_opportunity_rate,
+            "charger_nearby_not_charged_rate": charger_nearby_not_charged_rate,
+            "suboptimal_target_hold_rate": suboptimal_target_hold_rate,
+            "planner_policy_divergence_rate": planner_policy_divergence_rate,
+            "avg_path_cross_count_50": float(sum(float(rec.get("path_cross_count_50", 0.0)) for rec in step_records) / total),
+            "avg_coverage_efficiency_20": float(sum(float(rec.get("coverage_efficiency_20", 0.0)) for rec in step_records) / total),
+            "avg_all_charger_known_path_count": float(
+                sum(float(rec.get("all_charger_known_path_count", 0.0)) for rec in step_records) / total
+            ),
+            "avg_unknown_on_target_path_ratio": float(
+                sum(float(rec.get("unknown_on_target_path_ratio", 0.0)) for rec in step_records) / total
+            ),
             "mode_usage_depart": sum(1 for mode in modes if mode == 0) / total,
             "mode_usage_expand": sum(1 for mode in modes if mode == 1) / total,
             "mode_usage_harvest": sum(1 for mode in modes if mode == 2) / total,
@@ -1167,6 +1358,17 @@ class EpisodeRunner:
             "return_stall_rate": round(m["return_stall_rate"], 4),
             "recoverability_score_avg": round(m["recoverability_score_avg"], 4),
             "recoverability_violation_rate": round(m["recoverability_violation_rate"], 4),
+            "wall_hugging_clean_floor_rate": round(m["wall_hugging_clean_floor_rate"], 4),
+            "stale_boundary_follow_rate": round(m["stale_boundary_follow_rate"], 4),
+            "narrow_unknown_commit_rate": round(m["narrow_unknown_commit_rate"], 4),
+            "missed_charge_opportunity_rate": round(m["missed_charge_opportunity_rate"], 4),
+            "charger_nearby_not_charged_rate": round(m["charger_nearby_not_charged_rate"], 4),
+            "suboptimal_target_hold_rate": round(m["suboptimal_target_hold_rate"], 4),
+            "planner_policy_divergence_rate": round(m["planner_policy_divergence_rate"], 4),
+            "avg_path_cross_count_50": round(m["avg_path_cross_count_50"], 4),
+            "avg_coverage_efficiency_20": round(m["avg_coverage_efficiency_20"], 4),
+            "avg_all_charger_known_path_count": round(m["avg_all_charger_known_path_count"], 4),
+            "avg_unknown_on_target_path_ratio": round(m["avg_unknown_on_target_path_ratio"], 4),
             "mode_usage_depart": round(m["mode_usage_depart"], 4),
             "mode_usage_expand": round(m["mode_usage_expand"], 4),
             "mode_usage_harvest": round(m["mode_usage_harvest"], 4),
@@ -1176,22 +1378,62 @@ class EpisodeRunner:
             "anchor_win_rate": round(m["anchor_win_rate"], 4) if m["anchor_win_rate"] >= 0 else -1,
             "mild_win_rate": round(m["mild_win_rate"], 4) if m["mild_win_rate"] >= 0 else -1,
             "broad_win_rate": round(m["broad_win_rate"], 4) if m["broad_win_rate"] >= 0 else -1,
+            "resume_readiness_score": round(self.last_checkpoint_scores["resume_readiness_score"], 4),
+            "submission_score": round(self.last_checkpoint_scores["submission_score"], 4),
+            "checkpoint_preservation_score": round(self.last_checkpoint_scores["checkpoint_preservation_score"], 4),
+            "resume_eligible": 1.0 if self.last_checkpoint_scores["resume_eligible"] else 0.0,
         }
         payload.update(self._curriculum_progress_payload())
         return payload
 
 
-def _percentile(values, q):
-    values = sorted(float(v) for v in values if v is not None)
+def _extract_numeric_metric(payload, group, key, default=None):
+    if not isinstance(payload, dict):
+        return default
+    group_payload = payload.get(group, {})
+    if not isinstance(group_payload, dict):
+        return default
+    try:
+        value = group_payload.get(key, default)
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _history_average(history, key, exclude_latest=False):
+    items = list(history)
+    if exclude_latest and items:
+        items = items[:-1]
+    values = []
+    for item in items:
+        try:
+            value = item.get(key)
+            if value is None:
+                continue
+            values.append(float(value))
+        except (TypeError, ValueError):
+            continue
     if not values:
-        return 0.0
-    if len(values) == 1:
-        return values[0]
-    pos = (len(values) - 1) * q
-    low = int(pos)
-    high = min(low + 1, len(values) - 1)
-    weight = pos - low
-    return float(values[low] * (1.0 - weight) + values[high] * weight)
+        return None
+    return sum(values) / len(values)
+
+
+def _ratio(current, previous):
+    try:
+        current = float(current)
+    except (TypeError, ValueError):
+        return 1.0
+    if previous in (None, 0.0):
+        return 1.0
+    try:
+        previous = float(previous)
+    except (TypeError, ValueError):
+        return 1.0
+    if abs(previous) < 1e-6:
+        return 1.0
+    return current / previous
 
 
 def resolve_shared_code_dir():

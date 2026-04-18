@@ -53,6 +53,7 @@ class ExpertPolicy:
     _NPC_DANGER_RADIUS = 8
     _UNEXPLORED_COST = 1.8
     _RECENT_TARGET_STEPS = 4
+    _PLANNER_CHARGER_EVAL_LIMIT = int(getattr(Config, "PLANNER_CHARGER_EVAL_LIMIT", 3))
 
     def __init__(self):
         self._charger_list = []
@@ -166,7 +167,30 @@ class ExpertPolicy:
         battery_ratio = battery / battery_max
         on_charger = self._is_on_charger(hx, hz)
 
-        charger_path, charger_dist, charger_target = self._plan_to_charger_cached(prep)
+        mode = int(getattr(prep, "current_mode", 0))
+        contract_pressure = float(getattr(prep, "route_contract_pressure", 0.0))
+        multi_target_eval = bool(
+            int(getattr(prep, "total_charger", 1)) <= 2
+            or battery_ratio <= float(getattr(Config, "UNKNOWN_PATH_RISK_BATTERY_RATIO", 0.45))
+            or mode in (
+                getattr(prep, "MODE_CONTRACT", 3),
+                getattr(prep, "MODE_RETURN", 4),
+            )
+            or contract_pressure >= 0.25
+            or getattr(prep, "route_anchor_center", None) is None
+        )
+
+        if multi_target_eval:
+            charger_candidates = self._evaluate_charger_candidates(prep)
+        else:
+            charger_candidates = self._build_lightweight_charger_candidates(prep)
+        best_candidate = charger_candidates[0] if charger_candidates else None
+
+        charger_path = list(best_candidate.get("path", [])) if best_candidate else []
+        charger_dist = float(best_candidate.get("astar_dist", float("inf"))) if best_candidate else float("inf")
+        charger_target = tuple(best_candidate["center"]) if best_candidate and best_candidate.get("center") is not None else None
+        path_source = str(best_candidate.get("path_source", "greedy_local")) if best_candidate else "greedy_local"
+
         if not charger_path:
             charger_dist = float(getattr(prep, "nearest_charger_dist", float("inf")))
             charger_target = charger_target or self._nearest_charger_center(hx, hz)
@@ -175,7 +199,7 @@ class ExpertPolicy:
         slack = self._estimate_slack(prep, charger_dist)
         min_npc_dist = self._min_npc_dist(prep)
         unknown_path_ratio = self._unknown_path_ratio(prep, charger_path)
-        target_gap = self._target_gap(prep, charger_target, charger_dist)
+        target_gap = self._target_gap_from_candidates(charger_candidates)
         target_stable = self._target_stable(prep, charger_target)
         anchor_stable = self._anchor_stable(prep, charger_target)
         action_margin = self._best_action_margin(prep, legal_action, charger_target)
@@ -194,7 +218,7 @@ class ExpertPolicy:
         if legal_action is not None and suggested_action is not None:
             legal_and_safe = bool(legal_action[suggested_action])
 
-        reachable = bool(charger_path) or np.isfinite(charger_dist)
+        reachable = bool(best_candidate.get("reachable", False)) if best_candidate else (bool(charger_path) or np.isfinite(charger_dist))
         target_reliable = self._is_target_signal_reliable(
             prep,
             legal_and_safe=legal_and_safe,
@@ -232,6 +256,25 @@ class ExpertPolicy:
             and action_margin >= float(getattr(Config, "TEACHER_RETURN_ACTION_MARGIN_MIN", 1.0))
         )
 
+        best_cheb_idx = 0
+        best_astar_idx = 0
+        selected_target_rank = 0
+        all_known_path_count = 0
+        for idx, cand in enumerate(charger_candidates, start=1):
+            if idx == 1:
+                best_astar_idx = idx
+            if idx == 1 and cand.get("is_nearest_cheb", False):
+                best_cheb_idx = idx
+            if cand.get("is_nearest_cheb", False) and best_cheb_idx == 0:
+                best_cheb_idx = idx
+            if cand.get("reachable", False) and np.isfinite(float(cand.get("astar_dist", float("inf")))):
+                all_known_path_count += 1
+            if charger_target is not None and tuple(cand.get("center", ())) == tuple(charger_target):
+                selected_target_rank = idx
+
+        if best_cheb_idx == 0 and charger_candidates:
+            best_cheb_idx = 1
+
         return {
             "battery_ratio": battery_ratio,
             "battery": battery,
@@ -250,6 +293,13 @@ class ExpertPolicy:
             "suggested_action": suggested_action,
             "suggested_action_legal": legal_and_safe,
             "reachable": reachable,
+            "path_source": path_source,
+            "fallback_to_chebyshev": bool(path_source == "chebyshev"),
+            "charger_candidates": charger_candidates,
+            "all_charger_known_path_count": int(all_known_path_count),
+            "best_astar_charger_idx": int(best_astar_idx),
+            "best_cheb_charger_idx": int(best_cheb_idx),
+            "selected_target_rank": int(selected_target_rank if selected_target_rank > 0 else 1 if charger_candidates else 0),
             "target_reliable": bool(target_reliable),
             "anchor_reliable": bool(anchor_reliable),
             "mode_reliable": bool(mode_reliable),
@@ -274,6 +324,9 @@ class ExpertPolicy:
         battery_ratio = signal["battery_ratio"]
         slack = signal["slack"]
         on_charger = signal["on_charger"]
+        margin = float(signal.get("margin", 0.0))
+        unknown_ratio = float(signal.get("unknown_path_ratio", 0.0))
+        known_path_count = int(signal.get("all_charger_known_path_count", 0))
 
         local_dirt_density = float(getattr(prep, "local_dirt_density", 0.0))
         recoverability = float(getattr(prep, "future_recoverability_score", 0.0))
@@ -282,13 +335,24 @@ class ExpertPolicy:
 
         if signal["min_npc_dist"] <= 2:
             mode = "evade"
-        elif battery_ratio <= Config.RETURN_BATTERY_RATIO or slack <= Config.RETURN_SLACK_THRESHOLD or recoverability <= Config.RETURN_RECOVERABILITY_THRESHOLD:
+        elif (
+            battery_ratio <= Config.RETURN_BATTERY_RATIO
+            or slack <= Config.RETURN_SLACK_THRESHOLD
+            or recoverability <= Config.RETURN_RECOVERABILITY_THRESHOLD
+            or margin <= Config.CHARGE_MARGIN_LOW
+        ):
             mode = "return"
         elif (
             battery_ratio <= Config.CONTRACT_BATTERY_RATIO
             or slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD
             or recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
             or contract_pressure >= 0.5
+            or margin <= Config.CHARGE_MARGIN_WARN
+            or (
+                known_path_count < min(int(getattr(prep, "total_charger", 1)), 2)
+                and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
+                and unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD
+            )
         ):
             mode = "contract"
         elif depart_steps <= Config.DEPART_STEPS:
@@ -815,6 +879,13 @@ class ExpertPolicy:
             return 0.0
         return float(unknown) / float(total)
 
+    def _target_gap_from_candidates(self, candidates):
+        scored = [float(cand.get("score", float("inf"))) for cand in candidates if np.isfinite(float(cand.get("score", float("inf"))))]
+        scored.sort()
+        if len(scored) < 2:
+            return float("inf")
+        return float(scored[1] - scored[0])
+
     def _target_gap(self, prep, charger_target, charger_dist):
         if charger_target is None:
             return 0.0
@@ -862,3 +933,136 @@ class ExpertPolicy:
             return float("inf") if scores else 0.0
         scores.sort(reverse=True)
         return float(scores[0] - scores[1])
+
+    def _charger_goal_heuristic(self, charger):
+        cx, cz, w, h = charger
+
+        def h_func(x, z):
+            return max(abs(x - cx) - w, abs(z - cz) - h, 0)
+
+        return h_func
+
+    def _plan_to_specific_charger(self, prep, charger, primary_cost_map=None, relaxed_cost_map=None):
+        primary_cost_map = primary_cost_map if primary_cost_map is not None else self._build_cost_map(prep, npc_weight=1.0)
+        relaxed_cost_map = relaxed_cost_map if relaxed_cost_map is not None else self._build_cost_map(prep, npc_weight=0.3)
+        cx, cz, w, h = charger
+
+        def is_goal(x, z):
+            return abs(x - cx) <= w and abs(z - cz) <= h
+
+        h_func = self._charger_goal_heuristic(charger)
+        act, path, dist = self._weighted_astar_full(prep, primary_cost_map, is_goal, h_func)
+        if act is not None and path:
+            return path, dist, "astar"
+        act, path, dist = self._weighted_astar_full(prep, relaxed_cost_map, is_goal, h_func)
+        if act is not None and path:
+            return path, dist, "astar_relaxed"
+        return [], float("inf"), "chebyshev"
+
+    def _evaluate_charger_candidates(self, prep):
+        hx, hz = prep.cur_pos
+        if not self._charger_list:
+            return []
+
+        primary_cost_map = self._build_cost_map(prep, npc_weight=1.0)
+        relaxed_cost_map = self._build_cost_map(prep, npc_weight=0.3)
+
+        ordered = sorted(
+            self._charger_list,
+            key=lambda item: max(abs(hx - item[0]) - item[2], abs(hz - item[1]) - item[3], 0),
+        )
+        eval_targets = []
+        known_centers = set()
+
+        def _add_target(center):
+            if center is None:
+                return
+            center = tuple(center)
+            if center in known_centers:
+                return
+            for charger in ordered:
+                if (charger[0], charger[1]) == center:
+                    eval_targets.append(charger)
+                    known_centers.add(center)
+                    return
+
+        _add_target(self._cached_target)
+        _add_target(getattr(prep, "route_anchor_center", None))
+        for charger in ordered:
+            if len(eval_targets) >= self._PLANNER_CHARGER_EVAL_LIMIT:
+                break
+            _add_target((charger[0], charger[1]))
+
+        candidates = []
+        nearest_cheb_center = (ordered[0][0], ordered[0][1]) if ordered else None
+        for charger in ordered:
+            center = (charger[0], charger[1])
+            cheb_dist = float(max(abs(hx - charger[0]) - charger[2], abs(hz - charger[1]) - charger[3], 0))
+            if center in known_centers:
+                path, astar_dist, path_source = self._plan_to_specific_charger(
+                    prep,
+                    charger,
+                    primary_cost_map=primary_cost_map,
+                    relaxed_cost_map=relaxed_cost_map,
+                )
+                reachable = bool(path) and np.isfinite(astar_dist)
+                unknown_ratio = self._unknown_path_ratio(prep, path)
+            else:
+                path = []
+                astar_dist = cheb_dist
+                path_source = "chebyshev"
+                reachable = False
+                unknown_ratio = 1.0
+
+            score = float(
+                astar_dist
+                + float(getattr(Config, "TARGET_SELECT_UNKNOWN_COST", 10.0)) * unknown_ratio
+                + (0.0 if reachable else float(getattr(Config, "TARGET_SELECT_UNREACHABLE_PENALTY", 18.0)))
+            )
+            candidates.append(
+                {
+                    "center": center,
+                    "path": path,
+                    "astar_dist": float(astar_dist),
+                    "dist": cheb_dist,
+                    "reachable": bool(reachable),
+                    "unknown_path_ratio": float(unknown_ratio),
+                    "score": score,
+                    "path_source": path_source,
+                    "is_nearest_cheb": bool(center == nearest_cheb_center),
+                }
+            )
+
+        candidates.sort(key=lambda item: (not item["reachable"], item["score"], item["dist"]))
+        return candidates
+
+    def _build_lightweight_charger_candidates(self, prep):
+        hx, hz = prep.cur_pos
+        path, dist, target = self._plan_to_charger_cached(prep)
+        candidates = []
+        for idx, (_, dx, dz, cx, cz, _, _) in enumerate(getattr(prep, "all_charger_info", [])):
+            cheb_dist = float(max(abs(dx), abs(dz)))
+            is_target = target is not None and (cx, cz) == tuple(target)
+            reachable = bool(path) and is_target
+            unknown_ratio = self._unknown_path_ratio(prep, path) if reachable else 1.0
+            astar_dist = float(dist if reachable and np.isfinite(dist) else cheb_dist)
+            score = float(
+                astar_dist
+                + float(getattr(Config, "TARGET_SELECT_UNKNOWN_COST", 10.0)) * unknown_ratio
+                + (0.0 if reachable else float(getattr(Config, "TARGET_SELECT_UNREACHABLE_PENALTY", 18.0)))
+            )
+            candidates.append(
+                {
+                    "center": (cx, cz),
+                    "path": list(path) if reachable else [],
+                    "astar_dist": astar_dist,
+                    "dist": cheb_dist,
+                    "reachable": bool(reachable),
+                    "unknown_path_ratio": float(unknown_ratio),
+                    "score": score,
+                    "path_source": "astar" if reachable else "chebyshev",
+                    "is_nearest_cheb": bool(idx == 0),
+                }
+            )
+        candidates.sort(key=lambda item: (not item["reachable"], item["score"], item["dist"]))
+        return candidates

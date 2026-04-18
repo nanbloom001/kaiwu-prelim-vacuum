@@ -145,6 +145,10 @@ class Preprocessor:
         self.recent_return_diag_rate = 0.0
         self.return_progress_ema = 0.0
         self.return_stall_ema = 0.0
+        self.same_region_streak = 0
+        self.recent_unique_cells_20 = 0
+        self.path_cross_count_50 = 0
+        self.coverage_efficiency_20 = 1.0
 
         self.all_npc_info = []
         self.all_charger_info = []
@@ -310,6 +314,10 @@ class Preprocessor:
             self.mode_duration = 1
         self.recent_diag_rate = self._compute_recent_diag_rate()
         self.recent_return_diag_rate = self._compute_recent_diag_rate(return_only=True)
+        self.same_region_streak = self._compute_same_region_streak()
+        self.recent_unique_cells_20 = self._compute_recent_unique_cells(window=20)
+        self.path_cross_count_50 = self._compute_path_cross_count(window=50)
+        self.coverage_efficiency_20 = self._compute_coverage_efficiency(window=20)
 
     def _refresh_static_maps(self):
         self.charger_map.fill(0.0)
@@ -448,6 +456,30 @@ class Preprocessor:
     def _sort_charger_candidates(self):
         hx, hz = self.cur_pos
         signal = self._get_guidance()
+        guidance_candidates = signal.get("charger_candidates") or []
+        if guidance_candidates:
+            candidates = []
+            for idx, cand in enumerate(guidance_candidates[: Config.CHARGER_SLOTS]):
+                cx, cz = tuple(cand.get("center", (0, 0)))
+                dx = float(cx - hx)
+                dz = float(cz - hz)
+                in_local = 1.0 if abs(dx) <= self.VIEW_HALF and abs(dz) <= self.VIEW_HALF else 0.0
+                candidates.append(
+                    {
+                        "center": (cx, cz),
+                        "dx": dx,
+                        "dz": dz,
+                        "dist": float(cand.get("dist", max(abs(dx), abs(dz)))),
+                        "astar_dist": float(cand.get("astar_dist", cand.get("dist", max(abs(dx), abs(dz))))),
+                        "reachable": 1.0 if cand.get("reachable", False) else 0.0,
+                        "priority": float(cand.get("priority", 0.0)) + 0.2 * in_local + (1.0 if idx == 0 else 0.0),
+                        "unknown_path_ratio": float(cand.get("unknown_path_ratio", 0.0)),
+                        "score": float(cand.get("score", cand.get("astar_dist", cand.get("dist", max(abs(dx), abs(dz)))))),
+                        "path_source": str(cand.get("path_source", "chebyshev")),
+                    }
+                )
+            return candidates
+
         target = signal.get("charger_target")
         candidates = []
         for idx, (_, dx, dz, cx, cz, half_w, half_h) in enumerate(self.all_charger_info):
@@ -469,6 +501,9 @@ class Preprocessor:
                     "astar_dist": float(astar),
                     "reachable": reachable,
                     "priority": priority + 0.2 * in_local + (1.0 if idx == 0 else 0.0),
+                    "unknown_path_ratio": float(signal.get("unknown_path_ratio", 0.0) if target is not None and (cx, cz) == tuple(target) else 1.0),
+                    "score": float(astar if target is not None and (cx, cz) == tuple(target) else cheb),
+                    "path_source": "astar" if target is not None and (cx, cz) == tuple(target) else "chebyshev",
                 }
             )
         candidates.sort(key=lambda item: (-item["reachable"], item["astar_dist"], item["dist"]))
@@ -533,6 +568,94 @@ class Preprocessor:
         diag_count = sum(1 for action in actions if action in (1, 3, 5, 7))
         return float(diag_count) / float(max(len(actions), 1))
 
+    def _compute_same_region_streak(self, radius=1):
+        if not self._trajectory:
+            return 0
+        hx, hz = self.cur_pos
+        streak = 0
+        for x, z in reversed(self._trajectory):
+            if max(abs(x - hx), abs(z - hz)) <= radius:
+                streak += 1
+            else:
+                break
+        return streak
+
+    def _compute_recent_unique_cells(self, window=20):
+        if not self._trajectory:
+            return 0
+        return len(set(self._trajectory[-window:]))
+
+    def _compute_path_cross_count(self, window=50):
+        if not self._trajectory:
+            return 0
+        seen = {}
+        repeats = 0
+        for pos in self._trajectory[-window:]:
+            seen[pos] = seen.get(pos, 0) + 1
+            if seen[pos] > 1:
+                repeats += 1
+        return repeats
+
+    def _compute_coverage_efficiency(self, window=20):
+        recent = self._trajectory[-window:]
+        if not recent:
+            return 1.0
+        return float(len(set(recent))) / float(len(recent))
+
+    def _is_stale_boundary_context(self):
+        return bool(
+            self.wall_adjacent >= 1
+            and self.dirty_adjacent == 0
+            and self.local_frontier_density < 0.08
+            and self.cur_visit_count >= 2
+        )
+
+    def _is_loop_context(self):
+        return bool(
+            (self.same_region_streak >= 6 and self.cur_visit_count >= 2)
+            or (self.no_progress_steps >= 8 and self.wall_adjacent >= 1)
+            or self.path_cross_count_50 >= 12
+        )
+
+    def _is_missed_charge_opportunity(self, guidance, battery_ratio):
+        return bool(
+            not self.just_charged
+            and not guidance.get("on_charger", False)
+            and self.nearest_charger_dist <= Config.MISSED_CHARGE_NEAR_DIST
+            and (
+                battery_ratio <= Config.MISSED_CHARGE_LOW_BATTERY_RATIO
+                or float(guidance.get("slack", self.charger_slack)) <= Config.MISSED_CHARGE_SLACK_THRESHOLD
+            )
+        )
+
+    def _is_charger_nearby_not_charged(self, guidance, battery_ratio):
+        return bool(
+            not self.just_charged
+            and not guidance.get("on_charger", False)
+            and self.nearest_charger_dist <= Config.CHARGER_NEARBY_DIST
+            and (
+                float(guidance.get("margin", 0.0)) <= Config.CHARGE_MARGIN_WARN
+                or battery_ratio <= Config.MISSED_CHARGE_LOW_BATTERY_RATIO
+            )
+        )
+
+    def _is_narrow_unknown_commit(self, guidance, battery_ratio):
+        return bool(
+            self.current_mode in (self.MODE_EXPAND, self.MODE_HARVEST, self.MODE_CONTRACT)
+            and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
+            and float(guidance.get("unknown_path_ratio", 0.0)) >= Config.UNKNOWN_PATH_RISK_THRESHOLD
+            and (self.wall_adjacent >= 2 or self.actual_legal_ratio <= 0.5)
+        )
+
+    def _is_suboptimal_target_hold(self, guidance):
+        target = guidance.get("charger_target")
+        if self.route_anchor_center is None or target is None:
+            return False
+        return bool(
+            tuple(self.route_anchor_center) != tuple(target)
+            and float(guidance.get("target_gap", 0.0)) >= Config.TARGET_STICKY_GAP_THRESHOLD
+        )
+
     def _target_idx_from_center(self, center):
         if center is None:
             return 0
@@ -546,20 +669,34 @@ class Preprocessor:
         previous_center = self.route_anchor_center
         guidance = self._get_guidance()
         best_center = tuple(guidance["charger_target"]) if guidance.get("charger_target") is not None else None
-        best_gap = float(guidance.get("target_gap", 0.0))
+        slack = float(guidance.get("slack", self.charger_slack))
+        best_unknown_ratio = float(guidance.get("unknown_path_ratio", 0.0))
         if previous_center is not None:
             prev_idx = self._target_idx_from_center(previous_center)
             prev_cand = self.sorted_charger_candidates[prev_idx - 1] if 1 <= prev_idx <= len(self.sorted_charger_candidates) else None
-            if (
-                prev_cand is not None
-                and prev_cand["reachable"] > 0.5
-                and (
-                    best_center == previous_center
-                    or best_gap < Config.TEACHER_ANCHOR_MARGIN_MIN
-                    or guidance.get("target_stable", False) is False
+            best_idx = self._target_idx_from_center(best_center)
+            best_cand = self.sorted_charger_candidates[best_idx - 1] if 1 <= best_idx <= len(self.sorted_charger_candidates) else None
+            if prev_cand is not None and prev_cand["reachable"] > 0.5:
+                prev_score = float(prev_cand.get("score", prev_cand.get("astar_dist", prev_cand.get("dist", 0.0))))
+                prev_unknown_ratio = float(prev_cand.get("unknown_path_ratio", 1.0))
+                best_score = float(best_cand.get("score", best_cand.get("astar_dist", best_cand.get("dist", 0.0)))) if best_cand is not None else prev_score
+                score_gap = prev_score - best_score
+                force_switch = (
+                    best_center is not None
+                    and best_center != previous_center
+                    and (
+                        score_gap >= Config.TARGET_FORCE_SWITCH_GAP
+                        or (slack <= Config.TARGET_KEEP_SLACK_MIN and score_gap > 0.5)
+                        or (prev_unknown_ratio > Config.TARGET_KEEP_UNKNOWN_RATIO_MAX and best_unknown_ratio + 0.05 < prev_unknown_ratio)
+                        or (best_cand is not None and best_cand.get("reachable", 0.0) > 0.5 and prev_cand.get("reachable", 0.0) <= 0.5)
+                    )
                 )
-            ):
-                best_center = previous_center
+                if not force_switch and (
+                    best_center == previous_center
+                    or score_gap <= 0.5
+                    or guidance.get("target_stable", False) is False
+                ):
+                    best_center = previous_center
 
         self.last_route_anchor_idx = self.route_anchor_idx
         self.route_anchor_center = best_center
@@ -590,7 +727,7 @@ class Preprocessor:
         )
         self.late_contract_risk = float(np.clip(-anchor_slack / 12.0, 0.0, 1.0))
         self.late_return_risk = float(np.clip(-self.charger_slack / 8.0, 0.0, 1.0))
-        self.current_target_dist = float(guidance.get("charger_dist", self.anchor_return_dist))
+        self.current_target_dist = float(self.anchor_return_dist if self.route_anchor_idx > 0 else guidance.get("charger_dist", self.anchor_return_dist))
 
     def _cell_passable_local(self, dx, dz):
         row = self.VIEW_HALF + dz
@@ -957,12 +1094,17 @@ class Preprocessor:
 
     def _infer_mode(self):
         battery_ratio = self.battery / max(self.battery_max, 1)
+        guidance = self._get_guidance()
+        margin = float(guidance.get("margin", 0.0))
+        known_path_count = int(guidance.get("all_charger_known_path_count", 0))
+        unknown_ratio = float(guidance.get("unknown_path_ratio", 0.0))
         if self.nearest_npc_dist <= 3.0:
             return self.MODE_EVADE
         if (
             self.charger_slack <= Config.RETURN_SLACK_THRESHOLD
             or battery_ratio <= Config.RETURN_BATTERY_RATIO
             or self.future_recoverability_score <= Config.RETURN_RECOVERABILITY_THRESHOLD
+            or margin <= Config.CHARGE_MARGIN_LOW
         ):
             return self.MODE_RETURN
         if (
@@ -970,6 +1112,12 @@ class Preprocessor:
             or battery_ratio <= Config.CONTRACT_BATTERY_RATIO
             or self.future_recoverability_score <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
             or self.route_contract_pressure >= 0.5
+            or margin <= Config.CHARGE_MARGIN_WARN
+            or (
+                known_path_count < min(self.total_charger, 2)
+                and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
+                and unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD
+            )
         ):
             return self.MODE_CONTRACT
         if self.steps_since_charge <= Config.DEPART_STEPS:
@@ -1012,15 +1160,42 @@ class Preprocessor:
     def reward_process(self):
         gain_reward = 0.0
         recover_reward = 0.0
+        battery_ratio = self.battery / max(self.battery_max, 1)
+        guidance = self._get_guidance()
+        slack = float(guidance.get("slack", self.charger_slack))
+        charge_margin_now = min(slack, float(guidance.get("margin", 0.0)))
+        stale_boundary = self._is_stale_boundary_context()
+        loop_context = self._is_loop_context()
+        missed_charge = self._is_missed_charge_opportunity(guidance, battery_ratio)
+        charger_nearby_not_charged = self._is_charger_nearby_not_charged(guidance, battery_ratio)
+        narrow_unknown_commit = self._is_narrow_unknown_commit(guidance, battery_ratio)
+        suboptimal_target_hold = self._is_suboptimal_target_hold(guidance)
 
-        cleaning_reward = 1.5 * float(self.cleaned_this_step)
-        streak_bonus = 0.15 * min(float(self.cleaned_this_step > 0), 1.0) * min(self.consecutive_clean_steps, 5)
+        cleaning_scale = 1.0
+        if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
+            cleaning_scale *= Config.CLEANING_RETURN_SCALE
+        if self.cur_visit_count >= 3:
+            cleaning_scale *= Config.CLEANING_REVISIT_HARD_SCALE
+        elif self.cur_visit_count >= 2:
+            cleaning_scale *= Config.CLEANING_REVISIT_SOFT_SCALE
+        if stale_boundary:
+            cleaning_scale *= Config.CLEANING_STALE_BOUNDARY_SCALE
+        if loop_context:
+            cleaning_scale *= Config.CLEANING_LOOP_SCALE
+        if narrow_unknown_commit:
+            cleaning_scale *= Config.CLEANING_NARROW_UNKNOWN_SCALE
+        if missed_charge or charger_nearby_not_charged:
+            cleaning_scale *= Config.CLEANING_MISSED_CHARGE_SCALE
+        if suboptimal_target_hold:
+            cleaning_scale *= Config.CLEANING_SUBOPTIMAL_TARGET_SCALE
+
+        cleaning_reward = 1.5 * cleaning_scale * float(self.cleaned_this_step)
+        streak_bonus = 0.15 * cleaning_scale * min(float(self.cleaned_this_step > 0), 1.0) * min(self.consecutive_clean_steps, 5)
         explore_reward = (
             Config.EXPLORE_REWARD_SCALE
             * float(min(self.new_explored_cells, Config.EXPLORE_REWARD_CAP))
             * max(0.0, 1.0 - self.explored_ratio)
         )
-        battery_ratio = self.battery / max(self.battery_max, 1)
         if battery_ratio < Config.FRONTIER_CRITICAL_BATTERY_RATIO:
             frontier_scale = 0.0
         elif battery_ratio < Config.FRONTIER_LOW_BATTERY_RATIO:
@@ -1040,11 +1215,12 @@ class Preprocessor:
         if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
             explore_reward *= 0.25
             frontier_reward *= 0.25
+        if stale_boundary:
+            frontier_reward *= Config.FRONTIER_STALE_BOUNDARY_SCALE
+            dirty_approach_reward *= Config.DIRTY_APPROACH_STALE_BOUNDARY_SCALE
 
         gain_reward += cleaning_reward + streak_bonus + explore_reward + frontier_reward + dirty_approach_reward
 
-        guidance = self._get_guidance()
-        slack = float(guidance.get("slack", self.charger_slack))
         charge_reward = 0.0
         if self.just_charged:
             charge_received = max(0.0, float(self.battery - self.pre_charge_battery + 1))
@@ -1059,19 +1235,31 @@ class Preprocessor:
             self.future_recoverability_score - getattr(self, "_prev_future_recoverability_score", self.future_recoverability_score)
         )
         anchor_consistency_reward = 0.0
+        sticky_anchor_penalty = 0.0
         if self.route_anchor_idx > 0 and self.route_anchor_idx == self.last_route_anchor_idx:
-            anchor_consistency_reward = Config.ANCHOR_CONSISTENCY_REWARD
+            if (
+                not suboptimal_target_hold
+                and slack > Config.TARGET_KEEP_SLACK_MIN
+                and float(guidance.get("unknown_path_ratio", 0.0)) <= Config.TARGET_KEEP_UNKNOWN_RATIO_MAX
+            ):
+                anchor_consistency_reward = Config.ANCHOR_CONSISTENCY_REWARD
+            else:
+                sticky_anchor_penalty = -Config.TARGET_STICKY_PENALTY
         elif self.route_anchor_idx > 0 and self.last_route_anchor_idx > 0:
             anchor_consistency_reward = -0.5 * Config.ANCHOR_CONSISTENCY_REWARD
 
         return_progress_reward = 0.0
         diag_efficiency_bonus = 0.0
         stall_penalty = 0.0
+        planner_alignment_reward = 0.0
         if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
             progress = float(getattr(self, "_last_target_distance", self.current_target_dist) - self.current_target_dist)
             return_progress_reward = Config.RETURN_PROGRESS_REWARD_SCALE * progress
             if progress <= 0.0:
-                stall_penalty = -Config.RETURN_STALL_PENALTY
+                stall_penalty = -(
+                    Config.RETURN_STALL_BASE_PENALTY
+                    + Config.RETURN_STALL_EMA_SCALE * min(self.return_stall_ema * 5.0, 1.0)
+                )
             diag_preferred = abs(self.nearest_charger_dx) > 0 and abs(self.nearest_charger_dx) == abs(self.nearest_charger_dz)
             if diag_preferred and self._last_action in (1, 3, 5, 7):
                 diag_efficiency_bonus = Config.DIAG_EFFICIENCY_REWARD_SCALE
@@ -1089,6 +1277,43 @@ class Preprocessor:
             delta_dist = self._last_astar_dist - self._astar_dist
             astar_potential_reward = Config.ASTAR_POTENTIAL_ALPHA * float(delta_dist)
 
+        charge_margin_pressure = 0.0
+        if not self.just_charged and self.current_mode != self.MODE_DEPART:
+            if charge_margin_now < Config.CHARGE_MARGIN_CRITICAL:
+                charge_margin_pressure = -Config.CHARGE_MARGIN_CRITICAL_PENALTY
+            elif charge_margin_now < Config.CHARGE_MARGIN_LOW:
+                charge_margin_pressure = -Config.CHARGE_MARGIN_LOW_PENALTY
+            elif charge_margin_now < Config.CHARGE_MARGIN_WARN and battery_ratio < Config.UNKNOWN_PATH_RISK_BATTERY_RATIO:
+                charge_margin_pressure = -Config.CHARGE_MARGIN_WARN_PENALTY
+
+        unknown_path_risk_penalty = 0.0
+        if battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO:
+            unknown_ratio = float(guidance.get("unknown_path_ratio", 0.0))
+            if unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD:
+                overflow = min(max((unknown_ratio - Config.UNKNOWN_PATH_RISK_THRESHOLD) / max(1.0 - Config.UNKNOWN_PATH_RISK_THRESHOLD, 1e-6), 0.0), 1.0)
+                unknown_path_risk_penalty = -Config.UNKNOWN_PATH_RISK_PENALTY * (1.0 + overflow)
+                if narrow_unknown_commit:
+                    unknown_path_risk_penalty -= Config.NARROW_UNKNOWN_RISK_PENALTY
+
+        missed_charge_penalty = 0.0
+        if missed_charge:
+            missed_charge_penalty -= Config.MISSED_CHARGE_PENALTY
+        if charger_nearby_not_charged:
+            missed_charge_penalty -= Config.CHARGER_NEARBY_NOT_CHARGED_PENALTY
+
+        planner_sensitive_context = bool(
+            loop_context
+            or narrow_unknown_commit
+            or suboptimal_target_hold
+            or self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
+        )
+        suggested_action = guidance.get("suggested_action")
+        if planner_sensitive_context and self._last_action is not None and self._last_action >= 0 and suggested_action is not None:
+            if int(self._last_action) == int(suggested_action):
+                planner_alignment_reward = Config.PLANNER_ALIGNMENT_REWARD
+            else:
+                planner_alignment_reward = -Config.PLANNER_DIVERGENCE_PENALTY
+
         recover_reward += (
             charge_reward
             + npc_penalty
@@ -1096,18 +1321,24 @@ class Preprocessor:
             + idle_penalty
             + recoverability_reward
             + anchor_consistency_reward
+            + sticky_anchor_penalty
             + return_progress_reward
             + diag_efficiency_bonus
             + stall_penalty
             + late_contract_penalty
             + astar_potential_reward
+            + charge_margin_pressure
+            + unknown_path_risk_penalty
+            + missed_charge_penalty
+            + planner_alignment_reward
         )
 
         if self.cleaned_this_step > 0:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 1.0
         else:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 0.0
-        gain_reward += 0.3 * max(self._cps_ema - 0.75, 0.0)
+        cps_bonus = cleaning_scale * 0.3 * max(self._cps_ema - 0.75, 0.0)
+        gain_reward += cps_bonus
 
         teacher = self._get_teacher_guidance()
         if teacher is None:
@@ -1159,11 +1390,18 @@ class Preprocessor:
             "stuck": stuck_penalty,
             "idle": idle_penalty,
             "anchor_consistency": anchor_consistency_reward,
+            "sticky_anchor_penalty": sticky_anchor_penalty,
             "return_progress": return_progress_reward,
             "diag_efficiency": diag_efficiency_bonus,
             "return_stall": stall_penalty,
             "late_contract": late_contract_penalty,
             "astar_potential": astar_potential_reward,
+            "charge_margin_pressure": charge_margin_pressure,
+            "unknown_path_risk": unknown_path_risk_penalty,
+            "missed_charge_penalty": missed_charge_penalty,
+            "planner_alignment": planner_alignment_reward,
+            "cleaning_context_scale": cleaning_scale,
+            "cps_bonus": cps_bonus,
         }
         self._prev_future_recoverability_score = self.future_recoverability_score
         self._last_target_distance = self.current_target_dist

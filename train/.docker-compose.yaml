@@ -654,8 +654,62 @@ services:
 
         # ---- Phase 2: Patch configure.toml for predict_batch_size ----
         configure_toml = root / "kaiwudrl/conf/kaiwudrl/configure.toml"
+        replace_toml_key(configure_toml, "train_batch_size", "KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE")
         replace_toml_key(configure_toml, "predict_batch_size", "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE")
         replace_toml_key(configure_toml, "proxy_batch_size", "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE")
+
+        def replace_toml_literal(target, key, value):
+            text = target.read_text()
+            lines = text.splitlines()
+            replacement = f"{key} = {value}"
+            filtered = [line for line in lines if line.strip().split("=", 1)[0].strip() != key]
+            updated = "\n".join(filtered)
+            if updated:
+                updated = f"{updated}\n{replacement}\n"
+            else:
+                updated = f"{replacement}\n"
+            if updated != text:
+                target.write_text(updated)
+
+        def compute_required_max_sample_size():
+            try:
+                from agent_ppo.conf.conf import Config as AgentConfig
+
+                dims = [
+                    AgentConfig.SAMPLE_OBS_DIM,
+                    AgentConfig.SAMPLE_LEGAL_ACTION_DIM,
+                    AgentConfig.SAMPLE_ACTION_DIM,
+                    AgentConfig.SAMPLE_REWARD_DIM,
+                    AgentConfig.SAMPLE_REWARD_DIM,
+                    AgentConfig.SAMPLE_DONE_DIM,
+                    AgentConfig.SAMPLE_VALUE_DIM,
+                    AgentConfig.SAMPLE_VALUE_DIM,
+                    AgentConfig.SAMPLE_VALUE_DIM,
+                    AgentConfig.SAMPLE_VALUE_DIM,
+                    AgentConfig.SAMPLE_PROB_DIM,
+                    AgentConfig.SAMPLE_MODE_DIM,
+                    AgentConfig.SAMPLE_ROUTE_ANCHOR_DIM,
+                    AgentConfig.SAMPLE_TARGET_DIM,
+                    AgentConfig.SAMPLE_MODE_TEACHER_MASK_DIM,
+                    AgentConfig.SAMPLE_ROUTE_ANCHOR_MASK_DIM,
+                    AgentConfig.SAMPLE_TARGET_TEACHER_MASK_DIM,
+                    AgentConfig.SAMPLE_RETURN_ACTION_DIM,
+                    AgentConfig.SAMPLE_RETURN_ACTION_MASK_DIM,
+                    AgentConfig.SAMPLE_AUX_LABEL_DIM,
+                    AgentConfig.SAMPLE_AUX_LABEL_DIM,
+                    AgentConfig.FALLBACK_MASK_DIM,
+                    AgentConfig.EXPERT_WEIGHT_DIM,
+                ]
+                required = int(sum(int(v) for v in dims) + 2048)
+                print(f"[learner-runtime] computed required max_sample_size={required}")
+                return required
+            except Exception as exc:
+                print(f"[learner-runtime] failed to compute max_sample_size from agent config: {exc}")
+                return None
+
+        required_max_sample_size = compute_required_max_sample_size()
+        if required_max_sample_size is not None:
+            replace_toml_literal(configure_toml, "max_sample_size", required_max_sample_size)
 
         # Write post-init patcher that runs AFTER start_train_client.sh
         # (init_code.sh in start_train_client.sh copies code/conf/ over project conf/,
@@ -690,10 +744,60 @@ services:
             "        target.write_text(updated)\n"
             "        print(f'[post-init] {key} = {env_value}')\n"
             "\n"
+            "def replace_toml_literal(target, key, value):\n"
+            "    text = target.read_text()\n"
+            "    lines = text.splitlines()\n"
+            "    replacement = f'{key} = {value}'\n"
+            "    filtered = [line for line in lines if line.strip().split('=', 1)[0].strip() != key]\n"
+            "    updated = '\\n'.join(filtered)\n"
+            "    if updated:\n"
+            "        updated = f'{updated}\\n{replacement}\\n'\n"
+            "    else:\n"
+            "        updated = f'{replacement}\\n'\n"
+            "    if updated != text:\n"
+            "        target.write_text(updated)\n"
+            "        print(f'[post-init] {key} = {value}')\n"
+            "\n"
+            "def compute_required_max_sample_size():\n"
+            "    try:\n"
+            "        import sys\n"
+            "        sys.path.insert(0, '/workspace/code')\n"
+            "        from agent_ppo.conf.conf import Config as AgentConfig\n"
+            "        dims = [\n"
+            "            AgentConfig.SAMPLE_OBS_DIM,\n"
+            "            AgentConfig.SAMPLE_LEGAL_ACTION_DIM,\n"
+            "            AgentConfig.SAMPLE_ACTION_DIM,\n"
+            "            AgentConfig.SAMPLE_REWARD_DIM,\n"
+            "            AgentConfig.SAMPLE_REWARD_DIM,\n"
+            "            AgentConfig.SAMPLE_DONE_DIM,\n"
+            "            AgentConfig.SAMPLE_VALUE_DIM,\n"
+            "            AgentConfig.SAMPLE_VALUE_DIM,\n"
+            "            AgentConfig.SAMPLE_VALUE_DIM,\n"
+            "            AgentConfig.SAMPLE_VALUE_DIM,\n"
+            "            AgentConfig.SAMPLE_PROB_DIM,\n"
+            "            AgentConfig.SAMPLE_MODE_DIM,\n"
+            "            AgentConfig.SAMPLE_ROUTE_ANCHOR_DIM,\n"
+            "            AgentConfig.SAMPLE_TARGET_DIM,\n"
+            "            AgentConfig.SAMPLE_MODE_TEACHER_MASK_DIM,\n"
+            "            AgentConfig.SAMPLE_ROUTE_ANCHOR_MASK_DIM,\n"
+            "            AgentConfig.SAMPLE_TARGET_TEACHER_MASK_DIM,\n"
+            "            AgentConfig.SAMPLE_RETURN_ACTION_DIM,\n"
+            "            AgentConfig.SAMPLE_RETURN_ACTION_MASK_DIM,\n"
+            "            AgentConfig.SAMPLE_AUX_LABEL_DIM,\n"
+            "            AgentConfig.SAMPLE_AUX_LABEL_DIM,\n"
+            "            AgentConfig.FALLBACK_MASK_DIM,\n"
+            "            AgentConfig.EXPERT_WEIGHT_DIM,\n"
+            "        ]\n"
+            "        return int(sum(int(v) for v in dims) + 2048)\n"
+            "    except Exception as exc:\n"
+            "        print(f'[post-init] failed to compute max_sample_size: {exc}')\n"
+            "        return None\n"
+            "\n"
             "project = os.environ.get('KAIWU_PROJECT_CODE', 'robot_vacuum')\n"
             "root = Path(f'/data/projects/{project}')\n"
             "app_conf = root / 'conf/configure_app.toml'\n"
             "learner_conf = root / 'kaiwudrl/conf/kaiwudrl/learner.toml'\n"
+            "framework_conf = root / 'kaiwudrl/conf/kaiwudrl/configure.toml'\n"
             "\n"
             "replace_toml_key(learner_conf, 'pytorch_read_data_from_reverb_type', 'KAIWU_PYTORCH_READ_DATA_FROM_REVERB_TYPE')\n"
             "replace_toml_key(learner_conf, 'replay_buffer_cache_multiplier', 'KAIWU_EXPERIMENT_REPLAY_BUFFER_CACHE_MULTIPLIER')\n"
@@ -704,6 +808,12 @@ services:
             "replace_toml_key(app_conf, 'reverb_rate_limiter', 'KAIWU_EXPERIMENT_REVERB_RATE_LIMITER')\n"
             "replace_toml_key(app_conf, 'reverb_sampler', 'KAIWU_EXPERIMENT_REVERB_SAMPLER')\n"
             "replace_toml_key(app_conf, 'send_sample_size', 'KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE')\n"
+            "replace_toml_key(framework_conf, 'train_batch_size', 'KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE')\n"
+            "replace_toml_key(framework_conf, 'predict_batch_size', 'KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE')\n"
+            "replace_toml_key(framework_conf, 'proxy_batch_size', 'KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE')\n"
+            "required_max_sample_size = compute_required_max_sample_size()\n"
+            "if required_max_sample_size is not None:\n"
+            "    replace_toml_literal(framework_conf, 'max_sample_size', required_max_sample_size)\n"
             "\n"
             "# Patch monitor_builder: panel names cannot contain parentheses\n"
             "mb = root / 'agent_ppo/conf/monitor_builder.py'\n"

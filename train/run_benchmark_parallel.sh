@@ -17,6 +17,7 @@ CHECKPOINT=""
 WORKERS=4
 ENVS_PER_WORKER=1
 MAX_WAIT=1800
+POLICY_MODE="${KAIWU_BENCHMARK_POLICY_MODE:-eval}"
 ALLOW_CONCURRENT="${ALLOW_CONCURRENT:-0}"
 
 while [[ $# -gt 0 ]]; do
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --max-wait)
             MAX_WAIT="$2"
+            shift 2
+            ;;
+        --policy-mode)
+            POLICY_MODE="$2"
             shift 2
             ;;
         -*)
@@ -55,6 +60,10 @@ if ! [[ "$WORKERS" =~ ^[0-9]+$ ]] || [[ "$WORKERS" -lt 1 ]]; then
 fi
 if ! [[ "$ENVS_PER_WORKER" =~ ^[0-9]+$ ]] || [[ "$ENVS_PER_WORKER" -lt 1 ]]; then
     echo "envs-per-worker must be a positive integer" >&2
+    exit 1
+fi
+if [[ "${POLICY_MODE}" != "train" && "${POLICY_MODE}" != "eval" ]]; then
+    echo "policy-mode must be 'train' or 'eval'" >&2
     exit 1
 fi
 
@@ -135,6 +144,7 @@ export KAIWU_AISRV_GPU1_NUM="${GPU1_WORKERS}"
 export KAIWU_AISRV_GPU2_NUM="${GPU2_WORKERS}"
 export KAIWU_AISRV_GPU3_NUM=0
 export KAIWU_BENCHMARK_PARALLEL_MODE=1
+export KAIWU_BENCHMARK_POLICY_MODE="${POLICY_MODE}"
 export KAIWU_BENCHMARK_SESSION_ID="${SESSION_ID}"
 export KAIWU_BENCHMARK_WORKER_COUNT="${WORKERS}"
 export KAIWU_BENCHMARK_ENVS_PER_WORKER="${ENVS_PER_WORKER}"
@@ -154,6 +164,7 @@ echo "[1/6] Session: ${SESSION_ID}"
 echo "[2/6] Workers: ${WORKERS}  envs/worker(requested): ${ENVS_PER_WORKER}  gamecores: ${GAMECORES}"
 echo "        compose_project: ${COMPOSE_PROJECT_NAME}"
 echo "        parallel_env_per_aisrv: ${KAIWU_PARALLEL_ENV_PER_AISRV}"
+echo "        policy_mode: ${POLICY_MODE}"
 if [[ -n "${CHECKPOINT}" ]]; then
     echo "[3/6] Checkpoint: ${CHECKPOINT}"
 else

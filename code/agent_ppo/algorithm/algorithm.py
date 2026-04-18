@@ -97,6 +97,10 @@ class Algorithm:
                     "route_anchor_teacher_loss": round(info["route_anchor_teacher_loss"], 4),
                     "target_teacher_loss": round(info["target_teacher_loss"], 4),
                     "return_action_teacher_loss": round(info["return_action_teacher_loss"], 4),
+                    "mode_teacher_active_rate": round(info["mode_teacher_active_rate"], 4),
+                    "route_anchor_teacher_active_rate": round(info["route_anchor_teacher_active_rate"], 4),
+                    "target_teacher_active_rate": round(info["target_teacher_active_rate"], 4),
+                    "return_action_teacher_active_rate": round(info["return_action_teacher_active_rate"], 4),
                     "aux_battery_loss": round(info["aux_battery_loss"], 4),
                     "aux_collision_loss": round(info["aux_collision_loss"], 4),
                     "train_step": self.train_step,
@@ -107,7 +111,9 @@ class Algorithm:
                 self.logger.info(
                     "policy_loss: %.4f, value_clean_loss: %.4f, value_survive_loss: %.4f, "
                     "entropy_loss: %.4f, mode_teacher_loss: %.4f, route_anchor_teacher_loss: %.4f, "
-                    "target_teacher_loss: %.4f, return_action_teacher_loss: %.4f"
+                    "target_teacher_loss: %.4f, return_action_teacher_loss: %.4f, "
+                    "mode_teacher_active_rate: %.4f, route_anchor_teacher_active_rate: %.4f, "
+                    "target_teacher_active_rate: %.4f, return_action_teacher_active_rate: %.4f"
                     % (
                         results["policy_loss"],
                         results["value_clean_loss"],
@@ -117,6 +123,10 @@ class Algorithm:
                         results["route_anchor_teacher_loss"],
                         results["target_teacher_loss"],
                         results["return_action_teacher_loss"],
+                        results["mode_teacher_active_rate"],
+                        results["route_anchor_teacher_active_rate"],
+                        results["target_teacher_active_rate"],
+                        results["return_action_teacher_active_rate"],
                     )
                 )
 
@@ -133,6 +143,10 @@ class Algorithm:
                     "route_anchor_teacher_loss": results["route_anchor_teacher_loss"],
                     "target_teacher_loss": results["target_teacher_loss"],
                     "return_action_teacher_loss": results["return_action_teacher_loss"],
+                    "mode_teacher_active_rate": results["mode_teacher_active_rate"],
+                    "route_anchor_teacher_active_rate": results["route_anchor_teacher_active_rate"],
+                    "target_teacher_active_rate": results["target_teacher_active_rate"],
+                    "return_action_teacher_active_rate": results["return_action_teacher_active_rate"],
                     "aux_battery_loss": results["aux_battery_loss"],
                     "aux_collision_loss": results["aux_collision_loss"],
                 }
@@ -456,10 +470,18 @@ class Algorithm:
         route_anchor_teacher_active = route_anchor_teacher_mask * valid_mask
         target_teacher_active = target_teacher_mask * valid_mask
         return_action_teacher_active = return_action_teacher_mask * valid_mask
-        mode_teacher_count = mode_teacher_active.sum().clamp_min(1.0)
-        route_anchor_teacher_count = route_anchor_teacher_active.sum().clamp_min(1.0)
-        target_teacher_count = target_teacher_active.sum().clamp_min(1.0)
-        return_action_teacher_count = return_action_teacher_active.sum().clamp_min(1.0)
+        mode_teacher_raw_count = mode_teacher_active.sum()
+        route_anchor_teacher_raw_count = route_anchor_teacher_active.sum()
+        target_teacher_raw_count = target_teacher_active.sum()
+        return_action_teacher_raw_count = return_action_teacher_active.sum()
+        mode_teacher_count = mode_teacher_raw_count.clamp_min(1.0)
+        route_anchor_teacher_count = route_anchor_teacher_raw_count.clamp_min(1.0)
+        target_teacher_count = target_teacher_raw_count.clamp_min(1.0)
+        return_action_teacher_count = return_action_teacher_raw_count.clamp_min(1.0)
+        mode_teacher_active_rate = mode_teacher_raw_count / valid_count
+        route_anchor_teacher_active_rate = route_anchor_teacher_raw_count / valid_count
+        target_teacher_active_rate = target_teacher_raw_count / valid_count
+        return_action_teacher_active_rate = return_action_teacher_raw_count / valid_count
         mode_teacher_loss = F.cross_entropy(
             mode_logits.reshape(-1, Config.MODE_NUM),
             batch["mode_teacher"][:, learn_slice].reshape(-1),
@@ -525,6 +547,10 @@ class Algorithm:
             "route_anchor_teacher_loss": float(route_anchor_teacher_loss.item()),
             "target_teacher_loss": float(target_teacher_loss.item()),
             "return_action_teacher_loss": float(return_action_teacher_loss.item()),
+            "mode_teacher_active_rate": float(mode_teacher_active_rate.item()),
+            "route_anchor_teacher_active_rate": float(route_anchor_teacher_active_rate.item()),
+            "target_teacher_active_rate": float(target_teacher_active_rate.item()),
+            "return_action_teacher_active_rate": float(return_action_teacher_active_rate.item()),
             "aux_battery_loss": float(aux_battery_loss.item()),
             "aux_collision_loss": float(aux_collision_loss.item()),
         }

@@ -106,13 +106,14 @@ def _compute_gae_from_rewards(reward_seq, value_seq, done_seq):
 
 
 def _teacher_scale(episode_idx):
+    min_scale = float(getattr(Config, "TEACHER_MIN_SCALE", 0.0))
     if episode_idx <= Config.TEACHER_FORCE_UNTIL_EPISODE:
         return 1.0
     if episode_idx >= Config.TEACHER_ANNEAL_END_EPISODE:
-        return 0.0
+        return min_scale
     span = max(Config.TEACHER_ANNEAL_END_EPISODE - Config.TEACHER_FORCE_UNTIL_EPISODE, 1)
     progress = (episode_idx - Config.TEACHER_FORCE_UNTIL_EPISODE) / span
-    return float(max(0.0, 1.0 - progress))
+    return float(max(min_scale, 1.0 - progress))
 
 
 def sample_process(step_records, episode_idx=0):

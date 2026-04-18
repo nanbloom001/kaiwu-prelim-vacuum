@@ -80,7 +80,7 @@ def _benchmark_api():
 def _rounds_and_maps():
     try:
         benchmark_mod = _benchmark_api()
-        return benchmark_mod.ROUNDS, benchmark_mod.ALL_MAPS
+        return benchmark_mod._configured_rounds(), benchmark_mod._configured_maps()
     except ModuleNotFoundError:
         return DEFAULT_ROUNDS, DEFAULT_ALL_MAPS
 
@@ -298,10 +298,14 @@ def _initialize_session(
 
     rounds, maps = _rounds_and_maps()
     benchmark_mod = _benchmark_api()
+    policy_mode = benchmark_mod._benchmark_policy_mode()
     manifest = {
+        "version": getattr(benchmark_mod, "SCHEMA_VERSION", 3),
+        "schema_version": getattr(benchmark_mod, "SCHEMA_VERSION", 3),
         "timestamp": session_id,
         "created_at": time.time(),
         "checkpoint": checkpoint,
+        "policy_mode": policy_mode,
         "git_commit": benchmark_mod._get_git_commit(),
         "rounds": rounds,
         "maps": maps,
@@ -312,6 +316,7 @@ def _initialize_session(
             "scheduler": scheduler,
             "requested_envs_per_worker": requested_slots,
             "effective_envs_per_worker": effective_slots,
+            "policy_mode": policy_mode,
             "available_env_handles": available_env_handles,
             "available_agent_handles": available_agent_handles,
             "compose_project": os.getenv("COMPOSE_PROJECT_NAME", ""),
@@ -406,11 +411,14 @@ def _finalize_parallel_benchmark(
     benchmark_mod = _benchmark_api()
     aggregated = benchmark_mod._aggregate_results(episode_results)
     manifest = _read_json(runtime_dir / "manifest.json")
+    schema_version = getattr(benchmark_mod, "SCHEMA_VERSION", 3)
 
     snapshot = {
-        "version": 3,
+        "version": schema_version,
+        "schema_version": schema_version,
         "timestamp": session_id,
         "checkpoint": checkpoint,
+        "policy_mode": manifest.get("policy_mode", benchmark_mod._benchmark_policy_mode()),
         "git_commit": manifest.get("git_commit", benchmark_mod._get_git_commit()),
         "elapsed_seconds": round(time.time() - float(manifest.get("created_at", time.time())), 1),
         "rounds": {r["name"]: r["desc"] for r in benchmark_mod.ROUNDS},
@@ -423,14 +431,17 @@ def _finalize_parallel_benchmark(
             "scheduler": scheduler,
             "requested_envs_per_worker": requested_slots,
             "effective_envs_per_worker": effective_slots,
+            "policy_mode": manifest.get("policy_mode", benchmark_mod._benchmark_policy_mode()),
             "compose_project": os.getenv("COMPOSE_PROJECT_NAME", ""),
             "completed_task_count": len(episode_results),
             "total_episodes": total_episodes,
         },
     }
+    ai_summary = benchmark_mod._build_ai_summary(snapshot)
 
     benchmark_mod._save_results(results_file, snapshot)
     _atomic_write_json(runtime_dir / "result.json", snapshot)
+    _atomic_write_json(runtime_dir / "ai_summary.json", ai_summary)
     logger.info(
         "[PBENCH] Parallel benchmark complete: WR=%s CS=%s (%s/%s)",
         aggregated["overall"]["win_rate"],

@@ -14,6 +14,18 @@ COMPOSE_FILE=".docker-compose.yaml"
 PROFILE="distributed"
 CHECKPOINT="${1:-}"
 RESTART="${RESTART:-}"
+POLICY_MODE="${KAIWU_BENCHMARK_POLICY_MODE:-eval}"
+
+if [[ "${CHECKPOINT}" == "--policy-mode" ]]; then
+    POLICY_MODE="${2:-eval}"
+    CHECKPOINT="${3:-}"
+elif [[ "${2:-}" == "--policy-mode" ]]; then
+    POLICY_MODE="${3:-eval}"
+fi
+if [[ "${POLICY_MODE}" != "train" && "${POLICY_MODE}" != "eval" ]]; then
+    echo "policy-mode must be 'train' or 'eval'" >&2
+    exit 1
+fi
 
 # Load .env
 set -a; source .env 2>/dev/null || true; set +a
@@ -28,12 +40,14 @@ docker compose -f "$COMPOSE_FILE" --profile "$PROFILE" down 2>/dev/null || true
 
 # 2. Set benchmark mode
 export KAIWU_BENCHMARK_MODE=1
+export KAIWU_BENCHMARK_POLICY_MODE="${POLICY_MODE}"
 if [ -n "$CHECKPOINT" ]; then
     export KAIWU_BENCHMARK_CHECKPOINT="$CHECKPOINT"
     echo "[2/6] Checkpoint: $CHECKPOINT"
 else
     echo "[2/6] Checkpoint: default (conf.py RESUME_CHECKPOINT)"
 fi
+echo "        policy_mode: ${POLICY_MODE}"
 
 # 3. Clean old benchmark marker
 docker exec kaiwu-train-aisrv-1 rm -f /workspace/code/.benchmark_done 2>/dev/null || true
