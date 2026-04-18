@@ -1189,8 +1189,13 @@ class Preprocessor:
         if suboptimal_target_hold:
             cleaning_scale *= Config.CLEANING_SUBOPTIMAL_TARGET_SCALE
 
-        cleaning_reward = 1.5 * cleaning_scale * float(self.cleaned_this_step)
-        streak_bonus = 0.15 * cleaning_scale * min(float(self.cleaned_this_step > 0), 1.0) * min(self.consecutive_clean_steps, 5)
+        cleaning_reward = Config.REWARD_CLEANING_BASE * cleaning_scale * float(self.cleaned_this_step)
+        streak_bonus = (
+            Config.REWARD_STREAK_BONUS_BASE
+            * cleaning_scale
+            * min(float(self.cleaned_this_step > 0), 1.0)
+            * min(self.consecutive_clean_steps, 5)
+        )
         explore_reward = (
             Config.EXPLORE_REWARD_SCALE
             * float(min(self.new_explored_cells, Config.EXPLORE_REWARD_CAP))
@@ -1301,6 +1306,19 @@ class Preprocessor:
         if charger_nearby_not_charged:
             missed_charge_penalty -= Config.CHARGER_NEARBY_NOT_CHARGED_PENALTY
 
+        overcharge_penalty = 0.0
+        if Config.OVERCHARGE_PENALTY_SCALE > 0.0 and self.step_no > 0:
+            charge_rate = float(self.charge_count) / max(float(self.step_no), 1.0)
+            overflow = max(charge_rate - Config.OVERCHARGE_RATE_THRESHOLD, 0.0)
+            overcharge_penalty = -Config.OVERCHARGE_PENALTY_SCALE * overflow
+
+        coverage_efficiency_bonus = 0.0
+        if Config.COVERAGE_EFFICIENCY_BONUS_SCALE > 0.0:
+            coverage_efficiency_bonus = Config.COVERAGE_EFFICIENCY_BONUS_SCALE * max(
+                float(self.coverage_efficiency_20) - Config.COVERAGE_EFFICIENCY_BASELINE,
+                0.0,
+            )
+
         planner_sensitive_context = bool(
             loop_context
             or narrow_unknown_commit
@@ -1330,6 +1348,7 @@ class Preprocessor:
             + charge_margin_pressure
             + unknown_path_risk_penalty
             + missed_charge_penalty
+            + overcharge_penalty
             + planner_alignment_reward
         )
 
@@ -1338,7 +1357,7 @@ class Preprocessor:
         else:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 0.0
         cps_bonus = cleaning_scale * 0.3 * max(self._cps_ema - 0.75, 0.0)
-        gain_reward += cps_bonus
+        gain_reward += cps_bonus + coverage_efficiency_bonus
 
         teacher = self._get_teacher_guidance()
         if teacher is None:
@@ -1363,10 +1382,10 @@ class Preprocessor:
         battery_risk_label = 1.0 if (battery_ratio <= 0.12 or slack < 0.0) else 0.0
         collision_risk_label = 1.0 if self.nearest_npc_dist <= 2.0 else 0.0
 
-        reward_total = float(np.clip(gain_reward + recover_reward, -5.0, 5.0))
+        reward_total = float(np.clip(gain_reward + recover_reward, -Config.REWARD_TOTAL_CLIP, Config.REWARD_TOTAL_CLIP))
         components = {
-            "reward_clean": float(np.clip(gain_reward, -5.0, 5.0)),
-            "reward_survive": float(np.clip(recover_reward, -5.0, 5.0)),
+            "reward_clean": float(np.clip(gain_reward, -Config.REWARD_COMPONENT_CLIP, Config.REWARD_COMPONENT_CLIP)),
+            "reward_survive": float(np.clip(recover_reward, -Config.REWARD_COMPONENT_CLIP, Config.REWARD_COMPONENT_CLIP)),
             "reward_total": reward_total,
             "mode_teacher": int(mode_teacher),
             "route_anchor_teacher": int(route_anchor_teacher),
@@ -1399,9 +1418,11 @@ class Preprocessor:
             "charge_margin_pressure": charge_margin_pressure,
             "unknown_path_risk": unknown_path_risk_penalty,
             "missed_charge_penalty": missed_charge_penalty,
+            "overcharge_penalty": overcharge_penalty,
             "planner_alignment": planner_alignment_reward,
             "cleaning_context_scale": cleaning_scale,
             "cps_bonus": cps_bonus,
+            "coverage_efficiency_bonus": coverage_efficiency_bonus,
         }
         self._prev_future_recoverability_score = self.future_recoverability_score
         self._last_target_distance = self.current_target_dist

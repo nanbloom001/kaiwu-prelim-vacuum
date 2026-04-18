@@ -22,10 +22,13 @@ from agent_ppo.feature.definition import sample_process
 from agent_ppo.workflow.checkpoint_score import compute_checkpoint_scores, compute_legacy_robust_score
 from agent_ppo.workflow.curriculum_policy import (
     STAGE_INDEX,
-    profile_weights_for_stage,
+    curriculum_gate_ratios,
+    profile_plan_for_runtime,
     stage_progress,
 )
 from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
+from agent_ppo.workflow.preload_checkpoint import PRELOAD_RELATIVE_DIR
+from agent_ppo.eval.lite_benchmark_bootstrap import maybe_run_lite_benchmark
 from agent_ppo.utils.experiment_archive import ExperimentArchive, infer_fail_reason
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
 from tools.metrics_utils import get_training_metrics
@@ -112,6 +115,11 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         },
     )
 
+    initial_stage = str(os.getenv("KAIWU_CURRICULUM_INITIAL_STAGE", Config.CURRICULUM_INITIAL_STAGE) or "warmup").strip().lower()
+    lite_benchmark_payload = maybe_run_lite_benchmark(env, agent, usr_conf, logger)
+    if lite_benchmark_payload:
+        initial_stage = str(lite_benchmark_payload.get("recommended_initial_stage") or initial_stage).strip().lower()
+
     episode_runner = EpisodeRunner(
         env=env,
         agent=agent,
@@ -120,6 +128,12 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         logger=logger,
         monitor=monitor,
         archive=archive,
+    )
+    episode_runner.curriculum_store.seed_initial_state(
+        session_id=episode_runner.session_id,
+        initial_stage=initial_stage,
+        lite_benchmark_used=bool(lite_benchmark_payload),
+        lite_benchmark_metrics=lite_benchmark_payload,
     )
     send_perf = PerfWindow()
     last_send_perf_report_time = 0.0
@@ -165,8 +179,14 @@ class EnvConfigSampler:
         self.base_battery_max = int(self.base_env_conf.get("battery_max", 200))
         self.rng = np.random.default_rng(seed=20260409)
 
-    def sample(self, stage):
-        profile = self._pick_profile(stage)
+    def sample(self, curriculum_state):
+        if isinstance(curriculum_state, dict):
+            stage = str(curriculum_state.get("stage", "warmup") or "warmup")
+            profile_plan = profile_plan_for_runtime(stage, curriculum_state)
+        else:
+            stage = str(curriculum_state or "warmup")
+            profile_plan = profile_plan_for_runtime(stage, {})
+        profile = self._pick_profile(profile_plan["weights"])
         env_conf = deepcopy(self.base_env_conf)
 
         if profile == "anchor":
@@ -185,17 +205,20 @@ class EnvConfigSampler:
             "stage": stage,
             "profile": profile,
             "env_conf": deepcopy(env_conf),
+            "profile_weights": deepcopy(profile_plan["weight_map"]),
+            "observation_phase_active": bool(profile_plan["observation_phase_active"]),
+            "profile_tightened": bool(profile_plan["tightened"]),
         }
         return sampled_usr_conf, meta
 
-    def _pick_profile(self, stage):
+    def _pick_profile(self, weights):
         draw = self.rng.random()
         cumulative = 0.0
-        for profile, weight in profile_weights_for_stage(stage):
+        for profile, weight in weights:
             cumulative += float(weight)
             if draw < cumulative:
                 return profile
-        return profile_weights_for_stage(stage)[-1][0]
+        return weights[-1][0]
 
     def _sample_robot_count(self, profile):
         if profile == "mild":
@@ -280,6 +303,14 @@ class EpisodeRunner:
             "checkpoint_preservation_score": 0.0,
             "resume_eligible": False,
             "submission_eligible": False,
+            "resume_score_safety": 0.0,
+            "resume_score_efficiency": 0.0,
+            "resume_score_behavior": 0.0,
+            "resume_score_learning": 0.0,
+            "submission_score_completion": 0.0,
+            "submission_score_efficiency": 0.0,
+            "submission_score_stability": 0.0,
+            "submission_score_behavior": 0.0,
         }
         self.last_clean_score = 0.0
         self.is_new_best = False
@@ -303,6 +334,9 @@ class EpisodeRunner:
         self.resume_latest_path = self.code_path / "model.ckpt-resume.pkl"
         self.resume_latest_meta_path = self.code_path / "model.ckpt-resume.meta.json"
         self.latest_model_path = self.code_path / "latest_model.pkl"
+        self.preload_ckpt_dir = self.code_path / PRELOAD_RELATIVE_DIR
+        self.preload_ckpt_dir.mkdir(parents=True, exist_ok=True)
+        self.preload_latest_meta_path = self.preload_ckpt_dir / "latest_preload.json"
         self.manual_ckpt_dir = self.code_path / "manual_checkpoints"
         self.manual_ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.last_episode_snapshot_episode = 0
@@ -321,6 +355,7 @@ class EpisodeRunner:
         self.keep_episode_snapshots = Config.KEEP_EPISODE_RESUME_SNAPSHOTS
         self.keep_time_snapshots = Config.KEEP_TIME_RESUME_SNAPSHOTS
         self.keep_best_snapshots = Config.KEEP_BEST_RESUME_SNAPSHOTS
+        self.keep_preload_snapshots = Config.KEEP_PRELOAD_COMPAT_SNAPSHOTS
 
     def _persist_best_score(self):
         data = {
@@ -394,10 +429,62 @@ class EpisodeRunner:
             handle.write("\n")
         os.replace(tmp_path, self.resume_latest_meta_path)
 
+    def _write_json_atomic(self, path, payload):
+        tmp_path = path.parent / f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=True, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp_path, path)
+
     def _prune_snapshots(self, prefix, keep_count):
         files = sorted(self.resume_snapshot_dir.glob(f"{prefix}-*.pkl"), key=lambda item: item.stat().st_mtime, reverse=True)
         for old_path in files[keep_count:]:
             old_path.unlink(missing_ok=True)
+
+    def _prune_preload_snapshots(self):
+        files = sorted(
+            self.preload_ckpt_dir.glob("model.ckpt-*.pkl"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        for old_path in files[self.keep_preload_snapshots:]:
+            old_path.unlink(missing_ok=True)
+
+    def _current_train_global_step(self):
+        if isinstance(self.latest_learning_metrics, dict):
+            value = self.latest_learning_metrics.get("global_step")
+            try:
+                if value is not None:
+                    return int(float(value))
+            except (TypeError, ValueError):
+                pass
+        basic_step = _extract_numeric_metric(self.latest_training_metrics, "basic", "train_global_step")
+        if basic_step is not None:
+            return int(basic_step)
+        learner_step = _extract_numeric_metric(self.latest_training_metrics, "learner", "global_step")
+        if learner_step is not None:
+            return int(learner_step)
+        return 0
+
+    def _save_preload_artifact(self, state_dict, clean_score):
+        global_step = self._current_train_global_step()
+        if global_step <= 0:
+            return
+        preload_path = self.preload_ckpt_dir / f"model.ckpt-{global_step}.pkl"
+        self._write_state_dict(preload_path, state_dict)
+        payload = {
+            "enabled": True,
+            "checkpoint_id": str(global_step),
+            "checkpoint_path": str(preload_path),
+            "checkpoint_dir": str(self.preload_ckpt_dir),
+            "checkpoint_dir_relative": PRELOAD_RELATIVE_DIR,
+            "global_step": int(global_step),
+            "episode_cnt": int(self.episode_cnt),
+            "clean_score": round(float(clean_score), 4),
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        self._write_json_atomic(self.preload_latest_meta_path, payload)
+        self._prune_preload_snapshots()
 
     def _save_resume_artifacts(self, trigger, clean_score, with_named_snapshot=False):
         state_dict = self._snapshot_state_dict()
@@ -412,6 +499,7 @@ class EpisodeRunner:
         }
         self._write_state_dict(self.resume_latest_path, state_dict)
         self._write_resume_meta(meta)
+        self._save_preload_artifact(state_dict, clean_score)
         self.archive.log_event(
             "resume_checkpoint_refreshed",
             {
@@ -552,10 +640,30 @@ class EpisodeRunner:
         state = self.curriculum_store.read_state()
         stage = state.get("stage", "warmup")
         progress = float(state.get("curriculum_progress", 0.0))
-        return {
+        payload = {
             "curriculum_stage_idx": STAGE_INDEX.get(stage, 0),
             "curriculum_progress": round(min(progress, 1.0), 4),
+            "curriculum_start_tier": STAGE_INDEX.get(state.get("initial_stage", stage), 0),
+            "curriculum_lite_benchmark_used": 1.0 if state.get("lite_benchmark_used") else 0.0,
+            "curriculum_observation_phase_active": 1.0 if state.get("observation_phase_active") else 0.0,
+            "curriculum_profile_anchor_weight": round(float((state.get("curriculum_profile_weights") or {}).get("anchor", 0.0)), 4),
+            "curriculum_profile_mild_weight": round(float((state.get("curriculum_profile_weights") or {}).get("mild", 0.0)), 4),
+            "curriculum_profile_broad_weight": round(float((state.get("curriculum_profile_weights") or {}).get("broad", 0.0)), 4),
+            "curriculum_profile_broad_eval_weight": round(float((state.get("curriculum_profile_weights") or {}).get("broad_eval", 0.0)), 4),
         }
+        payload.update(
+            {
+                key: round(value, 4)
+                for key, value in curriculum_gate_ratios(
+                    stage=stage,
+                    metrics=state.get("last_global_metrics") or state.get("last_bootstrap_metrics"),
+                    learning_metrics=state.get("last_learning_metrics"),
+                    global_step_since_resume=int(state.get("global_step_since_resume", 0)),
+                    entered_global_step=int(state.get("entered_global_step", 0)),
+                ).items()
+            }
+        )
+        return payload
 
     def _get_curriculum_metrics(self):
         return self._window_metrics(list(self.episode_history)[-Config.CURRICULUM_WINDOW:]) if len(self.episode_history) >= Config.CURRICULUM_WINDOW else None
@@ -585,12 +693,13 @@ class EpisodeRunner:
             },
             "session_id": self.session_id,
             "episode_cnt_local": self.episode_cnt,
+            "recent_episode_metrics": deepcopy(list(self.episode_history)[-Config.CURRICULUM_WINDOW:]),
         }
         self.curriculum_store.write_signal(self.signal_source_id, payload)
         return self.curriculum_store.refresh_state()
 
     def _global_step_since_resume(self):
-        current = _extract_numeric_metric(self.latest_training_metrics, "learner", "global_step", default=0.0)
+        current = self._current_train_global_step()
         if self.resume_global_step_base is None:
             self.resume_global_step_base = int(current)
         return max(int(current) - int(self.resume_global_step_base), 0)
@@ -658,7 +767,7 @@ class EpisodeRunner:
 
             curriculum_state = self.curriculum_store.refresh_state()
             sampled_usr_conf, sampled_meta = self.config_sampler.sample(
-                curriculum_state.get("stage", "warmup")
+                curriculum_state
             )
             sampled_env_conf = deepcopy(sampled_meta["env_conf"])
             env_obs = self.env.reset(sampled_usr_conf)
@@ -694,12 +803,19 @@ class EpisodeRunner:
             self.logger.info(
                 f"Episode {self.episode_cnt} start "
                 f"stage={sampled_meta['stage']} global_progress={curriculum_state.get('curriculum_progress', 0.0):.2f} "
-                f"profile={sampled_meta['profile']} env={sampled_env_conf}"
+                f"profile={sampled_meta['profile']} obs_phase={int(sampled_meta.get('observation_phase_active', False))} "
+                f"tightened={int(sampled_meta.get('profile_tightened', False))} env={sampled_env_conf}"
             )
 
             while not done:
                 predict_begin = time.perf_counter()
-                act_data = self.agent.predict([obs_data])[0]
+                predict_result = self.agent.predict([obs_data])
+                if not predict_result:
+                    self.logger.warning(f"[PREDICT] ep:{self.episode_cnt} empty result, applying safe fallback action")
+                    legal_action = getattr(obs_data, "legal_action", None) or [1.0] * Config.ACTION_NUM
+                    act_data = self.agent._build_safe_fallback_act_data(legal_action, 0.0, 0.0, 0.0)
+                else:
+                    act_data = predict_result[0]
                 self.perf_window.add("predict", (time.perf_counter() - predict_begin) * 1000.0)
                 act = self.agent.action_process(act_data)
 
@@ -944,6 +1060,8 @@ class EpisodeRunner:
         diagnostics = self._episode_sequence_diagnostics(step_records)
 
         self.episode_history.append({
+            "episode_cnt_local": self.episode_cnt,
+            "completed_at_ts": time.time(),
             "result": fail_reason,
             "clean_score": clean_score,
             "finished_steps": finished_steps,
@@ -1060,8 +1178,33 @@ class EpisodeRunner:
                 "training_stability_bonus": 0.0,
                 "benchmark_stability_bonus": 0.0,
                 "checkpoint_preservation_score": 0.0,
+                "resume_score_safety": 0.0,
+                "resume_score_efficiency": 0.0,
+                "resume_score_behavior": 0.0,
+                "resume_score_learning": 0.0,
+                "submission_score_completion": 0.0,
+                "submission_score_efficiency": 0.0,
+                "submission_score_stability": 0.0,
+                "submission_score_behavior": 0.0,
             }
         self.last_checkpoint_scores = checkpoint_scores
+        if self.episode_cnt % 10 == 0:
+            self.logger.info(
+                "[SCORE] ep:%d preserve=%.2f resume=%.2f (safe=%.2f eff=%.2f beh=%.2f learn=%.2f) "
+                "submission=%.2f (comp=%.2f eff=%.2f stab=%.2f beh=%.2f)",
+                self.episode_cnt,
+                checkpoint_scores["checkpoint_preservation_score"],
+                checkpoint_scores["resume_readiness_score"],
+                checkpoint_scores["resume_score_safety"],
+                checkpoint_scores["resume_score_efficiency"],
+                checkpoint_scores["resume_score_behavior"],
+                checkpoint_scores["resume_score_learning"],
+                checkpoint_scores["submission_score"],
+                checkpoint_scores["submission_score_completion"],
+                checkpoint_scores["submission_score_efficiency"],
+                checkpoint_scores["submission_score_stability"],
+                checkpoint_scores["submission_score_behavior"],
+            )
         self.best_resume_readiness_score = max(
             self.best_resume_readiness_score, checkpoint_scores["resume_readiness_score"]
         )
@@ -1104,6 +1247,14 @@ class EpisodeRunner:
             "resume_readiness_score": checkpoint_scores["resume_readiness_score"],
             "submission_score": checkpoint_scores["submission_score"],
             "checkpoint_preservation_score": checkpoint_scores["checkpoint_preservation_score"],
+            "resume_score_safety": checkpoint_scores["resume_score_safety"],
+            "resume_score_efficiency": checkpoint_scores["resume_score_efficiency"],
+            "resume_score_behavior": checkpoint_scores["resume_score_behavior"],
+            "resume_score_learning": checkpoint_scores["resume_score_learning"],
+            "submission_score_completion": checkpoint_scores["submission_score_completion"],
+            "submission_score_efficiency": checkpoint_scores["submission_score_efficiency"],
+            "submission_score_stability": checkpoint_scores["submission_score_stability"],
+            "submission_score_behavior": checkpoint_scores["submission_score_behavior"],
             "resume_eligible": checkpoint_scores["resume_eligible"],
             "mode": int(getattr(fm, "current_mode", -1)),
             "sampled_env_conf": deepcopy(sampled_env_conf),
@@ -1381,8 +1532,19 @@ class EpisodeRunner:
             "resume_readiness_score": round(self.last_checkpoint_scores["resume_readiness_score"], 4),
             "submission_score": round(self.last_checkpoint_scores["submission_score"], 4),
             "checkpoint_preservation_score": round(self.last_checkpoint_scores["checkpoint_preservation_score"], 4),
+            "resume_score_safety": round(self.last_checkpoint_scores["resume_score_safety"], 4),
+            "resume_score_efficiency": round(self.last_checkpoint_scores["resume_score_efficiency"], 4),
+            "resume_score_behavior": round(self.last_checkpoint_scores["resume_score_behavior"], 4),
+            "resume_score_learning": round(self.last_checkpoint_scores["resume_score_learning"], 4),
+            "submission_score_completion": round(self.last_checkpoint_scores["submission_score_completion"], 4),
+            "submission_score_efficiency": round(self.last_checkpoint_scores["submission_score_efficiency"], 4),
+            "submission_score_stability": round(self.last_checkpoint_scores["submission_score_stability"], 4),
+            "submission_score_behavior": round(self.last_checkpoint_scores["submission_score_behavior"], 4),
             "resume_eligible": 1.0 if self.last_checkpoint_scores["resume_eligible"] else 0.0,
         }
+        runtime_metrics = self.agent.get_runtime_metrics() if hasattr(self.agent, "get_runtime_metrics") else {}
+        payload["predict_fallback_count"] = float(runtime_metrics.get("predict_fallback_count", 0.0))
+        payload["predict_error_count"] = float(runtime_metrics.get("predict_error_count", 0.0))
         payload.update(self._curriculum_progress_payload())
         return payload
 

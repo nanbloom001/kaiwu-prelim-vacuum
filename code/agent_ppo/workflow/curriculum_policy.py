@@ -9,6 +9,7 @@ Dynamic curriculum policy helpers.
 
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any
 
@@ -21,9 +22,28 @@ STAGE_PROFILE_WEIGHTS = {
     "robust": (("anchor", 0.10), ("mild", 0.25), ("broad", 0.40), ("broad_eval", 0.25)),
     "eval_hard": (("anchor", 0.05), ("mild", 0.15), ("broad", 0.35), ("broad_eval", 0.45)),
 }
+OBSERVATION_PROFILE_WEIGHTS = {
+    "warmup": (("anchor", 0.55), ("mild", 0.35), ("broad", 0.10)),
+    "blend": (("anchor", 0.35), ("mild", 0.40), ("broad", 0.20), ("broad_eval", 0.05)),
+    "robust": (("anchor", 0.20), ("mild", 0.30), ("broad", 0.35), ("broad_eval", 0.15)),
+    "eval_hard": STAGE_PROFILE_WEIGHTS["eval_hard"],
+}
+CONSERVATIVE_PROFILE_WEIGHTS = {
+    "warmup": (("anchor", 0.60), ("mild", 0.35), ("broad", 0.05)),
+    "blend": (("anchor", 0.45), ("mild", 0.35), ("broad", 0.15), ("broad_eval", 0.05)),
+    "robust": (("anchor", 0.25), ("mild", 0.35), ("broad", 0.25), ("broad_eval", 0.15)),
+    "eval_hard": (("anchor", 0.08), ("mild", 0.22), ("broad", 0.40), ("broad_eval", 0.30)),
+}
+PROFILE_KEYS = ("anchor", "mild", "broad", "broad_eval")
 
 FAST_TRACK_MIN_EPISODES = 10
 FULL_WINDOW_MIN_EPISODES = 40
+MIN_STAGE_DWELL_STEPS = {
+    "warmup": 3000,
+    "blend": 5000,
+    "robust": 8000,
+    "eval_hard": 0,
+}
 
 
 def _metric(metrics: dict[str, Any] | None, key: str, default: float = 0.0) -> float:
@@ -177,6 +197,117 @@ def profile_weights_for_stage(stage: str) -> tuple[tuple[str, float], ...]:
     return STAGE_PROFILE_WEIGHTS.get(stage, STAGE_PROFILE_WEIGHTS["warmup"])
 
 
+def _weights_to_dict(weights: tuple[tuple[str, float], ...]) -> dict[str, float]:
+    payload = {key: 0.0 for key in PROFILE_KEYS}
+    for profile, weight in weights:
+        payload[str(profile)] = float(weight)
+    return payload
+
+
+def _weights_to_tuple(weights: dict[str, float]) -> tuple[tuple[str, float], ...]:
+    total = sum(max(float(weights.get(profile, 0.0)), 0.0) for profile in PROFILE_KEYS)
+    if total <= 0:
+        return STAGE_PROFILE_WEIGHTS["warmup"]
+    normalized = {profile: max(float(weights.get(profile, 0.0)), 0.0) / total for profile in PROFILE_KEYS}
+    return tuple((profile, normalized[profile]) for profile in PROFILE_KEYS if normalized[profile] > 0.0)
+
+
+def _interpolate_weights(
+    left: tuple[tuple[str, float], ...],
+    right: tuple[tuple[str, float], ...],
+    factor: float,
+) -> tuple[tuple[str, float], ...]:
+    factor = max(0.0, min(float(factor), 1.0))
+    left_dict = _weights_to_dict(left)
+    right_dict = _weights_to_dict(right)
+    blended = {
+        profile: left_dict[profile] * (1.0 - factor) + right_dict[profile] * factor
+        for profile in PROFILE_KEYS
+    }
+    return _weights_to_tuple(blended)
+
+
+def observation_phase_active(global_step_since_resume: int, stage: str) -> bool:
+    if stage == "eval_hard":
+        return False
+    observation_steps = int(os.getenv("KAIWU_CURRICULUM_OBSERVATION_PHASE_STEPS", "5000") or "5000")
+    return int(global_step_since_resume) < max(observation_steps, 0)
+
+
+def _poor_behavior(stage: str, metrics: dict[str, Any] | None) -> bool:
+    if not metrics:
+        return False
+    battery_fail = _metric(metrics, "battery_fail_rate", 0.0)
+    return_stall = _metric(metrics, "return_stall_rate", 0.0)
+    planner_div = _metric(metrics, "planner_policy_divergence_rate", 0.0)
+    thresholds = {
+        "warmup": (0.22, 0.55, 0.82),
+        "blend": (0.18, 0.48, 0.75),
+        "robust": (0.12, 0.40, 0.60),
+        "eval_hard": (0.10, 0.35, 0.50),
+    }
+    max_battery, max_stall, max_div = thresholds.get(stage, thresholds["warmup"])
+    return battery_fail > max_battery or return_stall > max_stall or planner_div > max_div
+
+
+def _strong_behavior(stage: str, metrics: dict[str, Any] | None) -> bool:
+    if not metrics:
+        return False
+    battery_fail = _metric(metrics, "battery_fail_rate", 1.0)
+    return_stall = _metric(metrics, "return_stall_rate", 1.0)
+    planner_div = _metric(metrics, "planner_policy_divergence_rate", 1.0)
+    broad_win = _metric(metrics, "broad_win_rate", -1.0)
+    avg_cps = _metric(metrics, "avg_clean_per_step", 0.0)
+    thresholds = {
+        "warmup": (0.15, 0.45, 0.72, 0.45, 0.50),
+        "blend": (0.12, 0.40, 0.65, 0.50, 0.55),
+        "robust": (0.08, 0.32, 0.50, 0.60, 0.62),
+        "eval_hard": (0.08, 0.30, 0.45, 0.65, 0.65),
+    }
+    max_battery, max_stall, max_div, min_cps, min_broad = thresholds.get(stage, thresholds["warmup"])
+    broad_ok = broad_win < 0.0 or broad_win >= min_broad
+    return battery_fail <= max_battery and return_stall <= max_stall and planner_div <= max_div and avg_cps >= min_cps and broad_ok
+
+
+def profile_plan_for_runtime(stage: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
+    state = state or {}
+    current_stage = str(stage or state.get("stage") or "warmup").strip().lower()
+    if current_stage not in STAGE_INDEX:
+        current_stage = "warmup"
+    adaptive_enabled = str(os.getenv("KAIWU_CURRICULUM_ADAPTIVE_PROFILE_ENABLED", "1") or "1").strip().lower() not in {
+        "0", "false", "no", "off"
+    }
+    metrics = state.get("last_global_metrics") or state.get("last_bootstrap_metrics") or {}
+    global_step_since_resume = int(state.get("global_step_since_resume", 0))
+    observation_active = observation_phase_active(global_step_since_resume, current_stage)
+
+    standard = profile_weights_for_stage(current_stage)
+    observation = OBSERVATION_PROFILE_WEIGHTS.get(current_stage, standard)
+    conservative = CONSERVATIVE_PROFILE_WEIGHTS.get(current_stage, observation)
+
+    if not adaptive_enabled:
+        selected = standard
+        observation_active = False
+    elif _poor_behavior(current_stage, metrics):
+        selected = conservative
+    elif observation_active and current_stage != "eval_hard":
+        observation_steps = max(int(os.getenv("KAIWU_CURRICULUM_OBSERVATION_PHASE_STEPS", "5000") or "5000"), 1)
+        release = min(global_step_since_resume / observation_steps, 1.0)
+        if _strong_behavior(current_stage, metrics):
+            release = min(release + 0.25, 1.0)
+        selected = _interpolate_weights(observation, standard, release)
+    else:
+        selected = standard
+
+    weight_dict = _weights_to_dict(selected)
+    return {
+        "weights": selected,
+        "weight_map": weight_dict,
+        "observation_phase_active": bool(observation_active),
+        "tightened": bool(_poor_behavior(current_stage, metrics)),
+    }
+
+
 def stage_progress(stage: str, metrics: dict[str, Any] | None, learning: dict[str, Any] | None) -> float:
     if not metrics:
         return 0.0
@@ -214,3 +345,38 @@ def snapshot_stage_entry_metrics(metrics: dict[str, Any] | None, learning_metric
     if learning_metrics:
         payload["env_total_score"] = _metric(learning_metrics, "env_total_score", 0.0)
     return payload
+
+
+def curriculum_gate_ratios(
+    stage: str,
+    metrics: dict[str, Any] | None,
+    learning_metrics: dict[str, Any] | None,
+    global_step_since_resume: int,
+    entered_global_step: int = 0,
+) -> dict[str, float]:
+    del learning_metrics
+    dwell_required = MIN_STAGE_DWELL_STEPS.get(stage, 0)
+    dwell_progress = max(int(global_step_since_resume) - int(entered_global_step), 0)
+    global_step_ratio = 1.0 if dwell_required <= 0 else dwell_progress / max(dwell_required, 1)
+
+    stall_threshold = {
+        "warmup": 0.40,
+        "blend": 0.35,
+    }.get(stage)
+    if stall_threshold is None:
+        return {
+            "curriculum_gate_global_step_ratio": float(global_step_ratio),
+            "curriculum_gate_return_stall_ratio": 1.0,
+            "curriculum_gate_return_stall_ratio_raw": 1.0,
+            "curriculum_return_stall_margin": 0.0,
+        }
+
+    current_stall = _metric(metrics, "return_stall_rate", 1.0)
+    stall_ratio_raw = stall_threshold / max(current_stall, 1e-6)
+    stall_ratio = min(stall_ratio_raw, 2.0)
+    return {
+        "curriculum_gate_global_step_ratio": float(global_step_ratio),
+        "curriculum_gate_return_stall_ratio": float(stall_ratio),
+        "curriculum_gate_return_stall_ratio_raw": float(stall_ratio_raw),
+        "curriculum_return_stall_margin": float(current_stall - stall_threshold),
+    }

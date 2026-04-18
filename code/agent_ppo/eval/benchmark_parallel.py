@@ -28,6 +28,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from agent_ppo.conf.conf import Config
+from agent_ppo.workflow.preload_checkpoint import resolve_benchmark_checkpoint
 
 
 HEARTBEAT_INTERVAL_SECONDS = 5.0
@@ -91,7 +92,11 @@ def run_parallel_benchmark(envs, agents, usr_conf, logger):
     worker_count = _env_int("KAIWU_BENCHMARK_WORKER_COUNT", _env_int("KAIWU_AISRV_NUM", 1))
     worker_id = os.getenv("KAIWU_AISRV_INDEX", "").strip() or "1"
     scheduler = os.getenv("KAIWU_BENCHMARK_SCHEDULER", "dynamic").strip() or "dynamic"
-    checkpoint = os.getenv("KAIWU_BENCHMARK_CHECKPOINT", "").strip() or Config.RESUME_CHECKPOINT
+    checkpoint = resolve_benchmark_checkpoint(
+        Path("/workspace/code"),
+        os.getenv("KAIWU_BENCHMARK_CHECKPOINT", "").strip(),
+        Config.RESUME_CHECKPOINT,
+    )
     session_id = os.getenv("KAIWU_BENCHMARK_SESSION_ID", "").strip() or time.strftime("%Y%m%d-%H%M%S")
     benchmark_mod = _benchmark_api()
     runtime_dir = Path(

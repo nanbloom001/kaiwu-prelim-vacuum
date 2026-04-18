@@ -27,6 +27,7 @@ from agent_ppo.model.model import Model
 from kaiwudrl.common.utils.kaiwudrl_define import KaiwuDRLDefine
 from kaiwudrl.interface.agent import BaseAgent
 from agent_ppo.utils.experiment_archive import ExperimentArchive, parse_checkpoint_id
+from agent_ppo.utils.policy_sampling import safe_sample_action, sanitize_policy_probs, uniform_over_legal
 
 try:
     from kaiwudrl.interface.remote_agent import RemoteAgent
@@ -286,10 +287,16 @@ class Agent(BaseAgent):
         self._model_load_call_count = 0
         self._model_load_reload_count = 0
         self._model_load_cache_hit_count = 0
+        self._predict_fallback_count = 0
+        self._predict_error_count = 0
         self._runtime_probe_stages = set()
 
-        # Resume from checkpoint if configured in conf.py
-        if Config.RESUME_CHECKPOINT:
+        # Optional local bootstrap path. The default training entry now uses framework preload.
+        use_local_resume_bootstrap = _env_flag(
+            "KAIWU_USE_LOCAL_RESUME_BOOTSTRAP",
+            Config.USE_LOCAL_RESUME_BOOTSTRAP,
+        )
+        if use_local_resume_bootstrap and Config.RESUME_CHECKPOINT:
             _resume_candidates = [
                 os.path.join(os.path.dirname(__file__), "..", Config.RESUME_CHECKPOINT),
                 os.path.join("/workspace/code", Config.RESUME_CHECKPOINT),
@@ -381,22 +388,33 @@ class Agent(BaseAgent):
         obs_data = list_obs_data[0]
         feature = obs_data.feature
         legal_action = obs_data.legal_action
-
-        outputs = self._run_model(feature)
-        logits = outputs["policy_logits"]
-        value_clean = outputs["value_clean"]
-        value_survive = outputs["value_survive"]
-        value_total = value_clean + value_survive
-        mode_probs = outputs["mode_probs"]
-        route_anchor_probs = outputs["route_anchor_probs"]
-        target_probs = outputs["target_probs"]
         expert = self.preprocessor.expert
+        filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
+        legal_arr = np.array(filtered_legal, dtype=np.float32)
+
+        try:
+            outputs = self._run_model(feature)
+            logits = outputs["policy_logits"]
+            value_clean = float(outputs["value_clean"])
+            value_survive = float(outputs["value_survive"])
+            value_total = value_clean + value_survive
+            mode_probs = self._sanitize_head_probs(outputs["mode_probs"])
+            route_anchor_probs = self._sanitize_head_probs(outputs["route_anchor_probs"])
+            target_probs = self._sanitize_head_probs(outputs["target_probs"])
+        except Exception as exc:
+            self._predict_error_count += 1
+            self._predict_fallback_count += 1
+            if self.logger:
+                self.logger.warning(f"[PREDICT] inference fallback due to error: {exc}")
+            return [self._build_safe_fallback_act_data(filtered_legal, 0.0, 0.0, 0.0)]
+
         self._last_expert_weight = 0.0
         self._last_fallback_active = 0.0
 
-        filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
-        legal_arr = np.array(filtered_legal, dtype=np.float32)
         clean_prob = self._legal_soft_max(logits, legal_arr)
+        clean_prob, prob_fallback = sanitize_policy_probs(clean_prob, filtered_legal)
+        if prob_fallback:
+            self._predict_fallback_count += 1
 
         fallback = expert.get_emergency_fallback(
             self.preprocessor,
@@ -410,22 +428,19 @@ class Agent(BaseAgent):
             if fallback.get("active") and fallback.get("action") is not None:
                 expert_action = int(fallback["action"])
                 return [
-                    ActData(
-                        action=[expert_action],
-                        d_action=[expert_action],
-                        prob=list(clean_prob),
-                        value=np.array([value_total], dtype=np.float32),
-                        value_clean=np.array([value_clean], dtype=np.float32),
-                        value_survive=np.array([value_survive], dtype=np.float32),
-                        mode=np.array([int(np.argmax(mode_probs))], dtype=np.int64),
-                        mode_prob=np.array(mode_probs, dtype=np.float32),
-                        route_anchor=np.array([int(np.argmax(route_anchor_probs))], dtype=np.int64),
-                        route_anchor_prob=np.array(route_anchor_probs, dtype=np.float32),
-                        target=np.array([int(np.argmax(target_probs))], dtype=np.int64),
-                        target_prob=np.array(target_probs, dtype=np.float32),
-                        return_action_prob=np.array(outputs["return_action_logits"], dtype=np.float32),
-                        aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
-                        aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
+                    self._build_act_data(
+                        action=expert_action,
+                        d_action=expert_action,
+                        prob=clean_prob,
+                        value_total=value_total,
+                        value_clean=value_clean,
+                        value_survive=value_survive,
+                        mode_probs=mode_probs,
+                        route_anchor_probs=route_anchor_probs,
+                        target_probs=target_probs,
+                        return_action_logits=outputs["return_action_logits"],
+                        aux_battery_risk=outputs["aux_battery_risk"],
+                        aux_collision_risk=outputs["aux_collision_risk"],
                     )
                 ]
 
@@ -435,22 +450,19 @@ class Agent(BaseAgent):
                 random_action = int(np.random.choice(legal_indices))
                 prob = self._uniform_over_legal(filtered_legal)
                 return [
-                    ActData(
-                        action=[random_action],
-                        d_action=[random_action],
+                    self._build_act_data(
+                        action=random_action,
+                        d_action=random_action,
                         prob=prob,
-                        value=np.array([value_total], dtype=np.float32),
-                        value_clean=np.array([value_clean], dtype=np.float32),
-                        value_survive=np.array([value_survive], dtype=np.float32),
-                        mode=np.array([int(np.argmax(mode_probs))], dtype=np.int64),
-                        mode_prob=np.array(mode_probs, dtype=np.float32),
-                        route_anchor=np.array([int(np.argmax(route_anchor_probs))], dtype=np.int64),
-                        route_anchor_prob=np.array(route_anchor_probs, dtype=np.float32),
-                        target=np.array([int(np.argmax(target_probs))], dtype=np.int64),
-                        target_prob=np.array(target_probs, dtype=np.float32),
-                        return_action_prob=np.array(outputs["return_action_logits"], dtype=np.float32),
-                        aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
-                        aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
+                        value_total=value_total,
+                        value_clean=value_clean,
+                        value_survive=value_survive,
+                        mode_probs=mode_probs,
+                        route_anchor_probs=route_anchor_probs,
+                        target_probs=target_probs,
+                        return_action_logits=outputs["return_action_logits"],
+                        aux_battery_risk=outputs["aux_battery_risk"],
+                        aux_collision_risk=outputs["aux_collision_risk"],
                     )
                 ]
 
@@ -458,29 +470,27 @@ class Agent(BaseAgent):
             action = int(fallback["action"])
             d_action = action
         else:
-            action = self._legal_sample(clean_prob, use_max=False)
-            d_action = self._legal_sample(clean_prob, use_max=True)
-
-        mode = int(np.argmax(mode_probs))
-        target = int(np.argmax(target_probs))
-        route_anchor = int(np.argmax(route_anchor_probs))
+            sampled = safe_sample_action(clean_prob, filtered_legal, use_max=False)
+            greedy = safe_sample_action(clean_prob, filtered_legal, use_max=True)
+            action = int(sampled["action"])
+            d_action = int(greedy["action"])
+            if sampled["used_fallback"] or greedy["used_fallback"]:
+                self._predict_fallback_count += 1
+                clean_prob = sampled["probs"]
         return [
-            ActData(
-                action=[action],
-                d_action=[d_action],
-                prob=list(clean_prob),
-                value=np.array([value_total], dtype=np.float32),
-                value_clean=np.array([value_clean], dtype=np.float32),
-                value_survive=np.array([value_survive], dtype=np.float32),
-                mode=np.array([mode], dtype=np.int64),
-                mode_prob=np.array(mode_probs, dtype=np.float32),
-                route_anchor=np.array([route_anchor], dtype=np.int64),
-                route_anchor_prob=np.array(route_anchor_probs, dtype=np.float32),
-                target=np.array([target], dtype=np.int64),
-                target_prob=np.array(target_probs, dtype=np.float32),
-                return_action_prob=np.array(outputs["return_action_logits"], dtype=np.float32),
-                aux_battery_risk=np.array([outputs["aux_battery_risk"]], dtype=np.float32),
-                aux_collision_risk=np.array([outputs["aux_collision_risk"]], dtype=np.float32),
+            self._build_act_data(
+                action=action,
+                d_action=d_action,
+                prob=clean_prob,
+                value_total=value_total,
+                value_clean=value_clean,
+                value_survive=value_survive,
+                mode_probs=mode_probs,
+                route_anchor_probs=route_anchor_probs,
+                target_probs=target_probs,
+                return_action_logits=outputs["return_action_logits"],
+                aux_battery_risk=outputs["aux_battery_risk"],
+                aux_collision_risk=outputs["aux_collision_risk"],
             )
         ]
 
@@ -610,6 +620,8 @@ class Agent(BaseAgent):
             "load_model_calls": self._model_load_call_count,
             "load_model_reloads": self._model_load_reload_count,
             "load_model_cache_hits": self._model_load_cache_hit_count,
+            "predict_fallback_count": self._predict_fallback_count,
+            "predict_error_count": self._predict_error_count,
         }
 
     def _get_model_mtime_ns(self, model_path: Path):
@@ -649,26 +661,109 @@ class Agent(BaseAgent):
 
     def _uniform_over_legal(self, legal_action):
         """Uniform distribution over legal actions (for stable PPO ratio)."""
-        n = max(sum(legal_action), 1)
-        return [1.0 / n if x else 0.0 for x in legal_action]
+        return uniform_over_legal(legal_action)
 
     def _legal_soft_max(self, logits, legal_action):
         """Softmax with legal action masking.
 
         合法动作掩码下的 softmax。
         """
+        logits = np.nan_to_num(np.asarray(logits, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        legal_action = np.where(np.asarray(legal_action, dtype=np.float32) > 0.5, 1.0, 0.0).astype(np.float32)
+        if logits.size == 0:
+            return self._uniform_over_legal(legal_action)
+        if float(np.sum(legal_action)) <= 0.0:
+            return self._uniform_over_legal(np.ones_like(logits, dtype=np.float32))
         _w, _e = 1e20, 1e-5
         tmp = logits - _w * (1.0 - legal_action)
         tmp_max = np.max(tmp, keepdims=True)
         tmp = np.clip(tmp - tmp_max, -_w, 1)
         tmp = (np.exp(tmp) + _e) * legal_action
-        return tmp / (np.sum(tmp, keepdims=True) * 1.00001)
+        total = np.sum(tmp, keepdims=True)
+        if float(total.squeeze()) <= 1e-8:
+            return self._uniform_over_legal(legal_action)
+        return (tmp / (total * 1.00001)).astype(np.float32).tolist()
 
     def _legal_sample(self, probs, use_max=False):
         """Sample action from probability distribution (argmax if use_max=True).
 
         按概率分布采样动作（use_max=True 时取 argmax）。
         """
-        if use_max:
-            return int(np.argmax(probs))
-        return int(np.argmax(np.random.multinomial(1, probs, size=1)))
+        sampled = safe_sample_action(probs, [1.0] * len(probs), use_max=use_max)
+        if sampled["used_fallback"]:
+            self._predict_fallback_count += 1
+        return int(sampled["action"])
+
+    @staticmethod
+    def _sanitize_head_probs(probs):
+        probs = np.nan_to_num(np.asarray(probs, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        if probs.size == 0:
+            return np.array([1.0], dtype=np.float32)
+        probs = np.clip(probs, 0.0, None)
+        total = float(np.sum(probs))
+        if total <= 1e-8:
+            probs = np.full(probs.shape, 1.0 / probs.size, dtype=np.float32)
+        else:
+            probs = probs / total
+        return probs.astype(np.float32)
+
+    def _build_act_data(
+        self,
+        action,
+        d_action,
+        prob,
+        value_total,
+        value_clean,
+        value_survive,
+        mode_probs,
+        route_anchor_probs,
+        target_probs,
+        return_action_logits,
+        aux_battery_risk,
+        aux_collision_risk,
+    ):
+        mode = int(np.argmax(mode_probs))
+        target = int(np.argmax(target_probs))
+        route_anchor = int(np.argmax(route_anchor_probs))
+        return ActData(
+            action=[int(action)],
+            d_action=[int(d_action)],
+            prob=list(prob),
+            value=np.array([value_total], dtype=np.float32),
+            value_clean=np.array([value_clean], dtype=np.float32),
+            value_survive=np.array([value_survive], dtype=np.float32),
+            mode=np.array([mode], dtype=np.int64),
+            mode_prob=np.array(mode_probs, dtype=np.float32),
+            route_anchor=np.array([route_anchor], dtype=np.int64),
+            route_anchor_prob=np.array(route_anchor_probs, dtype=np.float32),
+            target=np.array([target], dtype=np.int64),
+            target_prob=np.array(target_probs, dtype=np.float32),
+            return_action_prob=np.nan_to_num(
+                np.asarray(return_action_logits, dtype=np.float32),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            ),
+            aux_battery_risk=np.array([aux_battery_risk], dtype=np.float32),
+            aux_collision_risk=np.array([aux_collision_risk], dtype=np.float32),
+        )
+
+    def _build_safe_fallback_act_data(self, legal_action, value_total, value_clean, value_survive):
+        safe = safe_sample_action([0.0] * len(legal_action), legal_action, use_max=True)
+        neutral_mode = np.full((Config.MODE_NUM,), 1.0 / Config.MODE_NUM, dtype=np.float32)
+        neutral_target = np.full((Config.TARGET_DIM,), 1.0 / Config.TARGET_DIM, dtype=np.float32)
+        neutral_anchor = np.array([0.5, 0.5], dtype=np.float32)
+        return self._build_act_data(
+            action=safe["action"],
+            d_action=safe["action"],
+            prob=safe["probs"],
+            value_total=value_total,
+            value_clean=value_clean,
+            value_survive=value_survive,
+            mode_probs=neutral_mode,
+            route_anchor_probs=neutral_anchor,
+            target_probs=neutral_target,
+            return_action_logits=np.zeros((Config.ACTION_NUM,), dtype=np.float32),
+            aux_battery_risk=0.0,
+            aux_collision_risk=0.0,
+        )

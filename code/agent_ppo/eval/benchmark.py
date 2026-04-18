@@ -27,6 +27,7 @@ import numpy as np
 import torch
 
 from agent_ppo.conf.conf import Config
+from agent_ppo.workflow.preload_checkpoint import resolve_benchmark_checkpoint
 from agent_ppo.utils.experiment_archive import infer_fail_reason
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
 
@@ -278,7 +279,11 @@ def run_benchmark(env, agent, usr_conf, logger):
         dict: Overall benchmark results.
     """
     base_env_conf = _extract_base_env_conf(usr_conf)
-    checkpoint = os.getenv("KAIWU_BENCHMARK_CHECKPOINT", "").strip() or Config.RESUME_CHECKPOINT
+    checkpoint = resolve_benchmark_checkpoint(
+        Path("/workspace/code"),
+        os.getenv("KAIWU_BENCHMARK_CHECKPOINT", "").strip(),
+        Config.RESUME_CHECKPOINT,
+    )
     policy_mode = _benchmark_policy_mode()
     rounds = _configured_rounds()
     maps = _configured_maps()

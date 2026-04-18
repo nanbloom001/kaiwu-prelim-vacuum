@@ -282,14 +282,25 @@ def compute_checkpoint_scores(
         "benchmark": benchmark_metrics or {},
     }
 
+    resume_breakdown = {}
     resume_readiness = 0.0
-    for category_weight, specs in RESUME_CATEGORY_SPECS.values():
-        resume_readiness += _score_category(specs, sources, category_weight)
+    for category_name, (category_weight, specs) in RESUME_CATEGORY_SPECS.items():
+        score = _score_category(specs, sources, category_weight)
+        resume_breakdown[f"resume_score_{category_name}"] = round(float(score), 4)
+        resume_readiness += score
 
+    submission_breakdown = {
+        "submission_score_completion": 0.0,
+        "submission_score_efficiency": 0.0,
+        "submission_score_stability": 0.0,
+        "submission_score_behavior": 0.0,
+    }
     submission_score = 0.0
     if benchmark_metrics:
-        for category_weight, specs in SUBMISSION_CATEGORY_SPECS.values():
-            submission_score += _score_category(specs, sources, category_weight)
+        for category_name, (category_weight, specs) in SUBMISSION_CATEGORY_SPECS.items():
+            score = _score_category(specs, sources, category_weight)
+            submission_breakdown[f"submission_score_{category_name}"] = round(float(score), 4)
+            submission_score += score
 
     resume_eligible = _resume_eligible(window_metrics or {}, learning_metrics)
     submission_eligible = _submission_eligible(benchmark_metrics)
@@ -301,7 +312,7 @@ def compute_checkpoint_scores(
     else:
         preservation = 0.70 * resume_readiness + 0.30 * training_bonus
 
-    return {
+    payload = {
         "resume_eligible": bool(resume_eligible),
         "submission_eligible": bool(submission_eligible),
         "resume_readiness_score": round(float(resume_readiness), 4),
@@ -310,3 +321,6 @@ def compute_checkpoint_scores(
         "benchmark_stability_bonus": round(float(benchmark_bonus), 4),
         "checkpoint_preservation_score": round(float(preservation), 4),
     }
+    payload.update(resume_breakdown)
+    payload.update(submission_breakdown)
+    return payload
