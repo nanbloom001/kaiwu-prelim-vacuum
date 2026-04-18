@@ -42,6 +42,49 @@ def _env_int(name, default):
     return int(value)
 
 
+REWARD_COMPONENT_KEYS = (
+    "cleaning",
+    "streak",
+    "explore",
+    "frontier",
+    "recoverability",
+    "charge",
+    "npc",
+    "stuck",
+    "idle",
+    "anchor_consistency",
+    "sticky_anchor_penalty",
+    "return_progress",
+    "diag_efficiency",
+    "return_stall",
+    "late_contract",
+    "astar_potential",
+    "charge_margin_pressure",
+    "unknown_path_risk",
+    "missed_charge_penalty",
+    "overcharge_penalty",
+    "planner_alignment",
+    "cleaning_context_scale",
+    "cps_bonus",
+    "coverage_efficiency_bonus",
+)
+
+REWARD_COMPONENT_MONITOR_KEYS = (
+    "cleaning",
+    "streak",
+    "frontier",
+    "charge",
+    "idle",
+    "npc",
+    "return_progress",
+    "return_stall",
+    "charge_margin_pressure",
+    "missed_charge_penalty",
+    "planner_alignment",
+    "cps_bonus",
+)
+
+
 class PerfWindow:
     def __init__(self):
         self.values = {}
@@ -616,6 +659,10 @@ class EpisodeRunner:
             "mode_usage_contract": sum(ep.get("mode_usage_contract", 0.0) for ep in buf) / n,
             "mode_usage_return": sum(ep.get("mode_usage_return", 0.0) for ep in buf) / n,
             "mode_usage_evade": sum(ep.get("mode_usage_evade", 0.0) for ep in buf) / n,
+            **{
+                f"avg_reward_{key}": sum(ep.get(f"avg_reward_{key}", 0.0) for ep in buf) / n
+                for key in REWARD_COMPONENT_MONITOR_KEYS
+            },
             "battery_fail_rate": sum(1 for ep in buf if ep["result"] == "battery") / n,
             "collision_fail_rate": sum(1 for ep in buf if ep["result"] == "collision") / n,
             "cps_win": (sum(ep["clean_per_step"] for ep in wins) / w) if w else 0.0,
@@ -914,6 +961,10 @@ class EpisodeRunner:
                         "done": float(done),
                         "reward_clean": float(reward_payload["reward_clean"]),
                         "reward_survive": float(reward_payload["reward_survive"]),
+                        **{
+                            f"reward_{key}": float(reward_payload.get(f"reward_{key}", 0.0))
+                            for key in REWARD_COMPONENT_KEYS
+                        },
                         "value_clean": float(self._scalar_from_any(getattr(act_data, "value_clean", None))),
                         "value_survive": float(self._scalar_from_any(getattr(act_data, "value_survive", None))),
                         "mode": int(self._scalar_from_any(getattr(act_data, "mode", -1), default=-1)),
@@ -1017,20 +1068,20 @@ class EpisodeRunner:
         cleaning_ratio = fm.dirt_cleaned / max(fm.total_dirt, 1)
         self.last_clean_score = clean_score
         _base_bonus = {
-            "completed": 1.5,
-            "battery": -3.0,
-            "collision": -8.0,
-            "unknown": -4.0,
+            "completed": Config.EPISODE_COMPLETED_BONUS,
+            "battery": Config.EPISODE_BATTERY_FAIL_BONUS,
+            "collision": Config.EPISODE_COLLISION_FAIL_BONUS,
+            "unknown": Config.EPISODE_UNKNOWN_FAIL_BONUS,
         }.get(fail_reason, -4.0)
 
         if fail_reason in ("battery", "collision", "unknown"):
             actual_max_step = max(int(env_info.get("max_step", sampled_env_conf.get("max_step", step))), 1)
             remaining_ratio = max(0.0, 1.0 - float(step) / actual_max_step)
-            outcome_bonus = _base_bonus * (1.0 + 1.5 * remaining_ratio)
+            outcome_bonus = _base_bonus * (1.0 + Config.EPISODE_FAIL_EARLY_SCALE * remaining_ratio)
+            efficiency_bonus = 0.0
         else:
             outcome_bonus = _base_bonus
-
-        efficiency_bonus = 0.5 * cleaning_ratio + 0.5 * min(clean_score / max(step, 1), 1.0)
+            efficiency_bonus = 0.5 * cleaning_ratio + 0.5 * min(clean_score / max(step, 1), 1.0)
         final_reward = outcome_bonus + efficiency_bonus
         result_str = "WIN" if fail_reason == "completed" else "FAIL"
 
@@ -1058,6 +1109,10 @@ class EpisodeRunner:
         charge_efficiency = clean_score / max(charge_count, 1.0)
         clean_per_step = clean_score / max(finished_steps, 1.0)
         diagnostics = self._episode_sequence_diagnostics(step_records)
+        reward_component_means = {
+            key: float(diagnostics[f"avg_reward_{key}"])
+            for key in REWARD_COMPONENT_MONITOR_KEYS
+        }
 
         self.episode_history.append({
             "episode_cnt_local": self.episode_cnt,
@@ -1102,21 +1157,34 @@ class EpisodeRunner:
             "mode_usage_contract": diagnostics["mode_usage_contract"],
             "mode_usage_return": diagnostics["mode_usage_return"],
             "mode_usage_evade": diagnostics["mode_usage_evade"],
+            **{f"avg_reward_{key}": value for key, value in reward_component_means.items()},
         })
         curriculum_state = self._emit_curriculum_signal()
 
         map_id = extra_info.get("map_id") or extra_info.get("map_code") or "?"
         actual_robot_count = int(env_info.get("npc_count", sampled_env_conf.get("robot_count", 1)))
         actual_charger_count = int(env_info.get("total_charger", sampled_env_conf.get("charger_count", 4)))
+        episode_total_reward = total_reward + final_reward
         self.logger.info(
             f"[GAMEOVER] ep:{self.episode_cnt} steps:{step} "
             f"result:{result_str} final_bonus:{final_reward:.2f} "
-            f"total_reward:{total_reward:.3f} clean_score:{clean_score:.1f} "
+            f"step_reward:{total_reward:.3f} episode_reward:{episode_total_reward:.3f} clean_score:{clean_score:.1f} "
             f"dirt_cleaned:{fm.dirt_cleaned}/{fm.total_dirt} "
             f"invalid_move_rate:{invalid_move_rate:.3f} "
             f"profile:{sampled_meta['profile']} "
             f"map:{map_id} chargers:{actual_charger_count} robots:{actual_robot_count}"
         )
+        sorted_positive_components = [
+            (key, value) for key, value in sorted(reward_component_means.items(), key=lambda item: item[1], reverse=True)
+            if value > 0.0
+        ]
+        sorted_negative_components = [
+            (key, value) for key, value in sorted(reward_component_means.items(), key=lambda item: item[1])
+            if value < 0.0
+        ]
+        neg_summary = ", ".join(f"{key}={value:.3f}" for key, value in sorted_negative_components[:3]) or "none"
+        pos_summary = ", ".join(f"{key}={value:.3f}" for key, value in sorted_positive_components[:3]) or "none"
+        self.logger.info(f"[REWARD_TOP] ep:{self.episode_cnt} neg:[{neg_summary}] pos:[{pos_summary}]")
 
         self.is_new_best = False
 
@@ -1304,7 +1372,7 @@ class EpisodeRunner:
                 reward.get("reward_survive", reward.get("survive", reward.get("total", reward_clean)))
             )
             reward_total = float(reward.get("reward_total", reward.get("total", reward_clean + reward_survive)))
-            return {
+            payload = {
                 "reward_clean": reward_clean,
                 "reward_survive": reward_survive,
                 "reward_total": reward_total,
@@ -1320,9 +1388,12 @@ class EpisodeRunner:
                 "collision_risk_label": float(reward.get("collision_risk_label", 0.0)),
                 "fallback_mask": float(reward.get("fallback_mask", 0.0)),
             }
+            for key in REWARD_COMPONENT_KEYS:
+                payload[f"reward_{key}"] = float(reward.get(key, 0.0))
+            return payload
 
         reward_scalar = float(reward)
-        return {
+        payload = {
             "reward_clean": reward_scalar,
             "reward_survive": 0.0,
             "reward_total": reward_scalar,
@@ -1338,6 +1409,9 @@ class EpisodeRunner:
             "collision_risk_label": 0.0,
             "fallback_mask": 0.0,
         }
+        for key in REWARD_COMPONENT_KEYS:
+            payload[f"reward_{key}"] = 0.0
+        return payload
 
     @staticmethod
     def _episode_sequence_diagnostics(step_records):
@@ -1372,6 +1446,7 @@ class EpisodeRunner:
                 "mode_usage_contract": 0.0,
                 "mode_usage_return": 0.0,
                 "mode_usage_evade": 0.0,
+                **{f"avg_reward_{key}": 0.0 for key in REWARD_COMPONENT_MONITOR_KEYS},
             }
 
         modes = [int(rec.get("mode", -1)) for rec in step_records]
@@ -1474,6 +1549,12 @@ class EpisodeRunner:
             "mode_usage_contract": sum(1 for mode in modes if mode == 3) / total,
             "mode_usage_return": sum(1 for mode in modes if mode == 4) / total,
             "mode_usage_evade": sum(1 for mode in modes if mode == 5) / total,
+            **{
+                f"avg_reward_{key}": float(
+                    sum(float(rec.get(f"reward_{key}", 0.0)) for rec in step_records) / total
+                )
+                for key in REWARD_COMPONENT_MONITOR_KEYS
+            },
         }
 
     def _build_monitor_payload(self, reward):
@@ -1526,6 +1607,10 @@ class EpisodeRunner:
             "mode_usage_contract": round(m["mode_usage_contract"], 4),
             "mode_usage_return": round(m["mode_usage_return"], 4),
             "mode_usage_evade": round(m["mode_usage_evade"], 4),
+            **{
+                f"avg_reward_{key}": round(m[f"avg_reward_{key}"], 4)
+                for key in REWARD_COMPONENT_MONITOR_KEYS
+            },
             "anchor_win_rate": round(m["anchor_win_rate"], 4) if m["anchor_win_rate"] >= 0 else -1,
             "mild_win_rate": round(m["mild_win_rate"], 4) if m["mild_win_rate"] >= 0 else -1,
             "broad_win_rate": round(m["broad_win_rate"], 4) if m["broad_win_rate"] >= 0 else -1,

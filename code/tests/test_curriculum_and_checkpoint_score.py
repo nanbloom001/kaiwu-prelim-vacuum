@@ -3,6 +3,8 @@
 
 import unittest
 import json
+import importlib
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -628,6 +630,110 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertFalse(strong_plan["tightened"])
         self.assertGreater(strong_plan["weight_map"]["broad"], poor_plan["weight_map"]["broad"])
         self.assertLess(strong_plan["weight_map"]["anchor"], poor_plan["weight_map"]["anchor"])
+
+    def test_train_workflow_preserves_reward_components_for_episode_diagnostics(self):
+        try:
+            from agent_ppo.workflow.train_workflow import EpisodeRunner
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"train_workflow import unavailable in local test env: {exc}")
+
+        runner = EpisodeRunner.__new__(EpisodeRunner)
+        payload = runner._normalize_reward_payload(
+            {
+                "reward_total": -0.42,
+                "reward_clean": 0.08,
+                "reward_survive": -0.50,
+                "cleaning": 0.12,
+                "return_stall": -0.18,
+                "planner_alignment": -0.15,
+                "charge_margin_pressure": -0.05,
+            }
+        )
+        self.assertAlmostEqual(payload["reward_cleaning"], 0.12, places=5)
+        self.assertAlmostEqual(payload["reward_return_stall"], -0.18, places=5)
+        self.assertAlmostEqual(payload["reward_planner_alignment"], -0.15, places=5)
+
+        diagnostics = EpisodeRunner._episode_sequence_diagnostics(
+            [
+                {"mode": 3, "target": 1, "route_anchor": 1, "charger_slack": 1.0, "future_recoverability_score": 0.5,
+                 "anchor_return_dist": 5.0, "is_diag_action": 0.0, "wall_hugging_clean_floor": 0.0,
+                 "stale_boundary_follow": 0.0, "narrow_unknown_commit": 0.0, "missed_charge_opportunity": 0.0,
+                 "charger_nearby_not_charged": 0.0, "suboptimal_target_hold": 0.0,
+                 "planner_policy_divergence": 1.0, "path_cross_count_50": 1.0, "coverage_efficiency_20": 0.5,
+                 "all_charger_known_path_count": 1.0, "unknown_on_target_path_ratio": 0.0,
+                 "reward_cleaning": 0.12, "reward_return_stall": -0.18, "reward_planner_alignment": -0.15,
+                 "reward_charge_margin_pressure": -0.05, "reward_idle": -0.10, "reward_frontier": 0.02,
+                 "reward_streak": 0.01, "reward_charge": 0.0, "reward_npc": 0.0, "reward_return_progress": 0.04,
+                 "reward_cps_bonus": 0.0},
+                {"mode": 4, "target": 1, "route_anchor": 1, "charger_slack": 1.0, "future_recoverability_score": 0.5,
+                 "anchor_return_dist": 5.0, "is_diag_action": 0.0, "wall_hugging_clean_floor": 0.0,
+                 "stale_boundary_follow": 0.0, "narrow_unknown_commit": 0.0, "missed_charge_opportunity": 0.0,
+                 "charger_nearby_not_charged": 0.0, "suboptimal_target_hold": 0.0,
+                 "planner_policy_divergence": 1.0, "path_cross_count_50": 1.0, "coverage_efficiency_20": 0.5,
+                 "all_charger_known_path_count": 1.0, "unknown_on_target_path_ratio": 0.0,
+                 "reward_cleaning": 0.08, "reward_return_stall": -0.12, "reward_planner_alignment": -0.10,
+                 "reward_charge_margin_pressure": -0.03, "reward_idle": -0.08, "reward_frontier": 0.01,
+                 "reward_streak": 0.00, "reward_charge": 0.0, "reward_npc": 0.0, "reward_return_progress": 0.02,
+                 "reward_cps_bonus": 0.0},
+            ]
+        )
+        self.assertAlmostEqual(diagnostics["avg_reward_cleaning"], 0.10, places=5)
+        self.assertAlmostEqual(diagnostics["avg_reward_return_stall"], -0.15, places=5)
+        self.assertAlmostEqual(diagnostics["avg_reward_planner_alignment"], -0.125, places=5)
+
+    def test_retrain_reward_defaults_expose_new_charge_and_terminal_knobs(self):
+        import agent_ppo.conf.conf as conf_module
+
+        env_keys = [
+            "KAIWU_CHARGE_REWARD_BASE",
+            "KAIWU_REWARD_CLEANING_BASE",
+            "KAIWU_REWARD_STREAK_BONUS_BASE",
+            "KAIWU_OVERCHARGE_PENALTY_SCALE",
+            "KAIWU_COVERAGE_EFFICIENCY_BONUS_SCALE",
+            "KAIWU_EPISODE_COMPLETED_BONUS",
+            "KAIWU_EPISODE_FAIL_EARLY_SCALE",
+        ]
+        original = {key: os.environ.get(key) for key in env_keys}
+        try:
+            for key in env_keys:
+                os.environ.pop(key, None)
+            conf_module = importlib.reload(conf_module)
+            self.assertAlmostEqual(conf_module.Config.CHARGE_REWARD_BASE, 0.60, places=5)
+            self.assertAlmostEqual(conf_module.Config.REWARD_CLEANING_BASE, 0.90, places=5)
+            self.assertAlmostEqual(conf_module.Config.REWARD_STREAK_BONUS_BASE, 0.10, places=5)
+            self.assertAlmostEqual(conf_module.Config.OVERCHARGE_PENALTY_SCALE, 0.60, places=5)
+            self.assertAlmostEqual(conf_module.Config.COVERAGE_EFFICIENCY_BONUS_SCALE, 0.12, places=5)
+            self.assertAlmostEqual(conf_module.Config.EPISODE_COMPLETED_BONUS, 6.0, places=5)
+            self.assertAlmostEqual(conf_module.Config.EPISODE_FAIL_EARLY_SCALE, 1.2, places=5)
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            importlib.reload(conf_module)
+
+    def test_warmup_observation_profile_matches_retrain_defaults(self):
+        from agent_ppo.workflow.curriculum_policy import observation_phase_active, profile_plan_for_runtime
+
+        state = {
+            "stage": "warmup",
+            "global_step_since_resume": 0,
+            "last_global_metrics": {
+                "battery_fail_rate": 0.05,
+                "return_stall_rate": 0.20,
+                "planner_policy_divergence_rate": 0.40,
+                "avg_clean_per_step": 0.40,
+                "broad_win_rate": 0.20,
+            },
+        }
+        plan = profile_plan_for_runtime("warmup", state)
+        self.assertTrue(plan["observation_phase_active"])
+        self.assertAlmostEqual(plan["weight_map"]["anchor"], 0.55, places=4)
+        self.assertAlmostEqual(plan["weight_map"]["mild"], 0.35, places=4)
+        self.assertAlmostEqual(plan["weight_map"]["broad"], 0.10, places=4)
+        self.assertFalse(plan["tightened"])
+        self.assertTrue(observation_phase_active(7000, "warmup"))
 
 
 if __name__ == "__main__":

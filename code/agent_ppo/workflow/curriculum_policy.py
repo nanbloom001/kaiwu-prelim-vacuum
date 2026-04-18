@@ -17,7 +17,7 @@ from typing import Any
 STAGE_ORDER = ["warmup", "blend", "robust", "eval_hard"]
 STAGE_INDEX = {name: idx for idx, name in enumerate(STAGE_ORDER)}
 STAGE_PROFILE_WEIGHTS = {
-    "warmup": (("anchor", 0.45), ("mild", 0.35), ("broad", 0.20)),
+    "warmup": (("anchor", 0.45), ("mild", 0.40), ("broad", 0.15)),
     "blend": (("anchor", 0.25), ("mild", 0.35), ("broad", 0.30), ("broad_eval", 0.10)),
     "robust": (("anchor", 0.10), ("mild", 0.25), ("broad", 0.40), ("broad_eval", 0.25)),
     "eval_hard": (("anchor", 0.05), ("mild", 0.15), ("broad", 0.35), ("broad_eval", 0.45)),
@@ -230,7 +230,7 @@ def _interpolate_weights(
 def observation_phase_active(global_step_since_resume: int, stage: str) -> bool:
     if stage == "eval_hard":
         return False
-    observation_steps = int(os.getenv("KAIWU_CURRICULUM_OBSERVATION_PHASE_STEPS", "5000") or "5000")
+    observation_steps = int(os.getenv("KAIWU_CURRICULUM_OBSERVATION_PHASE_STEPS", "8000") or "8000")
     return int(global_step_since_resume) < max(observation_steps, 0)
 
 
@@ -291,7 +291,7 @@ def profile_plan_for_runtime(stage: str, state: dict[str, Any] | None = None) ->
     elif _poor_behavior(current_stage, metrics):
         selected = conservative
     elif observation_active and current_stage != "eval_hard":
-        observation_steps = max(int(os.getenv("KAIWU_CURRICULUM_OBSERVATION_PHASE_STEPS", "5000") or "5000"), 1)
+        observation_steps = max(int(os.getenv("KAIWU_CURRICULUM_OBSERVATION_PHASE_STEPS", "8000") or "8000"), 1)
         release = min(global_step_since_resume / observation_steps, 1.0)
         if _strong_behavior(current_stage, metrics):
             release = min(release + 0.25, 1.0)

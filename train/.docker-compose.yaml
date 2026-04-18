@@ -83,10 +83,38 @@ x-kaiwu-client:
     KAIWU_REWARD_TOTAL_CLIP: ${KAIWU_REWARD_TOTAL_CLIP:-}
     KAIWU_REWARD_COMPONENT_CLIP: ${KAIWU_REWARD_COMPONENT_CLIP:-}
     KAIWU_EXPLORE_REWARD_SCALE: ${KAIWU_EXPLORE_REWARD_SCALE:-}
+    KAIWU_FRONTIER_REWARD_SCALE: ${KAIWU_FRONTIER_REWARD_SCALE:-}
+    KAIWU_RECOVERABILITY_REWARD_SCALE: ${KAIWU_RECOVERABILITY_REWARD_SCALE:-}
+    KAIWU_ANCHOR_CONSISTENCY_REWARD: ${KAIWU_ANCHOR_CONSISTENCY_REWARD:-}
+    KAIWU_RETURN_PROGRESS_REWARD_SCALE: ${KAIWU_RETURN_PROGRESS_REWARD_SCALE:-}
+    KAIWU_RETURN_STALL_BASE_PENALTY: ${KAIWU_RETURN_STALL_BASE_PENALTY:-}
+    KAIWU_RETURN_STALL_EMA_SCALE: ${KAIWU_RETURN_STALL_EMA_SCALE:-}
     KAIWU_PREPARE_RETURN_SLACK_THRESHOLD: ${KAIWU_PREPARE_RETURN_SLACK_THRESHOLD:-}
     KAIWU_CONTRACT_BATTERY_RATIO: ${KAIWU_CONTRACT_BATTERY_RATIO:-}
+    KAIWU_CHARGE_REWARD_BASE: ${KAIWU_CHARGE_REWARD_BASE:-}
+    KAIWU_CHARGE_MARGIN_WARN_PENALTY: ${KAIWU_CHARGE_MARGIN_WARN_PENALTY:-}
+    KAIWU_CHARGE_MARGIN_LOW_PENALTY: ${KAIWU_CHARGE_MARGIN_LOW_PENALTY:-}
+    KAIWU_CHARGE_MARGIN_CRITICAL_PENALTY: ${KAIWU_CHARGE_MARGIN_CRITICAL_PENALTY:-}
+    KAIWU_MISSED_CHARGE_LOW_BATTERY_RATIO: ${KAIWU_MISSED_CHARGE_LOW_BATTERY_RATIO:-}
+    KAIWU_MISSED_CHARGE_SLACK_THRESHOLD: ${KAIWU_MISSED_CHARGE_SLACK_THRESHOLD:-}
+    KAIWU_MISSED_CHARGE_PENALTY: ${KAIWU_MISSED_CHARGE_PENALTY:-}
+    KAIWU_CHARGER_NEARBY_NOT_CHARGED_PENALTY: ${KAIWU_CHARGER_NEARBY_NOT_CHARGED_PENALTY:-}
+    KAIWU_UNKNOWN_PATH_RISK_PENALTY: ${KAIWU_UNKNOWN_PATH_RISK_PENALTY:-}
+    KAIWU_NARROW_UNKNOWN_RISK_PENALTY: ${KAIWU_NARROW_UNKNOWN_RISK_PENALTY:-}
+    KAIWU_OVERCHARGE_PENALTY_SCALE: ${KAIWU_OVERCHARGE_PENALTY_SCALE:-}
+    KAIWU_OVERCHARGE_RATE_THRESHOLD: ${KAIWU_OVERCHARGE_RATE_THRESHOLD:-}
+    KAIWU_COVERAGE_EFFICIENCY_BONUS_SCALE: ${KAIWU_COVERAGE_EFFICIENCY_BONUS_SCALE:-}
+    KAIWU_COVERAGE_EFFICIENCY_BASELINE: ${KAIWU_COVERAGE_EFFICIENCY_BASELINE:-}
     KAIWU_PLANNER_ALIGNMENT_REWARD: ${KAIWU_PLANNER_ALIGNMENT_REWARD:-}
     KAIWU_PLANNER_DIVERGENCE_PENALTY: ${KAIWU_PLANNER_DIVERGENCE_PENALTY:-}
+    KAIWU_TARGET_STICKY_PENALTY: ${KAIWU_TARGET_STICKY_PENALTY:-}
+    KAIWU_NPC_PENALTY_SCALE: ${KAIWU_NPC_PENALTY_SCALE:-}
+    KAIWU_IDLE_PENALTY_SCALE: ${KAIWU_IDLE_PENALTY_SCALE:-}
+    KAIWU_EPISODE_COMPLETED_BONUS: ${KAIWU_EPISODE_COMPLETED_BONUS:-}
+    KAIWU_EPISODE_BATTERY_FAIL_BONUS: ${KAIWU_EPISODE_BATTERY_FAIL_BONUS:-}
+    KAIWU_EPISODE_COLLISION_FAIL_BONUS: ${KAIWU_EPISODE_COLLISION_FAIL_BONUS:-}
+    KAIWU_EPISODE_UNKNOWN_FAIL_BONUS: ${KAIWU_EPISODE_UNKNOWN_FAIL_BONUS:-}
+    KAIWU_EPISODE_FAIL_EARLY_SCALE: ${KAIWU_EPISODE_FAIL_EARLY_SCALE:-}
 
 services:
   # ==================== Learner 学习器 ====================
@@ -743,7 +771,7 @@ services:
             "from pathlib import Path\n"
             "\n"
             "from agent_ppo.conf.conf import Config\n"
-            "from agent_ppo.workflow.preload_checkpoint import resolve_training_preload, seed_preload_from_resume\n"
+            "from agent_ppo.workflow.preload_checkpoint import resolve_latest_preload, resolve_training_preload, seed_preload_from_resume\n"
             "\n"
             "def format_toml_value(value):\n"
             "    try:\n"
@@ -825,7 +853,8 @@ services:
             "framework_conf = root / 'kaiwudrl/conf/kaiwudrl/configure.toml'\n"
             "code_dir = Path('/workspace/code')\n"
             "start_mode = (os.environ.get('KAIWU_TRAINING_START_MODE', 'preload') or 'preload').strip().lower()\n"
-            "if start_mode not in ('scratch', 'random', 'from_scratch', 'fresh') and os.environ.get('KAIWU_PRELOAD_MODEL', 'auto').strip().lower() in ('', 'auto', 'latest', '1', 'true', 'on'):\n"
+            "existing_preload = resolve_latest_preload(code_dir)\n"
+            "if start_mode not in ('scratch', 'random', 'from_scratch', 'fresh') and existing_preload is None and os.environ.get('KAIWU_PRELOAD_MODEL', 'auto').strip().lower() in ('', 'auto', 'latest', '1', 'true', 'on'):\n"
             "    seed_ref = os.environ.get('KAIWU_PRELOAD_SEED_CHECKPOINT') or Config.TRAINING_BASELINE_CHECKPOINT or Config.RESUME_CHECKPOINT\n"
             "    seed_preload_from_resume(code_dir, seed_ref, checkpoint_id='0')\n"
             "preload = resolve_training_preload(code_dir, os.environ)\n"
@@ -1327,7 +1356,7 @@ services:
             "from pathlib import Path\n"
             "\n"
             "from agent_ppo.conf.conf import Config\n"
-            "from agent_ppo.workflow.preload_checkpoint import resolve_training_preload, seed_preload_from_resume\n"
+            "from agent_ppo.workflow.preload_checkpoint import resolve_latest_preload, resolve_training_preload, seed_preload_from_resume\n"
             "\n"
             "def format_toml_value(value):\n"
             "    try:\n"
@@ -1372,7 +1401,8 @@ services:
             "app_conf = root / 'conf/configure_app.toml'\n"
             "code_dir = Path('/workspace/code')\n"
             "start_mode = (os.environ.get('KAIWU_TRAINING_START_MODE', 'preload') or 'preload').strip().lower()\n"
-            "if start_mode not in ('scratch', 'random', 'from_scratch', 'fresh') and os.environ.get('KAIWU_PRELOAD_MODEL', 'auto').strip().lower() in ('', 'auto', 'latest', '1', 'true', 'on'):\n"
+            "existing_preload = resolve_latest_preload(code_dir)\n"
+            "if start_mode not in ('scratch', 'random', 'from_scratch', 'fresh') and existing_preload is None and os.environ.get('KAIWU_PRELOAD_MODEL', 'auto').strip().lower() in ('', 'auto', 'latest', '1', 'true', 'on'):\n"
             "    seed_ref = os.environ.get('KAIWU_PRELOAD_SEED_CHECKPOINT') or Config.TRAINING_BASELINE_CHECKPOINT or Config.RESUME_CHECKPOINT\n"
             "    seed_preload_from_resume(code_dir, seed_ref, checkpoint_id='0')\n"
             "preload = resolve_training_preload(code_dir, os.environ)\n"

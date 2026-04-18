@@ -1230,12 +1230,12 @@ class Preprocessor:
         if self.just_charged:
             charge_received = max(0.0, float(self.battery - self.pre_charge_battery + 1))
             efficiency = charge_received / max(self.battery_max, 1)
-            charge_reward = 3.0 * efficiency
+            charge_reward = Config.CHARGE_REWARD_BASE * efficiency
 
         npc_risk = float(np.clip((10.0 - self.nearest_npc_dist) / 10.0, 0.0, 1.0))
-        npc_penalty = -3.0 * npc_risk ** 1.5
+        npc_penalty = -Config.NPC_PENALTY_SCALE * npc_risk ** 1.5
         stuck_penalty = -0.5 * self.last_move_invalid - 0.25 * _norm(self.stuck_steps, 10)
-        idle_penalty = -0.1 * float(np.clip(self.no_progress_steps / 15.0, 0.0, 1.0))
+        idle_penalty = -Config.IDLE_PENALTY_SCALE * float(np.clip(self.no_progress_steps / 15.0, 0.0, 1.0))
         recoverability_reward = Config.RECOVERABILITY_REWARD_SCALE * (
             self.future_recoverability_score - getattr(self, "_prev_future_recoverability_score", self.future_recoverability_score)
         )
