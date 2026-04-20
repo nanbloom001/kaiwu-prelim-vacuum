@@ -16,6 +16,15 @@ import numpy as np
 
 from agent_ppo.conf.conf import Config
 from agent_ppo.feature.expert import ExpertPolicy
+from agent_ppo.utils.constraint_utils import (
+    classify_battery_state,
+    compute_battery_process_cost_step,
+    compute_charge_need_score,
+    compute_collision_process_cost_step,
+    compute_slack_confidence,
+    has_known_charge_route,
+)
+from agent_ppo.utils.reward_schedule import get_reward_schedule
 
 
 def _norm(value, v_max, v_min=0.0):
@@ -145,6 +154,12 @@ class Preprocessor:
         self.recent_return_diag_rate = 0.0
         self.return_progress_ema = 0.0
         self.return_stall_ema = 0.0
+        self._prev_charge_need_score = 0.0
+        self._prev_charge_detour_proxy = 0.0
+        self._prev_charge_interrupt_proxy = 0.0
+        self._prev_all_charger_known_path_count = 0.0
+        self._prev_unknown_on_target_path_ratio = 0.0
+        self._prev_planner_best_target_route_diversity = 0.0
         self.same_region_streak = 0
         self.recent_unique_cells_20 = 0
         self.path_cross_count_50 = 0
@@ -181,11 +196,13 @@ class Preprocessor:
         self._teacher_cache = None
         self._teacher_target_history = deque(maxlen=Config.TEACHER_TARGET_STABILITY_WINDOW)
         self._route_anchor_history = deque(maxlen=Config.TEACHER_TARGET_STABILITY_WINDOW + 1)
+        self.training_global_step = 0
 
     def pb2struct(self, env_obs, last_action):
         observation = env_obs.get("observation") or {}
         frame_state = observation.get("frame_state") or {}
         env_info = observation.get("env_info") or {}
+        runtime = env_obs.get("runtime") or {}
         hero = frame_state.get("heroes") or {}
 
         self.step_no = int(observation.get("step_no", env_info.get("step_no", self.step_no)))
@@ -193,6 +210,10 @@ class Preprocessor:
         self.total_charger = max(int(env_info.get("total_charger", self.total_charger)), 1)
         self.npc_count = max(int(env_info.get("npc_count", len(frame_state.get("npcs") or []))), 1)
         self.map_random = int(env_info.get("map_random", self.map_random))
+        try:
+            self.training_global_step = max(int(runtime.get("global_step_since_resume", self.training_global_step)), 0)
+        except (TypeError, ValueError):
+            pass
 
         self.last_pos = self.cur_pos
         self.cur_pos = (
@@ -476,6 +497,12 @@ class Preprocessor:
                         "unknown_path_ratio": float(cand.get("unknown_path_ratio", 0.0)),
                         "score": float(cand.get("score", cand.get("astar_dist", cand.get("dist", max(abs(dx), abs(dz)))))),
                         "path_source": str(cand.get("path_source", "chebyshev")),
+                        "route_diversity": float(cand.get("route_diversity", 0.0)),
+                        "best_total_cost": float(cand.get("best_total_cost", cand.get("score", cand.get("astar_dist", cand.get("dist", max(abs(dx), abs(dz))))))),
+                        "best_safe_cost": float(cand.get("best_safe_cost", cand.get("score", cand.get("astar_dist", cand.get("dist", max(abs(dx), abs(dz))))))),
+                        "tangle_cost": float(cand.get("best_tangle_cost", 0.0)),
+                        "edge_break_cost": float(cand.get("best_edge_break_cost", 0.0)),
+                        "region_fragment_cost": float(cand.get("best_region_fragment_cost", 0.0)),
                     }
                 )
             return candidates
@@ -504,6 +531,28 @@ class Preprocessor:
                     "unknown_path_ratio": float(signal.get("unknown_path_ratio", 0.0) if target is not None and (cx, cz) == tuple(target) else 1.0),
                     "score": float(astar if target is not None and (cx, cz) == tuple(target) else cheb),
                     "path_source": "astar" if target is not None and (cx, cz) == tuple(target) else "chebyshev",
+                    "route_diversity": float(
+                        signal.get("planner_best_target_route_diversity", 0.0)
+                        if target is not None and (cx, cz) == tuple(target) else 0.0
+                    ),
+                    "best_total_cost": float(
+                        signal.get("planner_best_target_best_cost", astar if target is not None and (cx, cz) == tuple(target) else cheb)
+                    ),
+                    "best_safe_cost": float(
+                        signal.get("planner_best_target_safe_cost", astar if target is not None and (cx, cz) == tuple(target) else cheb)
+                    ),
+                    "tangle_cost": float(
+                        signal.get("planner_best_target_tangle_cost", 0.0)
+                        if target is not None and (cx, cz) == tuple(target) else 0.0
+                    ),
+                    "edge_break_cost": float(
+                        signal.get("planner_best_target_edge_break_cost", 0.0)
+                        if target is not None and (cx, cz) == tuple(target) else 0.0
+                    ),
+                    "region_fragment_cost": float(
+                        signal.get("planner_best_target_region_fragment_cost", 0.0)
+                        if target is not None and (cx, cz) == tuple(target) else 0.0
+                    ),
                 }
             )
         candidates.sort(key=lambda item: (-item["reachable"], item["astar_dist"], item["dist"]))
@@ -602,6 +651,48 @@ class Preprocessor:
             return 1.0
         return float(len(set(recent))) / float(len(recent))
 
+    def _compute_heading_consistency(self, window=6):
+        recent = list(self._trajectory[-(window + 1):])
+        if len(recent) < 3:
+            return 0.0
+
+        deltas = []
+        for prev, cur in zip(recent[:-1], recent[1:]):
+            dx = int(np.clip(cur[0] - prev[0], -1, 1))
+            dz = int(np.clip(cur[1] - prev[1], -1, 1))
+            if dx == 0 and dz == 0:
+                continue
+            deltas.append((dx, dz))
+        if len(deltas) < 2:
+            return 0.0
+
+        axis_counts = {"horizontal": 0, "vertical": 0, "diag_pos": 0, "diag_neg": 0}
+        heading_changes = 0
+        reversals = 0
+        prev_delta = None
+        for dx, dz in deltas:
+            if dz == 0:
+                axis_counts["horizontal"] += 1
+            elif dx == 0:
+                axis_counts["vertical"] += 1
+            elif dx == dz:
+                axis_counts["diag_pos"] += 1
+            else:
+                axis_counts["diag_neg"] += 1
+
+            delta = (dx, dz)
+            if prev_delta is not None and delta != prev_delta:
+                heading_changes += 1
+                if delta == (-prev_delta[0], -prev_delta[1]):
+                    reversals += 1
+            prev_delta = delta
+
+        total = float(len(deltas))
+        dominant_ratio = max(axis_counts.values()) / total
+        change_rate = float(heading_changes) / max(total - 1.0, 1.0)
+        reversal_rate = float(reversals) / max(total - 1.0, 1.0)
+        return float(np.clip(0.60 * dominant_ratio + 0.40 * (1.0 - change_rate) - 0.40 * reversal_rate, 0.0, 1.0))
+
     def _is_stale_boundary_context(self):
         return bool(
             self.wall_adjacent >= 1
@@ -679,6 +770,7 @@ class Preprocessor:
             if prev_cand is not None and prev_cand["reachable"] > 0.5:
                 prev_score = float(prev_cand.get("score", prev_cand.get("astar_dist", prev_cand.get("dist", 0.0))))
                 prev_unknown_ratio = float(prev_cand.get("unknown_path_ratio", 1.0))
+                prev_route_diversity = float(prev_cand.get("route_diversity", 0.0))
                 best_score = float(best_cand.get("score", best_cand.get("astar_dist", best_cand.get("dist", 0.0)))) if best_cand is not None else prev_score
                 score_gap = prev_score - best_score
                 force_switch = (
@@ -695,6 +787,7 @@ class Preprocessor:
                     best_center == previous_center
                     or score_gap <= 0.5
                     or guidance.get("target_stable", False) is False
+                    or (prev_route_diversity >= 2.0 and score_gap <= 2.0)
                 ):
                     best_center = previous_center
 
@@ -1098,23 +1191,30 @@ class Preprocessor:
         margin = float(guidance.get("margin", 0.0))
         known_path_count = int(guidance.get("all_charger_known_path_count", 0))
         unknown_ratio = float(guidance.get("unknown_path_ratio", 0.0))
+        planner_topk_reachable_count = int(guidance.get("planner_topk_reachable_count", known_path_count))
+        planner_multi_route_recoverability = float(
+            guidance.get("planner_multi_route_recoverability", self.future_recoverability_score)
+        )
         if self.nearest_npc_dist <= 3.0:
             return self.MODE_EVADE
         if (
             self.charger_slack <= Config.RETURN_SLACK_THRESHOLD
             or battery_ratio <= Config.RETURN_BATTERY_RATIO
             or self.future_recoverability_score <= Config.RETURN_RECOVERABILITY_THRESHOLD
+            or planner_multi_route_recoverability <= Config.RETURN_RECOVERABILITY_THRESHOLD
             or margin <= Config.CHARGE_MARGIN_LOW
         ):
             return self.MODE_RETURN
         if (
-            self.anchor_return_dist <= Config.PREPARE_RETURN_SLACK_THRESHOLD
+            self.charger_slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD
             or battery_ratio <= Config.CONTRACT_BATTERY_RATIO
             or self.future_recoverability_score <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
+            or planner_multi_route_recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
             or self.route_contract_pressure >= 0.5
             or margin <= Config.CHARGE_MARGIN_WARN
             or (
                 known_path_count < min(self.total_charger, 2)
+                and planner_topk_reachable_count <= 0
                 and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
                 and unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD
             )
@@ -1159,11 +1259,27 @@ class Preprocessor:
 
     def reward_process(self):
         gain_reward = 0.0
-        recover_reward = 0.0
+        task_reward = 0.0
+        reward_schedule = get_reward_schedule(self.training_global_step)
         battery_ratio = self.battery / max(self.battery_max, 1)
         guidance = self._get_guidance()
         slack = float(guidance.get("slack", self.charger_slack))
         charge_margin_now = min(slack, float(guidance.get("margin", 0.0)))
+        all_known_paths = float(guidance.get("all_charger_known_path_count", 0.0))
+        planner_topk_reachable_count = int(guidance.get("planner_topk_reachable_count", all_known_paths))
+        unknown_target_ratio = float(guidance.get("unknown_path_ratio", 0.0))
+        planner_best_target_route_diversity = float(guidance.get("planner_best_target_route_diversity", 0.0))
+        target_reliable = bool(guidance.get("target_reliable", False))
+        anchor_reliable = bool(guidance.get("anchor_reliable", False))
+        mode_reliable = bool(guidance.get("mode_reliable", False))
+        return_action_reliable = bool(guidance.get("return_action_reliable", False))
+        known_route = has_known_charge_route(all_known_paths, target_reliable)
+        slack_confidence = compute_slack_confidence(
+            all_charger_known_path_count=all_known_paths,
+            target_reliable=target_reliable,
+            anchor_reliable=anchor_reliable,
+            unknown_on_target_path_ratio=unknown_target_ratio,
+        )
         stale_boundary = self._is_stale_boundary_context()
         loop_context = self._is_loop_context()
         missed_charge = self._is_missed_charge_opportunity(guidance, battery_ratio)
@@ -1226,19 +1342,10 @@ class Preprocessor:
 
         gain_reward += cleaning_reward + streak_bonus + explore_reward + frontier_reward + dirty_approach_reward
 
-        charge_reward = 0.0
-        if self.just_charged:
-            charge_received = max(0.0, float(self.battery - self.pre_charge_battery + 1))
-            efficiency = charge_received / max(self.battery_max, 1)
-            charge_reward = Config.CHARGE_REWARD_BASE * efficiency
-
         npc_risk = float(np.clip((10.0 - self.nearest_npc_dist) / 10.0, 0.0, 1.0))
         npc_penalty = -Config.NPC_PENALTY_SCALE * npc_risk ** 1.5
         stuck_penalty = -0.5 * self.last_move_invalid - 0.25 * _norm(self.stuck_steps, 10)
         idle_penalty = -Config.IDLE_PENALTY_SCALE * float(np.clip(self.no_progress_steps / 15.0, 0.0, 1.0))
-        recoverability_reward = Config.RECOVERABILITY_REWARD_SCALE * (
-            self.future_recoverability_score - getattr(self, "_prev_future_recoverability_score", self.future_recoverability_score)
-        )
         anchor_consistency_reward = 0.0
         sticky_anchor_penalty = 0.0
         if self.route_anchor_idx > 0 and self.route_anchor_idx == self.last_route_anchor_idx:
@@ -1253,64 +1360,14 @@ class Preprocessor:
         elif self.route_anchor_idx > 0 and self.last_route_anchor_idx > 0:
             anchor_consistency_reward = -0.5 * Config.ANCHOR_CONSISTENCY_REWARD
 
-        return_progress_reward = 0.0
-        diag_efficiency_bonus = 0.0
-        stall_penalty = 0.0
-        planner_alignment_reward = 0.0
+        progress = 0.0
         if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
             progress = float(getattr(self, "_last_target_distance", self.current_target_dist) - self.current_target_dist)
-            return_progress_reward = Config.RETURN_PROGRESS_REWARD_SCALE * progress
-            if progress <= 0.0:
-                stall_penalty = -(
-                    Config.RETURN_STALL_BASE_PENALTY
-                    + Config.RETURN_STALL_EMA_SCALE * min(self.return_stall_ema * 5.0, 1.0)
-                )
-            diag_preferred = abs(self.nearest_charger_dx) > 0 and abs(self.nearest_charger_dx) == abs(self.nearest_charger_dz)
-            if diag_preferred and self._last_action in (1, 3, 5, 7):
-                diag_efficiency_bonus = Config.DIAG_EFFICIENCY_REWARD_SCALE
             self.return_progress_ema = 0.8 * self.return_progress_ema + 0.2 * progress
             self.return_stall_ema = 0.8 * self.return_stall_ema + 0.2 * float(progress <= 0.0)
         else:
             self.return_progress_ema *= 0.9
             self.return_stall_ema *= 0.9
-
-        late_contract_penalty = -Config.LATE_CONTRACT_PENALTY if (
-            self.current_mode == self.MODE_CONTRACT and self.future_recoverability_score < 0.0
-        ) else 0.0
-        astar_potential_reward = 0.0
-        if battery_ratio < Config.ASTAR_POTENTIAL_BATTERY_THRESHOLD and np.isfinite(self._last_astar_dist):
-            delta_dist = self._last_astar_dist - self._astar_dist
-            astar_potential_reward = Config.ASTAR_POTENTIAL_ALPHA * float(delta_dist)
-
-        charge_margin_pressure = 0.0
-        if not self.just_charged and self.current_mode != self.MODE_DEPART:
-            if charge_margin_now < Config.CHARGE_MARGIN_CRITICAL:
-                charge_margin_pressure = -Config.CHARGE_MARGIN_CRITICAL_PENALTY
-            elif charge_margin_now < Config.CHARGE_MARGIN_LOW:
-                charge_margin_pressure = -Config.CHARGE_MARGIN_LOW_PENALTY
-            elif charge_margin_now < Config.CHARGE_MARGIN_WARN and battery_ratio < Config.UNKNOWN_PATH_RISK_BATTERY_RATIO:
-                charge_margin_pressure = -Config.CHARGE_MARGIN_WARN_PENALTY
-
-        unknown_path_risk_penalty = 0.0
-        if battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO:
-            unknown_ratio = float(guidance.get("unknown_path_ratio", 0.0))
-            if unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD:
-                overflow = min(max((unknown_ratio - Config.UNKNOWN_PATH_RISK_THRESHOLD) / max(1.0 - Config.UNKNOWN_PATH_RISK_THRESHOLD, 1e-6), 0.0), 1.0)
-                unknown_path_risk_penalty = -Config.UNKNOWN_PATH_RISK_PENALTY * (1.0 + overflow)
-                if narrow_unknown_commit:
-                    unknown_path_risk_penalty -= Config.NARROW_UNKNOWN_RISK_PENALTY
-
-        missed_charge_penalty = 0.0
-        if missed_charge:
-            missed_charge_penalty -= Config.MISSED_CHARGE_PENALTY
-        if charger_nearby_not_charged:
-            missed_charge_penalty -= Config.CHARGER_NEARBY_NOT_CHARGED_PENALTY
-
-        overcharge_penalty = 0.0
-        if Config.OVERCHARGE_PENALTY_SCALE > 0.0 and self.step_no > 0:
-            charge_rate = float(self.charge_count) / max(float(self.step_no), 1.0)
-            overflow = max(charge_rate - Config.OVERCHARGE_RATE_THRESHOLD, 0.0)
-            overcharge_penalty = -Config.OVERCHARGE_PENALTY_SCALE * overflow
 
         coverage_efficiency_bonus = 0.0
         if Config.COVERAGE_EFFICIENCY_BONUS_SCALE > 0.0:
@@ -1318,6 +1375,20 @@ class Preprocessor:
                 float(self.coverage_efficiency_20) - Config.COVERAGE_EFFICIENCY_BASELINE,
                 0.0,
             )
+        heading_consistency_6 = self._compute_heading_consistency(window=6)
+        loop_proxy = float(
+            np.clip(
+                0.5 * float(np.clip(self.same_region_streak / 8.0, 0.0, 1.0))
+                + 0.5 * (1.0 - float(np.clip(self.recent_unique_cells_20 / 20.0, 0.0, 1.0))),
+                0.0,
+                1.0,
+            )
+        )
+        tangle_raw = (
+            0.50 * _norm(self.path_cross_count_50, 10.0)
+            + 0.30 * float(np.clip(1.0 - float(self.coverage_efficiency_20), 0.0, 1.0))
+            + 0.20 * loop_proxy
+        )
 
         planner_sensitive_context = bool(
             loop_context
@@ -1326,38 +1397,350 @@ class Preprocessor:
             or self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
         )
         suggested_action = guidance.get("suggested_action")
-        if planner_sensitive_context and self._last_action is not None and self._last_action >= 0 and suggested_action is not None:
-            if int(self._last_action) == int(suggested_action):
-                planner_alignment_reward = Config.PLANNER_ALIGNMENT_REWARD
-            else:
-                planner_alignment_reward = -Config.PLANNER_DIVERGENCE_PENALTY
+        planner_matches = bool(
+            planner_sensitive_context
+            and self._last_action is not None
+            and self._last_action >= 0
+            and suggested_action is not None
+            and int(self._last_action) == int(suggested_action)
+        )
+        planner_diverges = bool(
+            planner_sensitive_context
+            and self._last_action is not None
+            and self._last_action >= 0
+            and suggested_action is not None
+            and int(self._last_action) != int(suggested_action)
+        )
 
-        recover_reward += (
-            charge_reward
-            + npc_penalty
+        high_need_stall_indicator = 0.0
+        provisional_need_score = compute_charge_need_score(
+            has_known_route=known_route,
+            charge_margin_now=charge_margin_now,
+            battery_ratio=battery_ratio,
+            future_recoverability_score=self.future_recoverability_score,
+        )
+        if (
+            provisional_need_score >= Config.BATTERY_CRITICAL_NEED_THRESHOLD
+            and self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
+            and progress <= 0.0
+        ):
+            high_need_stall_indicator = 1.0
+        battery_process_cost, charge_need_score, battery_state = compute_battery_process_cost_step(
+            has_known_route=known_route,
+            charger_slack=self.charger_slack,
+            slack_confidence=slack_confidence,
+            charge_margin_now=charge_margin_now,
+            battery_ratio=battery_ratio,
+            future_recoverability_score=self.future_recoverability_score,
+            high_need_stall_indicator=high_need_stall_indicator,
+            safe_threshold=Config.BATTERY_SAFE_NEED_THRESHOLD,
+            critical_threshold=Config.BATTERY_CRITICAL_NEED_THRESHOLD,
+        )
+        battery_state_idx = {
+            "safe": 0.0,
+            "planning": 1.0,
+            "critical": 2.0,
+        }.get(battery_state, 0.0)
+        geometry_state_gate = 1.0
+        if battery_state == "planning":
+            geometry_state_gate = 0.5
+        elif battery_state == "critical":
+            geometry_state_gate = 0.0
+        access_state_gate = 0.0
+        if battery_state == "safe":
+            access_state_gate = 1.0
+        elif battery_state == "planning":
+            access_state_gate = 0.6
+        collision_risk_label = 1.0 if self.nearest_npc_dist <= 2.0 else 0.0
+        collision_process_cost = compute_collision_process_cost_step(
+            collision_risk_label,
+            scale=Config.COLLISION_PROCESS_COST_SCALE,
+        )
+
+        prev_charge_need_score = self._prev_charge_need_score if self.step_no > 1 else 0.0
+        prev_charge_state = classify_battery_state(
+            prev_charge_need_score,
+            safe_threshold=Config.BATTERY_SAFE_NEED_THRESHOLD,
+            critical_threshold=Config.BATTERY_CRITICAL_NEED_THRESHOLD,
+        )
+        prev_charge_detour_proxy = self._prev_charge_detour_proxy if self.step_no > 1 else 0.0
+        prev_charge_interrupt_proxy = self._prev_charge_interrupt_proxy if self.step_no > 1 else 0.0
+
+        repeat_term = _norm(self.path_cross_count_50, 8.0)
+        coverage_loss_term = float(np.clip(1.0 - float(self.coverage_efficiency_20), 0.0, 1.0))
+        return_eff_proxy = _norm(max(self.anchor_return_dist - max(progress, 0.0), 0.0), self.GRID_SIZE)
+        detour_raw = 0.50 * repeat_term + 0.30 * coverage_loss_term + 0.20 * return_eff_proxy
+
+        task_value_here = (
+            0.45 * float(np.clip(self.local_dirt_density, 0.0, 1.0))
+            + 0.25 * _norm(self.dirty_adjacent, 4.0)
+            + 0.20 * float(np.clip(self.local_frontier_density, 0.0, 1.0))
+            + 0.10 * _norm(self.new_explored_cells, 6.0)
+        )
+
+        route_progress_bonus = 0.0
+        if battery_state in ("planning", "critical"):
+            route_progress_bonus = Config.CHARGE_ROUTE_PROGRESS_SCALE * float(np.clip(progress / 2.0, 0.0, 1.0))
+
+        need_term = float(
+            np.clip(
+                (charge_need_score - Config.BATTERY_SAFE_NEED_THRESHOLD)
+                / max(Config.BATTERY_CRITICAL_NEED_THRESHOLD - Config.BATTERY_SAFE_NEED_THRESHOLD, 1e-6),
+                0.0,
+                1.0,
+            )
+        )
+        urgency = 1.0 if battery_state == "critical" else max(need_term, 0.0)
+        return_context_reliable = bool(
+            self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
+            and battery_state in ("planning", "critical")
+            and (
+                return_action_reliable
+                or target_reliable
+                or anchor_reliable
+                or known_route
+                or planner_topk_reachable_count > 0.0
+            )
+        )
+        slack_recovery = float(np.clip((self.charger_slack - self.last_charger_slack) / 6.0, 0.0, 1.0))
+        charger_distance_recovery = float(
+            np.clip((self.last_nearest_charger_dist - self.nearest_charger_dist) / 4.0, 0.0, 1.0)
+        )
+        slack_worsening = float(np.clip((self.last_charger_slack - self.charger_slack) / 6.0, 0.0, 1.0))
+        charger_distance_worsening = float(
+            np.clip((self.nearest_charger_dist - self.last_nearest_charger_dist) / 4.0, 0.0, 1.0)
+        )
+
+        return_progress_shaping_bonus = 0.0
+        if return_context_reliable:
+            progress_signal = (
+                0.50 * float(np.clip(progress / 2.0, 0.0, 1.0))
+                + 0.30 * slack_recovery
+                + 0.20 * charger_distance_recovery
+            )
+            return_progress_shaping_bonus = (
+                Config.RETURN_PROGRESS_SHAPING_SCALE
+                * max(urgency, 0.35)
+                * max(slack_confidence, 0.35 if known_route else 0.0)
+                * progress_signal
+            )
+
+        necessary_charge_bonus = 0.0
+        if self.just_charged and prev_charge_state in ("planning", "critical"):
+            charge_received_ratio = float(
+                np.clip(max(0.0, float(self.battery - self.pre_charge_battery + 1)) / max(self.battery_max, 1), 0.0, 0.4)
+                / 0.4
+            )
+            necessary_charge_bonus = (
+                reward_schedule["scheduled_necessary_charge_bonus_scale"]
+                * charge_received_ratio
+                * float(np.clip(prev_charge_need_score, 0.0, 1.0))
+            )
+
+        unnecessary_charge_penalty = 0.0
+        if self.just_charged and prev_charge_state == "safe":
+            extra_charge_cost_proxy = max(prev_charge_detour_proxy, prev_charge_interrupt_proxy)
+            unnecessary_charge_penalty = -(
+                Config.UNNECESSARY_CHARGE_PENALTY
+                * (1.0 - float(np.clip(prev_charge_need_score, 0.0, 1.0)))
+                * extra_charge_cost_proxy
+            )
+
+        detour_zone_scale = 0.0
+        if battery_state == "safe":
+            detour_zone_scale = 1.0
+        elif battery_state == "planning":
+            detour_zone_scale = 0.3
+        charge_detour_cost = 0.0
+        if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) and detour_zone_scale > 0.0:
+            charge_detour_cost = -Config.CHARGE_DETOUR_COST_SCALE * detour_raw * detour_zone_scale
+
+        interrupt_zone_scale = 0.0
+        if battery_state == "safe":
+            interrupt_zone_scale = 1.0
+        elif battery_state == "planning":
+            interrupt_zone_scale = 0.15
+        charge_interrupt_cost = 0.0
+        if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) and interrupt_zone_scale > 0.0:
+            charge_interrupt_cost = -Config.CHARGE_INTERRUPT_COST_SCALE * task_value_here * interrupt_zone_scale
+
+        skip_needed_charge_penalty = 0.0
+        if battery_state in ("planning", "critical") and not self.just_charged and not bool(guidance.get("on_charger", False)):
+            critical_need_term = 1.0 if battery_state == "critical" else max(need_term, 0.0)
+            charge_context_ready = (
+                self.nearest_charger_dist <= Config.CHARGER_NEARBY_DIST
+                or all_known_paths >= 1.0
+                or planner_topk_reachable_count > 0
+                or slack_confidence >= 0.45
+            )
+            charge_misaligned = self.current_mode not in (self.MODE_CONTRACT, self.MODE_RETURN)
+            stalled_return = self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) and progress <= 0.0
+            if charge_context_ready and (charge_misaligned or stalled_return):
+                mode_penalty_scale = 1.0 if charge_misaligned else 0.75
+                urgency = max(need_term, critical_need_term)
+                skip_needed_charge_penalty = -Config.SKIP_NEEDED_CHARGE_PENALTY * urgency * mode_penalty_scale
+
+        high_need_return_stall_penalty = 0.0
+        if return_context_reliable and battery_state in ("planning", "critical"):
+            stall_signal = 0.0
+            if progress <= 0.0:
+                stall_signal += 0.55
+            stall_signal += 0.25 * slack_worsening + 0.20 * charger_distance_worsening
+            high_need_return_stall_penalty = -(
+                Config.HIGH_NEED_RETURN_STALL_PENALTY
+                * max(urgency, 0.35)
+                * (1.0 if battery_state == "critical" else 0.75)
+                * max(stall_signal, 0.0)
+                * max(slack_confidence, 0.35 if known_route else 0.25)
+            )
+
+        coverage_tangle_penalty = 0.0
+        if (
+            Config.COVERAGE_TANGLE_PENALTY_SCALE > 0.0
+            and self.current_mode not in (self.MODE_CONTRACT, self.MODE_RETURN)
+            and geometry_state_gate > 0.0
+        ):
+            coverage_tangle_penalty = -Config.COVERAGE_TANGLE_PENALTY_SCALE * tangle_raw * geometry_state_gate
+
+        prev_all_known_paths = self._prev_all_charger_known_path_count if self.step_no > 1 else all_known_paths
+        prev_unknown_target_ratio = (
+            self._prev_unknown_on_target_path_ratio if self.step_no > 1 else unknown_target_ratio
+        )
+        prev_route_diversity = (
+            self._prev_planner_best_target_route_diversity if self.step_no > 1 else planner_best_target_route_diversity
+        )
+
+        delta_known_routes = float(np.clip(all_known_paths - prev_all_known_paths, 0.0, 2.0))
+        delta_target_unknown_reduction = float(np.clip(prev_unknown_target_ratio - unknown_target_ratio, 0.0, 1.0))
+        delta_route_diversity = float(np.clip(planner_best_target_route_diversity - prev_route_diversity, 0.0, 2.0))
+
+        charger_access_discovery_bonus = 0.0
+        if (
+            Config.CHARGER_ACCESS_DISCOVERY_BONUS_SCALE > 0.0
+            and access_state_gate > 0.0
+            and not self.just_charged
+        ):
+            discovery_known_term = 0.55 * (delta_known_routes / 2.0)
+            discovery_unknown_term = 0.30 * delta_target_unknown_reduction
+            discovery_diversity_term = 0.15 * (delta_route_diversity / 2.0)
+            if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
+                discovery_unknown_term = 0.0
+                discovery_diversity_term = 0.0
+            charger_access_discovery_bonus = (
+                Config.CHARGER_ACCESS_DISCOVERY_BONUS_SCALE
+                * access_state_gate
+                * (discovery_known_term + discovery_unknown_term + discovery_diversity_term)
+            )
+
+        charger_access_probe_bonus = 0.0
+        weak_route_knowledge = (
+            all_known_paths <= Config.CHARGER_ACCESS_PROBE_WEAK_ROUTE_MAX
+            or planner_topk_reachable_count <= 0.0
+            or slack_confidence <= Config.CHARGER_ACCESS_PROBE_SLACK_CONFIDENCE_MAX
+        )
+        probe_mode_scale = 0.0
+        if self.current_mode in (self.MODE_EXPAND, self.MODE_HARVEST):
+            probe_mode_scale = 1.0
+        elif self.current_mode == self.MODE_CONTRACT:
+            probe_mode_scale = Config.CHARGER_ACCESS_PROBE_CONTRACT_SCALE
+        probe_gate = float(
+            access_state_gate > 0.0
+            and not self.just_charged
+            and self.charge_count <= 0
+            and weak_route_knowledge
+            and probe_mode_scale > 0.0
+            and self.new_explored_cells > 0
+            and self.local_frontier_density >= Config.CHARGER_ACCESS_PROBE_FRONTIER_THRESHOLD
+            and unknown_target_ratio > Config.CHARGER_ACCESS_PROBE_UNKNOWN_RATIO_MIN
+        )
+        if Config.CHARGER_ACCESS_PROBE_BONUS_SCALE > 0.0 and probe_gate > 0.0:
+            charger_access_probe_bonus = (
+                Config.CHARGER_ACCESS_PROBE_BONUS_SCALE
+                * access_state_gate
+                * probe_mode_scale
+                * float(np.clip(self.new_explored_cells / 4.0, 0.0, 1.0))
+                * (
+                    0.65 * float(np.clip(unknown_target_ratio, 0.0, 1.0))
+                    + 0.35 * float(np.clip(1.0 - slack_confidence, 0.0, 1.0))
+                )
+            )
+
+        edge_state_gate = 0.0
+        if battery_state == "safe":
+            edge_state_gate = 1.0
+        elif battery_state == "planning":
+            edge_state_gate = 0.3
+        frontier_presence = 1.0 if self.local_frontier_density >= Config.EDGE_FOLLOW_FRONTIER_THRESHOLD else 0.0
+        clean_step_mask = 1.0 if self.cleaned_this_step > 0 else 0.0
+        low_tangle_mask = 1.0 if self.path_cross_count_50 <= Config.EDGE_FOLLOW_CROSS_COUNT_MAX else 0.0
+        edge_follow_raw = frontier_presence * heading_consistency_6 * low_tangle_mask * clean_step_mask
+        edge_follow_bonus = 0.0
+        if (
+            Config.EDGE_FOLLOW_BONUS_SCALE > 0.0
+            and self.current_mode in (self.MODE_EXPAND, self.MODE_HARVEST)
+            and edge_state_gate > 0.0
+        ):
+            edge_follow_bonus = Config.EDGE_FOLLOW_BONUS_SCALE * edge_follow_raw * edge_state_gate
+
+        planner_alignment_reward = 0.0
+        planner_alignment_scale = 0.0
+        if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
+            if return_action_reliable:
+                if battery_state == "critical":
+                    planner_alignment_scale = 1.50
+                elif battery_state == "planning":
+                    planner_alignment_scale = 1.25
+                else:
+                    planner_alignment_scale = 1.0
+        elif battery_state == "safe" and (mode_reliable or target_reliable):
+            planner_alignment_scale = 1.0
+        elif battery_state == "planning" and (mode_reliable or target_reliable):
+            planner_alignment_scale = 0.75
+        if planner_alignment_scale > 0.0:
+            if planner_matches:
+                planner_alignment_reward = Config.PLANNER_ALIGNMENT_REWARD * planner_alignment_scale
+            elif planner_diverges:
+                planner_alignment_reward = -Config.PLANNER_DIVERGENCE_PENALTY * planner_alignment_scale
+
+        task_reward += (
+            npc_penalty
             + stuck_penalty
             + idle_penalty
-            + recoverability_reward
             + anchor_consistency_reward
             + sticky_anchor_penalty
-            + return_progress_reward
-            + diag_efficiency_bonus
-            + stall_penalty
-            + late_contract_penalty
-            + astar_potential_reward
-            + charge_margin_pressure
-            + unknown_path_risk_penalty
-            + missed_charge_penalty
-            + overcharge_penalty
             + planner_alignment_reward
+            + route_progress_bonus
+            + return_progress_shaping_bonus
+            + necessary_charge_bonus
+            + unnecessary_charge_penalty
+            + charge_detour_cost
+            + charge_interrupt_cost
+            + skip_needed_charge_penalty
+            + high_need_return_stall_penalty
+            + coverage_tangle_penalty
         )
 
         if self.cleaned_this_step > 0:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 1.0
         else:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 0.0
-        cps_bonus = cleaning_scale * 0.3 * max(self._cps_ema - 0.75, 0.0)
-        gain_reward += cps_bonus + coverage_efficiency_bonus
+        cps_margin = float(
+            np.clip(
+                (self._cps_ema - Config.REWARD_CPS_BONUS_BASELINE)
+                / max(Config.REWARD_CPS_BONUS_SPAN, 1e-6),
+                0.0,
+                1.0,
+            )
+        )
+        cps_bonus = cleaning_scale * Config.REWARD_CPS_BONUS_SCALE * cps_margin
+        gain_reward += (
+            cps_bonus
+            + coverage_efficiency_bonus
+            + edge_follow_bonus
+            + charger_access_discovery_bonus
+            + charger_access_probe_bonus
+        )
+        task_reward += gain_reward
 
         teacher = self._get_teacher_guidance()
         if teacher is None:
@@ -1378,14 +1761,28 @@ class Preprocessor:
             target_teacher_mask = float(teacher.get("target_teacher_mask", 0.0))
             return_action_teacher = int(teacher.get("return_action", -1) if teacher.get("return_action") is not None else -1)
             return_action_teacher_mask = float(teacher.get("return_action_teacher_mask", 0.0))
+            if battery_state in ("planning", "critical"):
+                if anchor_reliable:
+                    route_anchor_teacher_mask = max(route_anchor_teacher_mask, 0.65)
+                if target_reliable:
+                    target_teacher_mask = max(target_teacher_mask, 0.65)
+                if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) and return_action_reliable:
+                    return_action_teacher_mask = max(return_action_teacher_mask, 0.80)
+                elif return_action_reliable:
+                    return_action_teacher_mask = max(return_action_teacher_mask, 0.65)
 
-        battery_risk_label = 1.0 if (battery_ratio <= 0.12 or slack < 0.0) else 0.0
-        collision_risk_label = 1.0 if self.nearest_npc_dist <= 2.0 else 0.0
+        battery_risk_label = 1.0 if (charge_need_score >= Config.BATTERY_CRITICAL_NEED_THRESHOLD or slack < 0.0) else 0.0
 
-        reward_total = float(np.clip(gain_reward + recover_reward, -Config.REWARD_TOTAL_CLIP, Config.REWARD_TOTAL_CLIP))
+        reward_total = float(
+            np.clip(
+                task_reward - battery_process_cost - collision_process_cost,
+                -Config.REWARD_TOTAL_CLIP,
+                Config.REWARD_TOTAL_CLIP,
+            )
+        )
         components = {
-            "reward_clean": float(np.clip(gain_reward, -Config.REWARD_COMPONENT_CLIP, Config.REWARD_COMPONENT_CLIP)),
-            "reward_survive": float(np.clip(recover_reward, -Config.REWARD_COMPONENT_CLIP, Config.REWARD_COMPONENT_CLIP)),
+            "reward_clean": float(np.clip(task_reward, -Config.REWARD_COMPONENT_CLIP, Config.REWARD_COMPONENT_CLIP)),
+            "reward_survive": float(np.clip(battery_process_cost, 0.0, Config.REWARD_COMPONENT_CLIP)),
             "reward_total": reward_total,
             "mode_teacher": int(mode_teacher),
             "route_anchor_teacher": int(route_anchor_teacher),
@@ -1403,27 +1800,45 @@ class Preprocessor:
             "streak": streak_bonus,
             "explore": explore_reward,
             "frontier": frontier_reward,
-            "recoverability": recoverability_reward,
-            "charge": charge_reward,
+            "charger_access_discovery_bonus": charger_access_discovery_bonus,
+            "charger_access_probe_bonus": charger_access_probe_bonus,
             "npc": npc_penalty,
             "stuck": stuck_penalty,
             "idle": idle_penalty,
             "anchor_consistency": anchor_consistency_reward,
             "sticky_anchor_penalty": sticky_anchor_penalty,
-            "return_progress": return_progress_reward,
-            "diag_efficiency": diag_efficiency_bonus,
-            "return_stall": stall_penalty,
-            "late_contract": late_contract_penalty,
-            "astar_potential": astar_potential_reward,
-            "charge_margin_pressure": charge_margin_pressure,
-            "unknown_path_risk": unknown_path_risk_penalty,
-            "missed_charge_penalty": missed_charge_penalty,
-            "overcharge_penalty": overcharge_penalty,
             "planner_alignment": planner_alignment_reward,
+            "charge_route_progress_bonus": route_progress_bonus,
+            "return_progress_shaping_bonus": return_progress_shaping_bonus,
+            "necessary_charge_bonus": necessary_charge_bonus,
+            "unnecessary_charge_penalty": unnecessary_charge_penalty,
+            "charge_detour_cost": charge_detour_cost,
+            "charge_interrupt_cost": charge_interrupt_cost,
+            "skip_needed_charge_penalty": skip_needed_charge_penalty,
+            "high_need_return_stall_penalty": high_need_return_stall_penalty,
             "cleaning_context_scale": cleaning_scale,
             "cps_bonus": cps_bonus,
             "coverage_efficiency_bonus": coverage_efficiency_bonus,
+            "coverage_tangle_penalty": coverage_tangle_penalty,
+            "edge_follow_bonus": edge_follow_bonus,
+            "scheduled_necessary_charge_bonus_scale": float(
+                reward_schedule["scheduled_necessary_charge_bonus_scale"]
+            ),
+            "battery_process_cost": float(battery_process_cost),
+            "collision_process_cost": float(collision_process_cost),
+            "charge_need_score": float(charge_need_score),
+            "slack_confidence": float(slack_confidence),
+            "has_known_route": float(1.0 if known_route else 0.0),
+            "high_need_stall_indicator": float(high_need_stall_indicator),
+            "battery_state_idx": float(battery_state_idx),
+            "collision_risk_cost": float(collision_process_cost),
         }
         self._prev_future_recoverability_score = self.future_recoverability_score
         self._last_target_distance = self.current_target_dist
+        self._prev_charge_need_score = float(charge_need_score)
+        self._prev_charge_detour_proxy = float(detour_raw if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) else 0.0)
+        self._prev_charge_interrupt_proxy = float(task_value_here if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) else 0.0)
+        self._prev_all_charger_known_path_count = float(all_known_paths)
+        self._prev_unknown_on_target_path_ratio = float(unknown_target_ratio)
+        self._prev_planner_best_target_route_diversity = float(planner_best_target_route_diversity)
         return reward_total, components

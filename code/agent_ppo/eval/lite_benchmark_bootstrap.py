@@ -18,6 +18,7 @@ from typing import Any
 
 from agent_ppo.conf.conf import Config
 from agent_ppo.workflow.preload_checkpoint import resolve_training_preload
+from agent_ppo.workflow.state_layout import runtime_state_layout
 
 
 LITE_BENCH_FILE = "latest_lite_benchmark.json"
@@ -43,7 +44,7 @@ LITE_MAPS = [1, 5]
 
 
 def lite_benchmark_metadata_path(code_dir: Path) -> Path:
-    return code_dir / "agent_ppo" / "ckpt" / LITE_BENCH_FILE
+    return runtime_state_layout(code_dir).preload_cache_dir / LITE_BENCH_FILE
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -85,6 +86,24 @@ def _mode_enabled(mode: str, checkpoint_payload: dict[str, Any]) -> bool:
     return False
 
 
+def _checkpoint_mtime_ns(checkpoint_path: str | None) -> int:
+    if not checkpoint_path:
+        return 0
+    try:
+        return int(Path(checkpoint_path).stat().st_mtime_ns)
+    except OSError:
+        return 0
+
+
+def _lite_cache_signature() -> dict[str, Any]:
+    return {
+        "rounds": deepcopy(LITE_ROUNDS),
+        "maps": list(LITE_MAPS),
+        "policy_mode": Config.CURRICULUM_LITE_BENCH_POLICY_MODE,
+        "schema_version": 1,
+    }
+
+
 def _recommended_initial_stage(metrics: dict[str, Any]) -> str:
     if (
         float(metrics.get("completed_rate", 0.0)) >= 0.70
@@ -115,6 +134,10 @@ def resolve_cached_lite_benchmark(code_dir: Path, checkpoint_path: str | None) -
         return None
     cached_path = str(payload.get("checkpoint_path") or "")
     if checkpoint_path and cached_path != checkpoint_path:
+        return None
+    if int(payload.get("checkpoint_mtime_ns") or 0) != _checkpoint_mtime_ns(checkpoint_path):
+        return None
+    if payload.get("cache_signature") != _lite_cache_signature():
         return None
     return payload
 
@@ -197,6 +220,8 @@ def maybe_run_lite_benchmark(env, agent, usr_conf, logger) -> dict[str, Any] | N
     payload = {
         "checkpoint_path": checkpoint_path,
         "checkpoint_id": checkpoint_payload.get("checkpoint_id"),
+        "checkpoint_mtime_ns": _checkpoint_mtime_ns(checkpoint_path),
+        "cache_signature": _lite_cache_signature(),
         "completed_rate": float(overall.get("completed_rate", overall.get("win_rate", 0.0))),
         "battery_fail_rate": float(overall.get("battery_fail_rate", 0.0)),
         "collision_fail_rate": float(overall.get("collision_fail_rate", 0.0)),

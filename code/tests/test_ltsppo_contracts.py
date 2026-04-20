@@ -79,6 +79,7 @@ def _build_step_records(total_steps):
                 "return_action_teacher_mask": 1.0 if idx % 4 else 0.0,
                 "battery_risk_label": float(idx % 2),
                 "collision_risk_label": float((idx + 1) % 2),
+                "constraint_battery_process_cost": 0.05 * idx,
                 "fallback_mask": 0.0,
                 "expert_weight": float(idx) / 100.0,
             }
@@ -116,6 +117,7 @@ class LtsppoConfigAndDefinitionContractsTests(unittest.TestCase):
             "return_action_teacher_mask": Config.SEQ_CHUNK_LEN,
             "battery_risk_label": Config.SEQ_CHUNK_LEN,
             "collision_risk_label": Config.SEQ_CHUNK_LEN,
+            "constraint_battery_process_cost": Config.SEQ_CHUNK_LEN,
             "fallback_mask": Config.SEQ_CHUNK_LEN,
             "expert_weight": Config.EXPERT_WEIGHT_DIM,
         }
@@ -242,6 +244,312 @@ class LtsppoModelOutputShapeTests(unittest.TestCase):
 
 
 class LtsppoResumeCompatibleBehaviorTests(unittest.TestCase):
+    def test_reward_process_emits_charger_access_bonuses_when_route_knowledge_improves(self):
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor()
+        prep.step_no = 2
+        prep.current_mode = prep.MODE_HARVEST
+        prep.cleaned_this_step = 0
+        prep.new_explored_cells = 3
+        prep.local_frontier_density = 0.2
+        prep.nearest_npc_dist = 20.0
+        prep.battery = 300
+        prep.battery_max = 340
+        prep.charge_count = 0
+        prep.just_charged = 0.0
+        prep.future_recoverability_score = 1.0
+        prep.path_cross_count_50 = 1
+        prep.coverage_efficiency_20 = 0.95
+        prep.same_region_streak = 1
+        prep.recent_unique_cells_20 = 20
+        prep._last_action = -1
+        prep._prev_all_charger_known_path_count = 0.0
+        prep._prev_unknown_on_target_path_ratio = 0.75
+        prep._prev_planner_best_target_route_diversity = 0.0
+
+        guidance = {
+            "slack": 24.0,
+            "margin": 24.0,
+            "all_charger_known_path_count": 1.0,
+            "unknown_path_ratio": 0.20,
+            "planner_best_target_route_diversity": 2.0,
+            "target_reliable": True,
+            "anchor_reliable": True,
+            "on_charger": False,
+            "suggested_action": None,
+        }
+        prep._get_guidance = lambda: guidance
+        prep._get_teacher_guidance = lambda: None
+
+        _, components = prep.reward_process()
+
+        self.assertGreater(components["charger_access_discovery_bonus"], 0.0)
+        self.assertGreaterEqual(components["charger_access_probe_bonus"], 0.0)
+
+    def test_reward_process_emits_probe_bonus_when_route_knowledge_is_weak(self):
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor()
+        prep.step_no = 2
+        prep.current_mode = prep.MODE_CONTRACT
+        prep.cleaned_this_step = 0
+        prep.new_explored_cells = 4
+        prep.local_frontier_density = 0.2
+        prep.nearest_npc_dist = 20.0
+        prep.battery = 280
+        prep.battery_max = 340
+        prep.charge_count = 0
+        prep.just_charged = 0.0
+        prep.future_recoverability_score = 1.0
+        prep.path_cross_count_50 = 1
+        prep.coverage_efficiency_20 = 0.95
+        prep.same_region_streak = 1
+        prep.recent_unique_cells_20 = 20
+        prep._last_action = -1
+        prep._prev_all_charger_known_path_count = 0.0
+        prep._prev_unknown_on_target_path_ratio = 0.8
+        prep._prev_planner_best_target_route_diversity = 0.0
+
+        guidance = {
+            "slack": 18.0,
+            "margin": 18.0,
+            "all_charger_known_path_count": 1.0,
+            "planner_topk_reachable_count": 0.0,
+            "unknown_path_ratio": 0.55,
+            "planner_best_target_route_diversity": 0.0,
+            "target_reliable": False,
+            "anchor_reliable": False,
+            "on_charger": False,
+            "suggested_action": None,
+        }
+        prep._get_guidance = lambda: guidance
+        prep._get_teacher_guidance = lambda: None
+
+        _, components = prep.reward_process()
+
+        self.assertGreater(components["charger_access_probe_bonus"], 0.0)
+
+    def test_reward_process_penalizes_skipping_needed_charge_when_critical_even_away_from_charger(self):
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor()
+        prep.step_no = 2
+        prep.current_mode = prep.MODE_HARVEST
+        prep.cleaned_this_step = 0
+        prep.new_explored_cells = 0
+        prep.local_frontier_density = 0.05
+        prep.nearest_npc_dist = 20.0
+        prep.nearest_charger_dist = 5.0
+        prep.battery = 20
+        prep.battery_max = 200
+        prep.charge_count = 0
+        prep.just_charged = 0.0
+        prep.future_recoverability_score = -0.2
+        prep.path_cross_count_50 = 1
+        prep.coverage_efficiency_20 = 0.95
+        prep.same_region_streak = 1
+        prep.recent_unique_cells_20 = 20
+        prep._last_action = -1
+        prep._prev_all_charger_known_path_count = 1.0
+        prep._prev_unknown_on_target_path_ratio = 0.2
+        prep._prev_planner_best_target_route_diversity = 1.0
+        prep._last_target_distance = 10.0
+        prep.current_target_dist = 10.0
+        prep.anchor_return_dist = 10.0
+        prep._last_astar_dist = 10.0
+        prep._astar_dist = 10.0
+
+        guidance = {
+            "slack": -6.0,
+            "margin": -2.0,
+            "all_charger_known_path_count": 1.0,
+            "planner_topk_reachable_count": 1.0,
+            "unknown_path_ratio": 0.15,
+            "planner_best_target_route_diversity": 1.0,
+            "target_reliable": True,
+            "anchor_reliable": True,
+            "on_charger": False,
+            "suggested_action": 0,
+        }
+        prep._get_guidance = lambda: guidance
+        prep._get_teacher_guidance = lambda: None
+
+        _, components = prep.reward_process()
+
+        self.assertLess(components["skip_needed_charge_penalty"], 0.0)
+
+    def test_reward_process_adds_continuous_return_progress_shaping_when_return_is_reliable(self):
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor()
+        prep.step_no = 2
+        prep.current_mode = prep.MODE_RETURN
+        prep.cleaned_this_step = 0
+        prep.new_explored_cells = 0
+        prep.local_frontier_density = 0.05
+        prep.nearest_npc_dist = 20.0
+        prep.nearest_charger_dist = 4.0
+        prep.last_nearest_charger_dist = 7.0
+        prep.battery = 36
+        prep.battery_max = 200
+        prep.charge_count = 0
+        prep.just_charged = 0.0
+        prep.future_recoverability_score = -0.1
+        prep.path_cross_count_50 = 1
+        prep.coverage_efficiency_20 = 0.95
+        prep.same_region_streak = 1
+        prep.recent_unique_cells_20 = 20
+        prep._last_action = 2
+        prep._prev_all_charger_known_path_count = 1.0
+        prep._prev_unknown_on_target_path_ratio = 0.12
+        prep._prev_planner_best_target_route_diversity = 1.0
+        prep._last_target_distance = 9.0
+        prep.current_target_dist = 6.0
+        prep.anchor_return_dist = 9.0
+        prep.last_charger_slack = -2.0
+        prep.charger_slack = 4.0
+        prep._last_astar_dist = 9.0
+        prep._astar_dist = 6.0
+
+        guidance = {
+            "slack": 4.0,
+            "margin": 2.0,
+            "all_charger_known_path_count": 1.0,
+            "planner_topk_reachable_count": 1.0,
+            "unknown_path_ratio": 0.10,
+            "planner_best_target_route_diversity": 1.0,
+            "target_reliable": True,
+            "anchor_reliable": True,
+            "return_action_reliable": True,
+            "on_charger": False,
+            "suggested_action": 2,
+        }
+        prep._get_guidance = lambda: guidance
+        prep._get_teacher_guidance = lambda: None
+
+        _, components = prep.reward_process()
+
+        self.assertGreater(components["return_progress_shaping_bonus"], 0.0)
+        self.assertAlmostEqual(components["high_need_return_stall_penalty"], 0.0, places=6)
+
+    def test_reward_process_penalizes_high_need_return_stall_without_progress(self):
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor()
+        prep.step_no = 2
+        prep.current_mode = prep.MODE_RETURN
+        prep.cleaned_this_step = 0
+        prep.new_explored_cells = 0
+        prep.local_frontier_density = 0.0
+        prep.nearest_npc_dist = 20.0
+        prep.nearest_charger_dist = 9.0
+        prep.last_nearest_charger_dist = 6.0
+        prep.battery = 18
+        prep.battery_max = 200
+        prep.charge_count = 0
+        prep.just_charged = 0.0
+        prep.future_recoverability_score = -0.25
+        prep.path_cross_count_50 = 1
+        prep.coverage_efficiency_20 = 0.95
+        prep.same_region_streak = 1
+        prep.recent_unique_cells_20 = 20
+        prep._last_action = 0
+        prep._prev_all_charger_known_path_count = 1.0
+        prep._prev_unknown_on_target_path_ratio = 0.15
+        prep._prev_planner_best_target_route_diversity = 1.0
+        prep._last_target_distance = 8.0
+        prep.current_target_dist = 8.5
+        prep.anchor_return_dist = 8.0
+        prep.last_charger_slack = -4.0
+        prep.charger_slack = -8.0
+        prep._last_astar_dist = 8.0
+        prep._astar_dist = 8.5
+
+        guidance = {
+            "slack": -8.0,
+            "margin": -3.0,
+            "all_charger_known_path_count": 1.0,
+            "planner_topk_reachable_count": 1.0,
+            "unknown_path_ratio": 0.12,
+            "planner_best_target_route_diversity": 1.0,
+            "target_reliable": True,
+            "anchor_reliable": True,
+            "return_action_reliable": True,
+            "on_charger": False,
+            "suggested_action": 3,
+        }
+        prep._get_guidance = lambda: guidance
+        prep._get_teacher_guidance = lambda: None
+
+        _, components = prep.reward_process()
+
+        self.assertLess(components["high_need_return_stall_penalty"], 0.0)
+        self.assertAlmostEqual(components["return_progress_shaping_bonus"], 0.0, places=6)
+
+    def test_reward_process_keeps_route_and_target_masks_zero_when_unreliable_under_low_battery(self):
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor()
+        prep.current_mode = prep.MODE_RETURN
+        prep.cleaned_this_step = 0
+        prep.new_explored_cells = 0
+        prep.local_frontier_density = 0.0
+        prep.nearest_npc_dist = 20.0
+        prep.nearest_charger_dist = 8.0
+        prep.last_nearest_charger_dist = 8.0
+        prep.battery = 20
+        prep.battery_max = 200
+        prep.charge_count = 0
+        prep.just_charged = 0.0
+        prep.future_recoverability_score = -0.2
+        prep.path_cross_count_50 = 0
+        prep.coverage_efficiency_20 = 0.9
+        prep.same_region_streak = 1
+        prep.recent_unique_cells_20 = 5
+        prep._last_action = 0
+        prep._prev_all_charger_known_path_count = 0.0
+        prep._prev_unknown_on_target_path_ratio = 0.3
+        prep._prev_planner_best_target_route_diversity = 0.0
+        prep._last_target_distance = 10.0
+        prep.current_target_dist = 10.0
+        prep.anchor_return_dist = 10.0
+        prep.last_charger_slack = -3.0
+        prep.charger_slack = -6.0
+        prep._last_astar_dist = 10.0
+        prep._astar_dist = 10.0
+
+        guidance = {
+            "slack": -6.0,
+            "margin": -2.0,
+            "all_charger_known_path_count": 0.0,
+            "planner_topk_reachable_count": 0.0,
+            "unknown_path_ratio": 0.3,
+            "planner_best_target_route_diversity": 0.0,
+            "target_reliable": False,
+            "anchor_reliable": False,
+            "return_action_reliable": True,
+            "on_charger": False,
+            "suggested_action": 3,
+        }
+        prep._get_guidance = lambda: guidance
+        prep._get_teacher_guidance = lambda: {
+            "route_mode": "return",
+            "route_anchor": (0, 0),
+            "target": (0, 0),
+            "mode_teacher_mask": 1.0,
+            "route_anchor_teacher_mask": 0.0,
+            "target_teacher_mask": 0.0,
+            "return_action": 3,
+            "return_action_teacher_mask": 1.0,
+        }
+
+        _, components = prep.reward_process()
+
+        self.assertAlmostEqual(components["route_anchor_teacher_mask"], 0.0, places=6)
+        self.assertAlmostEqual(components["target_teacher_mask"], 0.0, places=6)
+        self.assertGreaterEqual(components["return_action_teacher_mask"], 0.8)
+
     def test_reward_process_applies_contextual_cleaning_scale_and_margin_pressure(self):
         from agent_ppo.feature.preprocessor import Preprocessor
 
@@ -288,6 +596,7 @@ class LtsppoResumeCompatibleBehaviorTests(unittest.TestCase):
             "charger_target": (40, 40),
             "target_gap": 6.0,
             "suggested_action": 1,
+            "return_action_reliable": True,
             "target_stable": True,
             "all_charger_known_path_count": 1,
         }
@@ -301,6 +610,43 @@ class LtsppoResumeCompatibleBehaviorTests(unittest.TestCase):
         self.assertLess(components["missed_charge_penalty"], 0.0)
         self.assertLess(components["planner_alignment"], 0.0)
         self.assertLess(components["sticky_anchor_penalty"], 0.0)
+
+    def test_expert_teacher_guidance_keeps_return_action_only_signal(self):
+        from agent_ppo.feature.expert import ExpertPolicy
+
+        expert = ExpertPolicy()
+        signal = {
+            "target_reliable": False,
+            "mode_reliable": False,
+            "anchor_reliable": False,
+            "return_action_reliable": True,
+            "battery_ratio": 0.18,
+            "slack": 4.0,
+            "on_charger": False,
+            "margin": 4.0,
+            "unknown_path_ratio": 0.20,
+            "all_charger_known_path_count": 1,
+            "min_npc_dist": 10.0,
+            "charger_target": (12, 12),
+            "suggested_action": 3,
+        }
+        prep = type(
+            "PrepStub",
+            (),
+            {
+                "local_dirt_density": 0.0,
+                "future_recoverability_score": 0.1,
+                "route_contract_pressure": 0.0,
+                "steps_since_charge": 50,
+                "total_charger": 2,
+            },
+        )()
+
+        guidance = expert.get_teacher_guidance(prep, signal=signal)
+
+        self.assertIsNotNone(guidance)
+        self.assertEqual(guidance["return_action"], 3)
+        self.assertGreater(guidance["return_action_teacher_mask"], 0.0)
 
     def test_route_anchor_switches_when_better_target_is_compelling(self):
         from agent_ppo.feature.preprocessor import Preprocessor

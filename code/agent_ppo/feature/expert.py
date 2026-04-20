@@ -260,6 +260,8 @@ class ExpertPolicy:
         best_astar_idx = 0
         selected_target_rank = 0
         all_known_path_count = 0
+        total_known_route_count = 0
+        topk_reachable_count = 0
         for idx, cand in enumerate(charger_candidates, start=1):
             if idx == 1:
                 best_astar_idx = idx
@@ -269,11 +271,32 @@ class ExpertPolicy:
                 best_cheb_idx = idx
             if cand.get("reachable", False) and np.isfinite(float(cand.get("astar_dist", float("inf")))):
                 all_known_path_count += 1
+                topk_reachable_count += 1
+            total_known_route_count += int(max(float(cand.get("route_diversity", 0.0)), 0.0))
             if charger_target is not None and tuple(cand.get("center", ())) == tuple(charger_target):
                 selected_target_rank = idx
 
         if best_cheb_idx == 0 and charger_candidates:
             best_cheb_idx = 1
+
+        best_vs_second_gap = self._target_gap_from_candidates(charger_candidates)
+        best_family_slacks = [
+            float(cand.get("best_slack", float("-inf")))
+            for cand in charger_candidates
+            if bool(cand.get("reachable", False))
+        ]
+        multi_route_recoverability = float(np.clip(max(best_family_slacks), -1.0, 1.0)) if best_family_slacks else -1.0
+        best_target_tangle_cost = float(best_candidate.get("best_tangle_cost", 0.0)) if best_candidate else 0.0
+        best_target_edge_break_cost = float(best_candidate.get("best_edge_break_cost", 0.0)) if best_candidate else 0.0
+        best_target_region_fragment_cost = float(best_candidate.get("best_region_fragment_cost", 0.0)) if best_candidate else 0.0
+        best_target_route_diversity = float(best_candidate.get("route_diversity", 0.0)) if best_candidate else 0.0
+        current_task_continuity_cost = float(
+            np.clip(
+                0.55 * best_target_edge_break_cost + 0.45 * best_target_region_fragment_cost,
+                0.0,
+                1.0,
+            )
+        )
 
         return {
             "battery_ratio": battery_ratio,
@@ -297,9 +320,21 @@ class ExpertPolicy:
             "fallback_to_chebyshev": bool(path_source == "chebyshev"),
             "charger_candidates": charger_candidates,
             "all_charger_known_path_count": int(all_known_path_count),
+            "planner_topk_reachable_count": int(topk_reachable_count),
+            "planner_known_route_count_total": int(total_known_route_count),
             "best_astar_charger_idx": int(best_astar_idx),
             "best_cheb_charger_idx": int(best_cheb_idx),
             "selected_target_rank": int(selected_target_rank if selected_target_rank > 0 else 1 if charger_candidates else 0),
+            "planner_best_target_best_cost": float(best_candidate.get("best_total_cost", float("inf"))) if best_candidate else float("inf"),
+            "planner_best_target_safe_cost": float(best_candidate.get("best_safe_cost", float("inf"))) if best_candidate else float("inf"),
+            "planner_best_target_unknown_ratio": float(best_candidate.get("unknown_path_ratio", 1.0)) if best_candidate else 1.0,
+            "planner_best_target_route_diversity": best_target_route_diversity,
+            "planner_best_vs_second_gap": float(best_vs_second_gap),
+            "planner_multi_route_recoverability": multi_route_recoverability,
+            "planner_best_target_tangle_cost": best_target_tangle_cost,
+            "planner_best_target_edge_break_cost": best_target_edge_break_cost,
+            "planner_best_target_region_fragment_cost": best_target_region_fragment_cost,
+            "planner_current_task_continuity_cost": current_task_continuity_cost,
             "target_reliable": bool(target_reliable),
             "anchor_reliable": bool(anchor_reliable),
             "mode_reliable": bool(mode_reliable),
@@ -318,7 +353,12 @@ class ExpertPolicy:
     def get_teacher_guidance(self, prep, legal_action=None, last_action=-1, signal=None):
         """Return optional teacher guidance payload for future mode/target supervision."""
         signal = signal or self.get_charger_signal(prep, legal_action, last_action)
-        if not signal["target_reliable"] and not signal["mode_reliable"]:
+        if not (
+            signal["target_reliable"]
+            or signal["mode_reliable"]
+            or signal["anchor_reliable"]
+            or signal["return_action_reliable"]
+        ):
             return None
 
         battery_ratio = signal["battery_ratio"]
@@ -580,9 +620,10 @@ class ExpertPolicy:
     # Cost-map construction
     # ------------------------------------------------------------------
 
-    def _build_cost_map(self, prep, npc_weight=1.0):
+    def _build_cost_map(self, prep, npc_weight=1.0, unexplored_cost=None, blocked_penalty=4.0):
         G = self.GRID
-        cost = np.full((G, G), self._UNEXPLORED_COST, dtype=np.float32)
+        base_unexplored_cost = self._UNEXPLORED_COST if unexplored_cost is None else float(unexplored_cost)
+        cost = np.full((G, G), base_unexplored_cost, dtype=np.float32)
 
         explored = prep.explored_map >= 0.5
         base_passable = explored & (prep.passable_map >= 0.5)
@@ -595,7 +636,7 @@ class ExpertPolicy:
 
         for (bx, bz), ttl in self.blocked_cells.items():
             if 0 <= bx < G and 0 <= bz < G and cost[bx, bz] < self._INF_COST:
-                cost[bx, bz] += 4.0
+                cost[bx, bz] += float(blocked_penalty)
 
         if npc_weight > 0:
             for npc in prep._npcs:
@@ -959,6 +1000,203 @@ class ExpertPolicy:
             return path, dist, "astar_relaxed"
         return [], float("inf"), "chebyshev"
 
+    def _plan_route_family(self, prep, charger, family_kind, primary_cost_map=None, relaxed_cost_map=None):
+        if family_kind == "best_cost_route":
+            return self._plan_to_specific_charger(
+                prep,
+                charger,
+                primary_cost_map=primary_cost_map,
+                relaxed_cost_map=relaxed_cost_map,
+            )
+
+        if family_kind == "low_unknown_route":
+            low_unknown_primary = self._build_cost_map(prep, npc_weight=0.8, unexplored_cost=3.2, blocked_penalty=4.5)
+            low_unknown_relaxed = self._build_cost_map(prep, npc_weight=0.2, unexplored_cost=2.6, blocked_penalty=4.5)
+            return self._plan_to_specific_charger(
+                prep,
+                charger,
+                primary_cost_map=low_unknown_primary,
+                relaxed_cost_map=low_unknown_relaxed,
+            )
+
+        safe_primary = self._build_cost_map(prep, npc_weight=1.6, unexplored_cost=2.0, blocked_penalty=6.0)
+        safe_relaxed = self._build_cost_map(prep, npc_weight=0.8, unexplored_cost=1.8, blocked_penalty=6.0)
+        return self._plan_to_specific_charger(
+            prep,
+            charger,
+            primary_cost_map=safe_primary,
+            relaxed_cost_map=safe_relaxed,
+        )
+
+    def _heading_conflict(self, prep, path):
+        if not path or len(path) < 2:
+            return 0.0
+        if len(getattr(prep, "_trajectory", [])) < 3:
+            return 0.0
+
+        prev = prep._trajectory[-2]
+        cur = prep._trajectory[-1]
+        recent_delta = (
+            int(np.clip(cur[0] - prev[0], -1, 1)),
+            int(np.clip(cur[1] - prev[1], -1, 1)),
+        )
+        first_step = path[1]
+        hx, hz = prep.cur_pos
+        return_delta = (
+            int(np.clip(first_step[0] - hx, -1, 1)),
+            int(np.clip(first_step[1] - hz, -1, 1)),
+        )
+        if recent_delta == (0, 0) or return_delta == (0, 0):
+            return 0.0
+        if recent_delta == return_delta:
+            return 0.0
+        if recent_delta == (-return_delta[0], -return_delta[1]):
+            return 1.0
+        return 0.5
+
+    def _route_separation(self, prep, path, horizon=6):
+        if not path or len(path) < 2:
+            return 0.0
+        hx, hz = prep.cur_pos
+        local_task_value = (
+            0.45 * float(np.clip(getattr(prep, "local_dirt_density", 0.0), 0.0, 1.0))
+            + 0.25 * float(np.clip(float(getattr(prep, "dirty_adjacent", 0.0)) / 4.0, 0.0, 1.0))
+            + 0.20 * float(np.clip(getattr(prep, "local_frontier_density", 0.0), 0.0, 1.0))
+            + 0.10 * float(np.clip(float(getattr(prep, "new_explored_cells", 0.0)) / 6.0, 0.0, 1.0))
+        )
+        if local_task_value <= 0.0:
+            return 0.0
+
+        leave_step = horizon
+        for idx, (px, pz) in enumerate(path[1 : horizon + 1], start=1):
+            if max(abs(px - hx), abs(pz - hz)) > 2:
+                leave_step = idx
+                break
+        route_separation = 1.0 - float(leave_step - 1) / max(float(horizon), 1.0)
+        return float(np.clip(route_separation, 0.0, 1.0))
+
+    def _summarize_route_family(self, prep, path, astar_dist, path_source, family_kind):
+        reachable = bool(path) and np.isfinite(astar_dist)
+        unknown_ratio = self._unknown_path_ratio(prep, path) if reachable else 1.0
+        slack = self._estimate_slack(prep, astar_dist)
+        cost_length = float(astar_dist) / max(float(self.GRID), 1.0) if reachable else 1.0
+        cost_unknown = float(unknown_ratio)
+
+        path_cells = path[1:] if len(path) > 1 else []
+        if reachable and path_cells:
+            revisit_mean = float(
+                np.mean(
+                    [
+                        float(np.clip(prep.visit_count[x, z] / 6.0, 0.0, 1.0))
+                        for x, z in path_cells
+                        if 0 <= x < self.GRID and 0 <= z < self.GRID
+                    ]
+                )
+            )
+            safety_mean = float(
+                np.mean(
+                    [
+                        float(np.clip(prep.npc_risk_map[x, z], 0.0, 1.0))
+                        for x, z in path_cells
+                        if 0 <= x < self.GRID and 0 <= z < self.GRID
+                    ]
+                )
+            )
+        else:
+            revisit_mean = 1.0 if not reachable else 0.0
+            safety_mean = 1.0 if not reachable else 0.0
+
+        task_interrupt = (
+            0.45 * float(np.clip(getattr(prep, "local_dirt_density", 0.0), 0.0, 1.0))
+            + 0.25 * float(np.clip(float(getattr(prep, "dirty_adjacent", 0.0)) / 4.0, 0.0, 1.0))
+            + 0.20 * float(np.clip(getattr(prep, "local_frontier_density", 0.0), 0.0, 1.0))
+            + 0.10 * float(np.clip(float(getattr(prep, "new_explored_cells", 0.0)) / 6.0, 0.0, 1.0))
+        )
+        if not reachable:
+            task_interrupt = 1.0
+
+        loop_proxy = float(
+            np.clip(
+                0.5 * float(np.clip(float(getattr(prep, "same_region_streak", 0.0)) / 8.0, 0.0, 1.0))
+                + 0.5 * (
+                    1.0 - float(np.clip(float(getattr(prep, "recent_unique_cells_20", 0.0)) / 20.0, 0.0, 1.0))
+                ),
+                0.0,
+                1.0,
+            )
+        )
+        cost_tangle = float(
+            np.clip(
+                0.50 * float(np.clip(float(getattr(prep, "path_cross_count_50", 0.0)) / 10.0, 0.0, 1.0))
+                + 0.30 * (1.0 - float(np.clip(float(getattr(prep, "coverage_efficiency_20", 1.0)), 0.0, 1.0)))
+                + 0.20 * loop_proxy,
+                0.0,
+                1.0,
+            )
+        )
+        cost_edge_break = float(
+            np.clip(float(np.clip(getattr(prep, "local_frontier_density", 0.0), 0.0, 1.0)) * self._heading_conflict(prep, path), 0.0, 1.0)
+        )
+        cost_region_fragment = float(np.clip(task_interrupt * self._route_separation(prep, path), 0.0, 1.0))
+        slack_risk = float(np.clip(-float(slack) / 12.0, 0.0, 1.0)) if reachable else 1.0
+
+        state_gate = 1.0
+        battery_ratio = float(getattr(prep, "battery", 0.0)) / max(float(getattr(prep, "battery_max", 1.0)), 1.0)
+        if battery_ratio <= float(getattr(Config, "RETURN_BATTERY_RATIO", 0.18)):
+            state_gate = 0.0
+        elif battery_ratio <= float(getattr(Config, "CONTRACT_BATTERY_RATIO", 0.28)):
+            state_gate = 0.4
+
+        weighted_tangle = cost_tangle * state_gate
+        weighted_edge_break = cost_edge_break * state_gate
+        weighted_region_fragment = cost_region_fragment * state_gate
+
+        cost_total = (
+            1.00 * cost_length
+            + 0.60 * slack_risk
+            + 0.35 * cost_unknown
+            + 0.25 * safety_mean
+            + 0.18 * revisit_mean
+            + 0.12 * task_interrupt
+            + 0.08 * weighted_tangle
+            + 0.05 * weighted_edge_break
+            + 0.04 * weighted_region_fragment
+        )
+        if not reachable:
+            cost_total += float(getattr(Config, "TARGET_SELECT_UNREACHABLE_PENALTY", 18.0))
+
+        return {
+            "family_kind": family_kind,
+            "path": list(path),
+            "path_source": str(path_source),
+            "reachable": bool(reachable),
+            "astar_dist": float(astar_dist if np.isfinite(astar_dist) else float("inf")),
+            "unknown_ratio": float(cost_unknown),
+            "slack": float(slack),
+            "cost_total": float(cost_total),
+            "cost_length": float(cost_length),
+            "cost_unknown": float(cost_unknown),
+            "cost_safety": float(safety_mean),
+            "cost_revisit": float(revisit_mean),
+            "cost_task_interrupt": float(task_interrupt),
+            "cost_tangle": float(weighted_tangle),
+            "cost_edge_break": float(weighted_edge_break),
+            "cost_region_fragment": float(weighted_region_fragment),
+        }
+
+    def _build_route_family_set(self, prep, charger, primary_cost_map=None, relaxed_cost_map=None):
+        families = []
+        for family_kind in ("best_cost_route", "low_unknown_route", "safe_route"):
+            path, astar_dist, path_source = self._plan_route_family(
+                prep,
+                charger,
+                family_kind,
+                primary_cost_map=primary_cost_map,
+                relaxed_cost_map=relaxed_cost_map,
+            )
+            families.append(self._summarize_route_family(prep, path, astar_dist, path_source, family_kind))
+        return families
+
     def _evaluate_charger_candidates(self, prep):
         hx, hz = prep.cur_pos
         if not self._charger_list:
@@ -999,25 +1237,55 @@ class ExpertPolicy:
             center = (charger[0], charger[1])
             cheb_dist = float(max(abs(hx - charger[0]) - charger[2], abs(hz - charger[1]) - charger[3], 0))
             if center in known_centers:
-                path, astar_dist, path_source = self._plan_to_specific_charger(
+                route_families = self._build_route_family_set(
                     prep,
                     charger,
                     primary_cost_map=primary_cost_map,
                     relaxed_cost_map=relaxed_cost_map,
                 )
-                reachable = bool(path) and np.isfinite(astar_dist)
-                unknown_ratio = self._unknown_path_ratio(prep, path)
+                reachable_families = [family for family in route_families if family["reachable"]]
+                best_family = min(reachable_families, key=lambda item: item["cost_total"]) if reachable_families else route_families[0]
+                safe_family = min(reachable_families, key=lambda item: item["cost_safety"]) if reachable_families else route_families[-1]
+                low_unknown_family = min(reachable_families, key=lambda item: item["unknown_ratio"]) if reachable_families else route_families[1]
+                path = list(best_family.get("path", []))
+                astar_dist = float(best_family.get("astar_dist", float("inf")))
+                path_source = str(best_family.get("path_source", "chebyshev"))
+                reachable = bool(best_family.get("reachable", False))
+                unknown_ratio = float(best_family.get("unknown_ratio", 1.0))
+                route_diversity = float(len(reachable_families))
+                best_total_cost = float(best_family.get("cost_total", float("inf")))
+                best_safe_cost = float(safe_family.get("cost_total", float("inf")))
+                best_tangle_cost = float(best_family.get("cost_tangle", 0.0))
+                best_edge_break_cost = float(best_family.get("cost_edge_break", 0.0))
+                best_region_fragment_cost = float(best_family.get("cost_region_fragment", 0.0))
+                best_slack = float(max((family.get("slack", float("-inf")) for family in reachable_families), default=float("-inf")))
             else:
+                route_families = []
                 path = []
                 astar_dist = cheb_dist
                 path_source = "chebyshev"
                 reachable = False
                 unknown_ratio = 1.0
+                route_diversity = 0.0
+                best_total_cost = float(
+                    cheb_dist
+                    + float(getattr(Config, "TARGET_SELECT_UNKNOWN_COST", 10.0)) * unknown_ratio
+                    + float(getattr(Config, "TARGET_SELECT_UNREACHABLE_PENALTY", 18.0))
+                )
+                best_safe_cost = best_total_cost
+                best_tangle_cost = 1.0
+                best_edge_break_cost = 1.0
+                best_region_fragment_cost = 1.0
+                best_slack = float("-inf")
 
-            score = float(
-                astar_dist
-                + float(getattr(Config, "TARGET_SELECT_UNKNOWN_COST", 10.0)) * unknown_ratio
-                + (0.0 if reachable else float(getattr(Config, "TARGET_SELECT_UNREACHABLE_PENALTY", 18.0)))
+            selection_score = float(
+                1.00 * best_total_cost
+                + 0.25 * best_safe_cost
+                + 0.20 * unknown_ratio
+                + 0.08 * best_tangle_cost
+                + 0.05 * best_edge_break_cost
+                + 0.04 * best_region_fragment_cost
+                - 0.12 * max(route_diversity - 1.0, 0.0)
             )
             candidates.append(
                 {
@@ -1027,9 +1295,17 @@ class ExpertPolicy:
                     "dist": cheb_dist,
                     "reachable": bool(reachable),
                     "unknown_path_ratio": float(unknown_ratio),
-                    "score": score,
+                    "score": selection_score,
                     "path_source": path_source,
                     "is_nearest_cheb": bool(center == nearest_cheb_center),
+                    "route_families": route_families,
+                    "route_diversity": route_diversity,
+                    "best_total_cost": best_total_cost,
+                    "best_safe_cost": best_safe_cost,
+                    "best_tangle_cost": best_tangle_cost,
+                    "best_edge_break_cost": best_edge_break_cost,
+                    "best_region_fragment_cost": best_region_fragment_cost,
+                    "best_slack": best_slack,
                 }
             )
 
@@ -1046,7 +1322,7 @@ class ExpertPolicy:
             reachable = bool(path) and is_target
             unknown_ratio = self._unknown_path_ratio(prep, path) if reachable else 1.0
             astar_dist = float(dist if reachable and np.isfinite(dist) else cheb_dist)
-            score = float(
+            base_cost = float(
                 astar_dist
                 + float(getattr(Config, "TARGET_SELECT_UNKNOWN_COST", 10.0)) * unknown_ratio
                 + (0.0 if reachable else float(getattr(Config, "TARGET_SELECT_UNREACHABLE_PENALTY", 18.0)))
@@ -1059,9 +1335,17 @@ class ExpertPolicy:
                     "dist": cheb_dist,
                     "reachable": bool(reachable),
                     "unknown_path_ratio": float(unknown_ratio),
-                    "score": score,
+                    "score": base_cost,
                     "path_source": "astar" if reachable else "chebyshev",
                     "is_nearest_cheb": bool(idx == 0),
+                    "route_families": [],
+                    "route_diversity": float(1.0 if reachable else 0.0),
+                    "best_total_cost": base_cost,
+                    "best_safe_cost": base_cost,
+                    "best_tangle_cost": 0.0 if reachable else 1.0,
+                    "best_edge_break_cost": 0.0 if reachable else 1.0,
+                    "best_region_fragment_cost": 0.0 if reachable else 1.0,
+                    "best_slack": float(self._estimate_slack(prep, astar_dist) if reachable else float("-inf")),
                 }
             )
         candidates.sort(key=lambda item: (not item["reachable"], item["score"], item["dist"]))

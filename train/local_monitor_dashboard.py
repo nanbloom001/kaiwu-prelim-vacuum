@@ -8,6 +8,7 @@ library and the Prometheus-compatible API exposed by GreptimeDB.
 
 from __future__ import annotations
 
+import ast
 import argparse
 import collections
 import html
@@ -15,6 +16,7 @@ import json
 import math
 import os
 import re
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -25,15 +27,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterable
 
-
 DEFAULT_PROM_BASE = "http://127.0.0.1:4000/v1/prometheus"
 BASE_DIR = Path(__file__).resolve().parent
 REPO_DIR = BASE_DIR.parent
 CODE_DIR = REPO_DIR / "code"
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+from agent_ppo.workflow.state_layout import runtime_state_layout
+
 AISRV_LOG_DIR = BASE_DIR / "log" / "aisrv"
 LEARNER_LOG_DIR = BASE_DIR / "log" / "learner"
-RESUME_META_PATH = CODE_DIR / "model.ckpt-resume.meta.json"
-RESUME_SNAPSHOT_DIR = CODE_DIR / "resume_snapshots"
+STATE_LAYOUT = runtime_state_layout(CODE_DIR)
+CURRICULUM_STATE_PATH = STATE_LAYOUT.current.curriculum_state_path
+CURRICULUM_SIGNAL_DIR = STATE_LAYOUT.current.curriculum_signal_dir
 OFFICIAL_MONITOR_URL = (
     "http://127.0.0.1:11000/p/v5/exp/monitor"
     "?domain_id=1&exp_id=1&task_uuid=1&task_id=0&platform=competition_stage"
@@ -47,6 +53,8 @@ GAMEOVER_PATTERN = re.compile(
 CHECKPOINT_PATTERN = re.compile(r"checkpoint_id (?P<ckpt>\d+) success")
 LEARNER_STEP_PATTERN = re.compile(r"global step is (?P<step>\d+)")
 LEARNER_SAVE_PATTERN = re.compile(r"model\.ckpt-(?P<ckpt>\d+)\.pkl successfully")
+TRAINING_METRICS_PATTERN = re.compile(r"training_metrics:\s*(?P<payload>\{.*\})")
+SOURCE_ID_PATTERN = re.compile(r"aisrv-(?P<idx>\d+)-pid-(?P<pid>\d+)")
 
 
 @dataclass(frozen=True)
@@ -60,6 +68,9 @@ class MetricSpec:
 SUMMARY_METRICS: tuple[MetricSpec, ...] = (
     MetricSpec("Train Global Step", "sum(kaiwu_train_global_step{})", decimals=0),
     MetricSpec("Episode Count", "sum(kaiwu_episode_cnt{})", decimals=0),
+    MetricSpec("Sample Receive Count", "sum(kaiwu_sample_receive_cnt{})", decimals=0),
+    MetricSpec("Predict Succ Count", "sum(kaiwu_predict_succ_cnt{})", decimals=0),
+    MetricSpec("Load Model Succ Count", "sum(kaiwu_load_model_succ_cnt{})", decimals=0),
     MetricSpec("Clean Score", "avg(kaiwu_clean_score{})"),
     MetricSpec("Charge Count", "avg(kaiwu_charge_count{})"),
     MetricSpec("Remaining Charge", "avg(kaiwu_remaining_charge{})"),
@@ -176,20 +187,34 @@ def parse_resume_info() -> dict[str, str]:
         "saved_at": "n/a",
         "latest_snapshot": "n/a",
     }
-    if RESUME_META_PATH.exists():
+    state = parse_curriculum_state()
+    session_id = str(state.get("source_session_id") or "").strip()
+    run_layout = STATE_LAYOUT.for_run(session_id) if session_id else None
+    resume_meta_path = run_layout.resume_latest_meta_path if run_layout else None
+    resume_snapshot_dir = run_layout.resume_snapshots_dir if run_layout else None
+    if resume_meta_path and resume_meta_path.exists():
         try:
-            payload = json.loads(RESUME_META_PATH.read_text(encoding="utf-8"))
+            payload = json.loads(resume_meta_path.read_text(encoding="utf-8"))
             info["trigger"] = str(payload.get("trigger", "n/a"))
             info["episode_cnt"] = str(payload.get("episode_cnt", "n/a"))
             info["clean_score"] = str(payload.get("clean_score", "n/a"))
             info["saved_at"] = str(payload.get("saved_at", "n/a"))
         except json.JSONDecodeError:
             info["saved_at"] = "meta parse failed"
-    if RESUME_SNAPSHOT_DIR.exists():
-        snapshots = sorted(RESUME_SNAPSHOT_DIR.glob("*.pkl"), key=lambda item: item.stat().st_mtime, reverse=True)
+    if resume_snapshot_dir and resume_snapshot_dir.exists():
+        snapshots = sorted(resume_snapshot_dir.glob("*.pkl"), key=lambda item: item.stat().st_mtime, reverse=True)
         if snapshots:
             info["latest_snapshot"] = snapshots[0].name
     return info
+
+
+def parse_curriculum_state() -> dict:
+    if not CURRICULUM_STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(CURRICULUM_STATE_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
 
 
 def parse_learner_info() -> dict[str, str]:
@@ -214,6 +239,106 @@ def parse_learner_info() -> dict[str, str]:
         if info["global_step"] != "n/a" and info["latest_ckpt"] != "n/a":
             break
     return info
+
+
+def _extract_training_metrics_basic(line: str) -> dict[str, float] | None:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    message = str(payload.get("message") or "")
+    match = TRAINING_METRICS_PATTERN.search(message)
+    if not match:
+        return None
+    try:
+        metric_payload = ast.literal_eval(match.group("payload"))
+    except (ValueError, SyntaxError):
+        return None
+    basic = metric_payload.get("basic")
+    if not isinstance(basic, dict):
+        return None
+    return basic
+
+
+def _current_session_source_ids(session_id: str) -> list[str]:
+    if not session_id or not CURRICULUM_SIGNAL_DIR.exists():
+        return []
+    source_ids: set[str] = set()
+    for path in CURRICULUM_SIGNAL_DIR.glob("*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if str(payload.get("session_id") or "") != session_id:
+            continue
+        source_id = str(payload.get("source_id") or "").strip()
+        if source_id:
+            source_ids.add(source_id)
+    return sorted(source_ids)
+
+
+def parse_current_session_basic_counters(state: dict | None = None) -> dict[str, float | str]:
+    state = state or parse_curriculum_state()
+    session_id = str(state.get("source_session_id") or "").strip()
+    counters = {
+        "source_session_id": session_id or "n/a",
+        "episode_cnt": float(state.get("global_episode_count") or 0.0),
+        "sample_receive_cnt": 0.0,
+        "predict_succ_cnt": 0.0,
+        "load_model_succ_cnt": 0.0,
+        "sample_production_and_consumption_ratio": None,
+    }
+    ratios: list[float] = []
+    for source_id in _current_session_source_ids(session_id):
+        match = SOURCE_ID_PATTERN.search(source_id)
+        if not match:
+            continue
+        pid = match.group("pid")
+        log_files = sorted(
+            AISRV_LOG_DIR.glob(f"aisrv_kaiwu_rl_helper_pid{pid}_log_*"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        if not log_files:
+            continue
+        basic = None
+        for line in reversed(read_last_lines(log_files[0], 400)):
+            basic = _extract_training_metrics_basic(line)
+            if basic:
+                break
+        if not basic:
+            continue
+        counters["sample_receive_cnt"] += float(basic.get("sample_receive_cnt", 0.0) or 0.0)
+        counters["predict_succ_cnt"] += float(basic.get("predict_succ_cnt", 0.0) or 0.0)
+        counters["load_model_succ_cnt"] += float(basic.get("load_model_succ_cnt", 0.0) or 0.0)
+        try:
+            ratios.append(float(basic.get("sample_production_and_consumption_ratio", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            pass
+    if ratios:
+        counters["sample_production_and_consumption_ratio"] = sum(ratios) / len(ratios)
+    return counters
+
+
+def build_summary_overrides(client: PrometheusClient) -> dict[str, float | None]:
+    del client
+    state = parse_curriculum_state()
+    learner_info = parse_learner_info()
+    latest_metrics = state.get("last_global_metrics") or state.get("last_bootstrap_metrics") or {}
+
+    def _as_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "Train Global Step": _as_float(learner_info.get("global_step")),
+        "Clean Score": _as_float(latest_metrics.get("avg_clean_score")),
+        "Charge Count": _as_float(latest_metrics.get("avg_charge_count")),
+        "Remaining Charge": _as_float(latest_metrics.get("avg_remaining_charge")),
+        "Finished Steps": _as_float(latest_metrics.get("avg_finished_steps")),
+    }
 
 
 def parse_recent_episodes(limit: int = 12) -> tuple[list[dict[str, str]], str]:
@@ -359,10 +484,13 @@ def render_svg_chart(title: str, series: list[tuple[int, float]], decimals: int)
     )
 
 
-def render_summary_cards(client: PrometheusClient, metrics: Iterable[MetricSpec]) -> str:
+def render_summary_cards(client: PrometheusClient, metrics: Iterable[MetricSpec], overrides: dict[str, float | None] | None = None) -> str:
     cards = []
+    overrides = overrides or {}
     for metric in metrics:
-        value = client.instant_query(metric.query)
+        value = overrides.get(metric.title)
+        if value is None:
+            value = client.instant_query(metric.query)
         cards.append(
             '<div class="card">'
             f'<div class="card-title">{html.escape(metric.title)}</div>'
@@ -375,7 +503,9 @@ def render_summary_cards(client: PrometheusClient, metrics: Iterable[MetricSpec]
 def render_page(client: PrometheusClient, minutes: int, step: int, refresh_seconds: int) -> str:
     now_ts = int(time.time())
     start_ts = now_ts - minutes * 60
-    cards_html = render_summary_cards(client, SUMMARY_METRICS)
+    state = parse_curriculum_state()
+    current_session_basic = parse_current_session_basic_counters(state)
+    cards_html = render_summary_cards(client, SUMMARY_METRICS, overrides=build_summary_overrides(client))
     chart_sections: list[str] = []
     errors: list[str] = []
     recent_rows, loaded_checkpoint = parse_recent_episodes()
@@ -388,13 +518,32 @@ def render_page(client: PrometheusClient, minutes: int, step: int, refresh_secon
                 [
                     ("Learner Global Step", learner_info["global_step"]),
                     ("Learner Latest CKPT", learner_info["latest_ckpt"]),
+                    ("Current Session", str(current_session_basic.get("source_session_id", "n/a"))),
+                    ("Current Episode Count", fmt_value(float(current_session_basic.get("episode_cnt") or 0.0), 0)),
                     ("AISRV Loaded CKPT", loaded_checkpoint),
                     ("Learner Log File", learner_info["file"]),
                 ],
             ),
             render_detail_panel(
+                "Session Counters",
+                [
+                    ("Sample Receive Count", fmt_value(float(current_session_basic.get("sample_receive_cnt") or 0.0), 0)),
+                    ("Predict Succ Count", fmt_value(float(current_session_basic.get("predict_succ_cnt") or 0.0), 0)),
+                    ("Load Model Succ Count", fmt_value(float(current_session_basic.get("load_model_succ_cnt") or 0.0), 0)),
+                    (
+                        "Prod/Cons Ratio",
+                        fmt_value(
+                            float(current_session_basic.get("sample_production_and_consumption_ratio") or 0.0),
+                            3,
+                        ) if current_session_basic.get("sample_production_and_consumption_ratio") is not None else "n/a",
+                    ),
+                ],
+            ),
+            render_detail_panel(
                 "Resume State",
                 [
+                    ("Current Stage", str(state.get("stage", "n/a"))),
+                    ("Current Progress", fmt_value(float(state.get("curriculum_progress") or 0.0), 2)),
                     ("Trigger", resume_info["trigger"]),
                     ("Episode", resume_info["episode_cnt"]),
                     ("Clean Score", resume_info["clean_score"]),

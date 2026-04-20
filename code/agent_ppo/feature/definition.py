@@ -60,6 +60,7 @@ SampleData = create_cls(
     return_action_teacher_mask=Config.SAMPLE_RETURN_ACTION_MASK_DIM,
     battery_risk_label=Config.SAMPLE_AUX_LABEL_DIM,
     collision_risk_label=Config.SAMPLE_AUX_LABEL_DIM,
+    constraint_battery_process_cost=Config.SAMPLE_CONSTRAINT_COST_DIM,
     fallback_mask=Config.FALLBACK_MASK_DIM,
     expert_weight=Config.EXPERT_WEIGHT_DIM,
 )
@@ -141,6 +142,7 @@ def sample_process(step_records, episode_idx=0):
     return_action_teacher_mask_seq = _to_scalar_sequence(step_records, "return_action_teacher_mask")
     battery_risk_label_seq = _to_scalar_sequence(step_records, "battery_risk_label")
     collision_risk_label_seq = _to_scalar_sequence(step_records, "collision_risk_label")
+    constraint_battery_process_cost_seq = _to_scalar_sequence(step_records, "constraint_battery_process_cost")
     fallback_mask_seq = _to_scalar_sequence(step_records, "fallback_mask")
     expert_weight_seq = _to_scalar_sequence(step_records, "expert_weight")
 
@@ -184,6 +186,9 @@ def sample_process(step_records, episode_idx=0):
         return_action_teacher_mask_chunk = _pad_seq(return_action_teacher_mask_seq[sl], chunk_len, dtype=np.float32)
         battery_risk_chunk = _pad_seq(battery_risk_label_seq[sl], chunk_len, dtype=np.float32)
         collision_risk_chunk = _pad_seq(collision_risk_label_seq[sl], chunk_len, dtype=np.float32)
+        constraint_battery_process_cost_chunk = _pad_seq(
+            constraint_battery_process_cost_seq[sl], chunk_len, dtype=np.float32
+        )
         fallback_mask_chunk = _pad_seq(fallback_mask_seq[sl], chunk_len, dtype=np.float32)
         expert_weight_chunk = _pad_seq(expert_weight_seq[sl], chunk_len, dtype=np.float32)
 
@@ -218,6 +223,7 @@ def sample_process(step_records, episode_idx=0):
                 return_action_teacher_mask=return_action_teacher_mask_chunk.astype(np.float32),
                 battery_risk_label=battery_risk_chunk.astype(np.float32),
                 collision_risk_label=collision_risk_chunk.astype(np.float32),
+                constraint_battery_process_cost=constraint_battery_process_cost_chunk.astype(np.float32),
                 fallback_mask=fallback_mask_chunk.astype(np.float32),
                 expert_weight=np.array([float(expert_weight_chunk.max(initial=0.0))], dtype=np.float32),
             )

@@ -28,7 +28,7 @@ import torch
 
 from agent_ppo.conf.conf import Config
 from agent_ppo.workflow.preload_checkpoint import resolve_benchmark_checkpoint
-from agent_ppo.utils.experiment_archive import infer_fail_reason
+from agent_ppo.utils.experiment_archive import infer_fail_reason, parse_checkpoint_id
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
 
 # ---------------------------------------------------------------------------
@@ -279,7 +279,7 @@ def run_benchmark(env, agent, usr_conf, logger):
         dict: Overall benchmark results.
     """
     base_env_conf = _extract_base_env_conf(usr_conf)
-    checkpoint = resolve_benchmark_checkpoint(
+    requested_checkpoint = resolve_benchmark_checkpoint(
         Path("/workspace/code"),
         os.getenv("KAIWU_BENCHMARK_CHECKPOINT", "").strip(),
         Config.RESUME_CHECKPOINT,
@@ -291,13 +291,13 @@ def run_benchmark(env, agent, usr_conf, logger):
 
     total_episodes = len(rounds) * len(maps)
     logger.info("[BENCHMARK] ========== Evaluation Start ==========")
-    logger.info(f"[BENCHMARK] checkpoint={checkpoint}")
+    logger.info(f"[BENCHMARK] checkpoint={requested_checkpoint}")
     logger.info(f"[BENCHMARK] policy_mode={policy_mode}")
     logger.info(f"[BENCHMARK] rounds={len(rounds)} maps={len(maps)} total={total_episodes}")
     for round_def in rounds:
         logger.info(f"[BENCHMARK]   {round_def['name']}: {round_def['desc']}")
 
-    _load_benchmark_checkpoint(agent, checkpoint, logger)
+    loaded_checkpoint = _load_benchmark_checkpoint(agent, requested_checkpoint, logger)
 
     session_dir = EVAL_LOG_BASE / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -307,7 +307,7 @@ def run_benchmark(env, agent, usr_conf, logger):
         "version": SCHEMA_VERSION,
         "schema_version": SCHEMA_VERSION,
         "timestamp": session_id,
-        "checkpoint": checkpoint,
+        "checkpoint": loaded_checkpoint["checkpoint"],
         "policy_mode": policy_mode,
         "git_commit": _get_git_commit(),
         "rounds": rounds,
@@ -355,7 +355,7 @@ def run_benchmark(env, agent, usr_conf, logger):
         "version": SCHEMA_VERSION,
         "schema_version": SCHEMA_VERSION,
         "timestamp": session_id,
-        "checkpoint": checkpoint,
+        "checkpoint": loaded_checkpoint["checkpoint"],
         "policy_mode": policy_mode,
         "git_commit": _get_git_commit(),
         "elapsed_seconds": round(elapsed, 1),
@@ -385,7 +385,7 @@ def run_benchmark(env, agent, usr_conf, logger):
             {
                 "session_id": session_id,
                 "timestamp": time.strftime("%Y%m%d-%H%M%S"),
-                "checkpoint": checkpoint,
+                "checkpoint": loaded_checkpoint["checkpoint"],
                 "overall": aggregated["overall"],
             },
             ensure_ascii=False,
@@ -409,7 +409,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
         f"battery={round_def['battery_max']}"
     )
 
-    env_obs = env.reset(usr_conf)
+    env_obs = _inject_agent_runtime(env.reset(usr_conf), agent)
     if handle_disaster_recovery(env_obs, logger):
         logger.warning(f"[BENCHMARK] {ep_label} SKIP (disaster recovery)")
         return {
@@ -443,6 +443,8 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
     zero_progress_streak = 0
     policy_mode = _benchmark_policy_mode()
     use_eval_policy = policy_mode == "eval"
+    terminated = False
+    truncated = False
 
     while not done:
         act_data = agent.predict([obs_data], use_hard_override=use_eval_policy)[0]
@@ -451,7 +453,11 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
         selected_action = int(act)
 
         _, env_obs = env.step(act)
+        env_obs = _inject_agent_runtime(env_obs, agent)
         if handle_disaster_recovery(env_obs, logger):
+            terminated = bool(env_obs.get("terminated", False))
+            truncated = bool(env_obs.get("truncated", False))
+            done = True
             break
 
         terminated = env_obs["terminated"]
@@ -995,13 +1001,22 @@ def _aggregate_results(episode_results):
         }
 
     wins = [ep for ep in episode_results if ep["result"] == "completed"]
+    fails_battery = [ep for ep in episode_results if ep["result"] == "battery"]
+    fails_collision = [ep for ep in episode_results if ep["result"] == "collision"]
     overall = {
         "win_rate": round(len(wins) / len(episode_results), 4) if episode_results else 0.0,
+        "completed_rate": round(len(wins) / len(episode_results), 4) if episode_results else 0.0,
+        "broad_win_rate": round(len(wins) / len(episode_results), 4) if episode_results else 0.0,
         "avg_clean_score": round(sum(ep["clean_score"] for ep in episode_results) / len(episode_results), 1)
         if episode_results
         else 0.0,
         "avg_steps": round(sum(ep["steps"] for ep in episode_results) / len(episode_results), 1) if episode_results else 0.0,
         "avg_charge_count": round(sum(ep["charge_count"] for ep in episode_results) / len(episode_results), 2)
+        if episode_results
+        else 0.0,
+        "battery_fail_rate": round(len(fails_battery) / len(episode_results), 4) if episode_results else 0.0,
+        "collision_fail_rate": round(len(fails_collision) / len(episode_results), 4) if episode_results else 0.0,
+        "avg_invalid_move_rate": round(sum(ep["invalid_move_rate"] for ep in episode_results) / len(episode_results), 4)
         if episode_results
         else 0.0,
         "late_return_rate": round(sum(ep.get("late_return_rate", 0.0) for ep in episode_results) / len(episode_results), 4)
@@ -1795,25 +1810,40 @@ def _extract_base_env_conf(usr_conf):
 
 def _load_benchmark_checkpoint(agent, checkpoint, logger):
     """Load a specific checkpoint for benchmark evaluation."""
-    resolved = checkpoint
+    resolved = str(checkpoint or "").strip()
+    if resolved in {"", "latest"}:
+        agent.load_model(id="latest")
+        checkpoint_ref = getattr(agent, "current_model_ref", {}) or {}
+        return {
+            "checkpoint": str(checkpoint_ref.get("path") or resolved or "latest"),
+            "checkpoint_id": checkpoint_ref.get("checkpoint_id"),
+            "checkpoint_step": checkpoint_ref.get("checkpoint_step"),
+        }
     if not os.path.isabs(resolved):
         resolved = os.path.join("/workspace/code", resolved)
 
     if not os.path.isfile(resolved):
-        logger.warning(f"[BENCHMARK] Checkpoint not found: {resolved}, using default")
-        agent.load_model(id="latest")
-        return
+        raise FileNotFoundError(f"Benchmark checkpoint not found: {resolved}")
 
     logger.info(f"[BENCHMARK] Loading checkpoint: {resolved}")
     state_dict = torch.load(resolved, map_location=agent.device)
     agent.model.load_state_dict(state_dict)
+    checkpoint_id = parse_checkpoint_id(resolved) or os.path.basename(resolved)
+    checkpoint_step = int(checkpoint_id) if str(checkpoint_id).isdigit() else 0
     if hasattr(agent, "current_model_ref"):
         agent.current_model_ref = {
             "path": resolved,
             "id": "benchmark",
-            "checkpoint_id": os.path.basename(resolved),
+            "checkpoint_id": checkpoint_id,
+            "checkpoint_step": checkpoint_step,
+            "global_step_since_resume": checkpoint_step,
         }
     logger.info(f"[BENCHMARK] Loaded state_dict from {resolved}")
+    return {
+        "checkpoint": resolved,
+        "checkpoint_id": checkpoint_id,
+        "checkpoint_step": checkpoint_step,
+    }
 
 
 def _wrap_env_conf(usr_conf, env_conf):
@@ -1822,6 +1852,16 @@ def _wrap_env_conf(usr_conf, env_conf):
         wrapped["env_conf"] = deepcopy(env_conf)
         return wrapped
     return deepcopy(env_conf)
+
+
+def _inject_agent_runtime(env_obs, agent):
+    payload = dict(env_obs or {})
+    runtime = dict(payload.get("runtime") or {})
+    checkpoint_ref = getattr(agent, "current_model_ref", {}) or {}
+    runtime.setdefault("global_step_since_resume", int(checkpoint_ref.get("global_step_since_resume") or 0))
+    runtime.setdefault("checkpoint_global_step", int(checkpoint_ref.get("checkpoint_step") or 0))
+    payload["runtime"] = runtime
+    return payload
 
 
 def _save_results(results_file, snapshot):

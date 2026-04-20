@@ -19,11 +19,105 @@ import os
 BASE = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BACKUP_DIR = BASE / "train" / "backup_model"
 CODE_DIR = BASE / "code"
-RESUME_PKL = CODE_DIR / "model.ckpt-resume.pkl"
-RESUME_META = CODE_DIR / "model.ckpt-resume.meta.json"
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+from agent_ppo.workflow.state_layout import (
+    CURRICULUM_STATE_SNAPSHOT_FILE,
+    MANUAL_SAVE_MANIFEST_FILE,
+    RESUME_CHECKPOINT_FILE,
+    RESUME_META_FILE,
+    RESUME_STATE_FILE,
+    RUN_SESSION_MANIFEST_FILE,
+    ensure_runtime_state_dirs,
+    legacy_resume_curriculum_snapshot_path,
+    legacy_resume_latest_checkpoint_path,
+    legacy_resume_latest_meta_path,
+    legacy_resume_latest_state_path,
+)
+
 LATEST_PKL = CODE_DIR / "latest_model.pkl"
 BEST_PKL = CODE_DIR / "best_model.pkl"
-SNAPSHOT_DIR = CODE_DIR / "resume_snapshots"
+STATE_LAYOUT = ensure_runtime_state_dirs(CODE_DIR)
+PREPARED_RESUME_DIR = STATE_LAYOUT.current.prepared_resume_dir
+RESUME_PKL = PREPARED_RESUME_DIR / RESUME_CHECKPOINT_FILE
+RESUME_META = PREPARED_RESUME_DIR / RESUME_META_FILE
+RESUME_STATE = PREPARED_RESUME_DIR / RESUME_STATE_FILE
+RESUME_CURRICULUM = PREPARED_RESUME_DIR / CURRICULUM_STATE_SNAPSHOT_FILE
+SNAPSHOT_DIR = STATE_LAYOUT.current.current_dir
+
+
+def _write_json(path: Path, payload: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _copy_sidecars_from_legacy_if_present():
+    legacy_meta = legacy_resume_latest_meta_path(CODE_DIR)
+    legacy_state = legacy_resume_latest_state_path(CODE_DIR)
+    legacy_curriculum = legacy_resume_curriculum_snapshot_path(CODE_DIR)
+    if legacy_meta.exists():
+        shutil.copy2(legacy_meta, RESUME_META)
+    if legacy_state.exists():
+        payload = json.loads(legacy_state.read_text(encoding="utf-8"))
+        payload["checkpoint_path"] = str(RESUME_PKL)
+        if legacy_curriculum.exists():
+            shutil.copy2(legacy_curriculum, RESUME_CURRICULUM)
+            payload["curriculum_state_snapshot_path"] = str(RESUME_CURRICULUM)
+        _write_json(RESUME_STATE, payload)
+    elif legacy_curriculum.exists():
+        shutil.copy2(legacy_curriculum, RESUME_CURRICULUM)
+
+
+def _finalize_prepared_bundle(source_path: Path, label: str):
+    PREPARED_RESUME_DIR.mkdir(parents=True, exist_ok=True)
+    if source_path.resolve() != RESUME_PKL.resolve():
+        shutil.copy2(source_path, RESUME_PKL)
+    _copy_sidecars_from_legacy_if_present()
+    if not RESUME_STATE.exists():
+        _write_json(
+            RESUME_STATE,
+            {
+                "checkpoint_path": str(RESUME_PKL),
+                "global_step": 0,
+                "global_step_since_resume": 0,
+                "curriculum_state_snapshot_path": str(RESUME_CURRICULUM) if RESUME_CURRICULUM.exists() else None,
+            },
+        )
+    if not RESUME_META.exists():
+        _write_json(
+            RESUME_META,
+            {
+                "trigger": "prepare",
+                "checkpoint_path": str(RESUME_PKL),
+                "resume_state_metadata_path": str(RESUME_STATE),
+                "curriculum_state_snapshot_path": str(RESUME_CURRICULUM) if RESUME_CURRICULUM.exists() else None,
+                "source_label": label,
+            },
+        )
+    _write_json(
+        PREPARED_RESUME_DIR / RUN_SESSION_MANIFEST_FILE,
+        {
+            "run_session_id": None,
+            "source_label": label,
+        },
+    )
+    _write_json(
+        PREPARED_RESUME_DIR / MANUAL_SAVE_MANIFEST_FILE,
+        {
+            "save_name": "prepared_resume",
+            "created_at": None,
+            "source_label": label,
+            "checkpoint_path": str(RESUME_PKL),
+            "resume_compatible": True,
+            "files": {
+                "checkpoint": RESUME_CHECKPOINT_FILE,
+                "resume_meta": RESUME_META_FILE,
+                "resume_state": RESUME_STATE_FILE,
+                "curriculum_snapshot": CURRICULUM_STATE_SNAPSHOT_FILE,
+                "run_session": RUN_SESSION_MANIFEST_FILE,
+            },
+        },
+    )
 
 
 def load_checkpoints():
@@ -88,11 +182,16 @@ def cmd_best():
 
 def cmd_latest():
     if not RESUME_PKL.exists():
-        print("No local resume checkpoint found")
+        legacy_resume = legacy_resume_latest_checkpoint_path(CODE_DIR)
+        if not legacy_resume.exists():
+            print("No prepared resume bundle found")
+            return None
+        print("Prepared bundle missing, but legacy resume checkpoint exists:")
+        print(f"  legacy path: {legacy_resume}")
         return None
 
     size_mb = RESUME_PKL.stat().st_size / 1024 / 1024
-    print("Latest local resume checkpoint:")
+    print("Latest prepared resume bundle:")
     print(f"  path   : {RESUME_PKL}")
     print(f"  size   : {size_mb:.1f}MB")
     if RESUME_META.exists():
@@ -100,21 +199,17 @@ def cmd_latest():
         for key in ("trigger", "episode_cnt", "clean_score", "saved_at", "pid"):
             if key in meta:
                 print(f"  {key:<10}: {meta[key]}")
-    if SNAPSHOT_DIR.exists():
-        count = len(list(SNAPSHOT_DIR.glob("*.pkl")))
-        print(f"  snapshots : {count} files in {SNAPSHOT_DIR}")
     return RESUME_PKL
 
 
 def _copy_ready_checkpoint(source_path, label):
     pkl_size_mb = source_path.stat().st_size / 1024 / 1024
-    if source_path.resolve() != RESUME_PKL.resolve():
-        shutil.copy2(source_path, RESUME_PKL)
-    print(f"Resume from {label}:")
+    _finalize_prepared_bundle(source_path, label)
+    print(f"Prepared resume bundle from {label}:")
     print(f"  source : {source_path}")
     print(f"  size   : {pkl_size_mb:.1f}MB")
-    print(f"  target : {RESUME_PKL}")
-    print(f"\nNext: restart training containers. Agent will auto-load this checkpoint.")
+    print(f"  bundle : {PREPARED_RESUME_DIR}")
+    print(f"\nNext: restart training with KAIWU_TRAINING_START_MODE=resume or let prepared bundle be picked by compatibility fallback.")
 
 
 def cmd_prepare(mode="auto"):
@@ -166,18 +261,17 @@ def cmd_prepare(mode="auto"):
         print(f"ERROR: Extraction failed, {extracted} not found")
         return
 
-    # Copy to code directory as model.ckpt-resume.pkl
-    shutil.copy2(extracted, RESUME_PKL)
+    _finalize_prepared_bundle(extracted, f"train_step={train_step}")
 
     # Cleanup temp dir
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
     pkl_size_mb = os.path.getsize(RESUME_PKL) / 1024 / 1024
-    print(f"Resume checkpoint ready:")
+    print(f"Resume bundle ready:")
     print(f"  source : train_step={train_step} ({best['created_at'][:19]})")
-    print(f"  target : {RESUME_PKL}")
+    print(f"  bundle : {PREPARED_RESUME_DIR}")
     print(f"  size   : {pkl_size_mb:.1f}MB")
-    print(f"\nNext: restart training containers. Agent will auto-load this checkpoint.")
+    print(f"\nNext: restart training with KAIWU_TRAINING_START_MODE=resume.")
 
 
 def cmd_clean(keep=3):

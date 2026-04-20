@@ -55,6 +55,8 @@ x-kaiwu-client:
     KAIWU_PUBLIC_KEY: ${KAIWU_PUBLIC_KEY}
     KAIWU_PYTORCH_READ_DATA_FROM_REVERB_TYPE: ${KAIWU_PYTORCH_READ_DATA_FROM_REVERB_TYPE}
     KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE: ${KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE}
+    KAIWU_EXPERIMENT_REPLAY_BUFFER_CAPACITY: ${KAIWU_EXPERIMENT_REPLAY_BUFFER_CAPACITY:-}
+    KAIWU_EXPERIMENT_PRELOAD_RATIO: ${KAIWU_EXPERIMENT_PRELOAD_RATIO:-}
     KAIWU_EXPERIMENT_DUMP_MODEL_FREQ: ${KAIWU_EXPERIMENT_DUMP_MODEL_FREQ}
     KAIWU_EXPERIMENT_REPLAY_BUFFER_CACHE_MULTIPLIER: ${KAIWU_EXPERIMENT_REPLAY_BUFFER_CACHE_MULTIPLIER}
     KAIWU_EXPERIMENT_REVERB_RATE_LIMITER: ${KAIWU_EXPERIMENT_REVERB_RATE_LIMITER}
@@ -70,8 +72,22 @@ x-kaiwu-client:
     KAIWU_PRELOAD_MODEL_ID: ${KAIWU_PRELOAD_MODEL_ID:-}
     KAIWU_PRELOAD_SEED_CHECKPOINT: ${KAIWU_PRELOAD_SEED_CHECKPOINT:-}
     KAIWU_TRAINING_START_MODE: ${KAIWU_TRAINING_START_MODE:-preload}
+    KAIWU_STATE_ROOT: ${KAIWU_STATE_ROOT:-runtime_state}
+    KAIWU_ARCHIVE_DIR: ${KAIWU_ARCHIVE_DIR:-}
+    KAIWU_ARCHIVE_SYNC_SECONDS: ${KAIWU_ARCHIVE_SYNC_SECONDS:-}
+    KAIWU_ARCHIVE_IDLE_SECONDS: ${KAIWU_ARCHIVE_IDLE_SECONDS:-}
     KAIWU_CURRICULUM_INITIAL_STAGE: ${KAIWU_CURRICULUM_INITIAL_STAGE:-}
     KAIWU_CURRICULUM_INITIAL_BLEND_FREEZE_STEPS: ${KAIWU_CURRICULUM_INITIAL_BLEND_FREEZE_STEPS:-}
+    KAIWU_CURRICULUM_RESUME_STABILIZE_STEPS: ${KAIWU_CURRICULUM_RESUME_STABILIZE_STEPS:-}
+    KAIWU_CURRICULUM_WARMUP_TIMEOUT_STEPS: ${KAIWU_CURRICULUM_WARMUP_TIMEOUT_STEPS:-}
+    KAIWU_CURRICULUM_BLEND_TIMEOUT_STEPS: ${KAIWU_CURRICULUM_BLEND_TIMEOUT_STEPS:-}
+    KAIWU_CURRICULUM_ROBUST_TIMEOUT_STEPS: ${KAIWU_CURRICULUM_ROBUST_TIMEOUT_STEPS:-}
+    KAIWU_CURRICULUM_BLEND_GUARD_STEPS: ${KAIWU_CURRICULUM_BLEND_GUARD_STEPS:-}
+    KAIWU_CURRICULUM_ROBUST_GUARD_STEPS: ${KAIWU_CURRICULUM_ROBUST_GUARD_STEPS:-}
+    KAIWU_CURRICULUM_STAGE_TRANSITION_COOLDOWN_STEPS: ${KAIWU_CURRICULUM_STAGE_TRANSITION_COOLDOWN_STEPS:-}
+    KAIWU_CURRICULUM_ZERO_CHARGE_FAIL_STRICT_GATE_MAX: ${KAIWU_CURRICULUM_ZERO_CHARGE_FAIL_STRICT_GATE_MAX:-}
+    KAIWU_CURRICULUM_ZERO_CHARGE_FAIL_PROFILE_WARN: ${KAIWU_CURRICULUM_ZERO_CHARGE_FAIL_PROFILE_WARN:-}
+    KAIWU_CURRICULUM_DEGRADED_MAINLINE_CONFIRM_WINDOWS: ${KAIWU_CURRICULUM_DEGRADED_MAINLINE_CONFIRM_WINDOWS:-}
     KAIWU_CURRICULUM_OBSERVATION_PHASE_STEPS: ${KAIWU_CURRICULUM_OBSERVATION_PHASE_STEPS:-}
     KAIWU_CURRICULUM_ADAPTIVE_PROFILE_ENABLED: ${KAIWU_CURRICULUM_ADAPTIVE_PROFILE_ENABLED:-}
     KAIWU_CURRICULUM_LITE_BENCH_ENABLED: ${KAIWU_CURRICULUM_LITE_BENCH_ENABLED:-}
@@ -105,6 +121,20 @@ x-kaiwu-client:
     KAIWU_OVERCHARGE_RATE_THRESHOLD: ${KAIWU_OVERCHARGE_RATE_THRESHOLD:-}
     KAIWU_COVERAGE_EFFICIENCY_BONUS_SCALE: ${KAIWU_COVERAGE_EFFICIENCY_BONUS_SCALE:-}
     KAIWU_COVERAGE_EFFICIENCY_BASELINE: ${KAIWU_COVERAGE_EFFICIENCY_BASELINE:-}
+    KAIWU_COVERAGE_TANGLE_PENALTY_SCALE: ${KAIWU_COVERAGE_TANGLE_PENALTY_SCALE:-}
+    KAIWU_EDGE_FOLLOW_BONUS_SCALE: ${KAIWU_EDGE_FOLLOW_BONUS_SCALE:-}
+    KAIWU_EDGE_FOLLOW_FRONTIER_THRESHOLD: ${KAIWU_EDGE_FOLLOW_FRONTIER_THRESHOLD:-}
+    KAIWU_EDGE_FOLLOW_CROSS_COUNT_MAX: ${KAIWU_EDGE_FOLLOW_CROSS_COUNT_MAX:-}
+    KAIWU_CHARGER_ACCESS_DISCOVERY_BONUS_SCALE: ${KAIWU_CHARGER_ACCESS_DISCOVERY_BONUS_SCALE:-}
+    KAIWU_CHARGER_ACCESS_PROBE_BONUS_SCALE: ${KAIWU_CHARGER_ACCESS_PROBE_BONUS_SCALE:-}
+    KAIWU_CHARGER_ACCESS_PROBE_FRONTIER_THRESHOLD: ${KAIWU_CHARGER_ACCESS_PROBE_FRONTIER_THRESHOLD:-}
+    KAIWU_CHARGER_ACCESS_PROBE_UNKNOWN_RATIO_MIN: ${KAIWU_CHARGER_ACCESS_PROBE_UNKNOWN_RATIO_MIN:-}
+    KAIWU_AGENT_MIN_RELOAD_STEP_GAP: ${KAIWU_AGENT_MIN_RELOAD_STEP_GAP:-}
+    KAIWU_AGENT_MIN_RELOAD_INTERVAL_SECONDS: ${KAIWU_AGENT_MIN_RELOAD_INTERVAL_SECONDS:-}
+    KAIWU_AGENT_TRANSITION_GUARD_RELOAD_STEP_GAP: ${KAIWU_AGENT_TRANSITION_GUARD_RELOAD_STEP_GAP:-}
+    KAIWU_RESUME_STEP_SNAPSHOT_INTERVAL: ${KAIWU_RESUME_STEP_SNAPSHOT_INTERVAL:-}
+    KAIWU_KEEP_STEP_RESUME_SNAPSHOTS: ${KAIWU_KEEP_STEP_RESUME_SNAPSHOTS:-}
+    KAIWU_RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS: ${KAIWU_RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS:-}
     KAIWU_PLANNER_ALIGNMENT_REWARD: ${KAIWU_PLANNER_ALIGNMENT_REWARD:-}
     KAIWU_PLANNER_DIVERGENCE_PENALTY: ${KAIWU_PLANNER_DIVERGENCE_PENALTY:-}
     KAIWU_TARGET_STICKY_PENALTY: ${KAIWU_TARGET_STICKY_PENALTY:-}
@@ -146,6 +176,8 @@ services:
       - '-lc'
       - |
         set -euo pipefail
+        export KAIWU_RUN_BOOT_TS="$$(date +%s)"
+        export KAIWU_CURRENT_RUN_MANIFEST=/workspace/code/$${KAIWU_STATE_ROOT:-runtime_state}/current/run_session.json
         echo "[learner-runtime] cuda_visible_devices=$${CUDA_VISIBLE_DEVICES:-unset} replay_buffer_type=${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE:-reverb} pytorch_read_data_from_reverb_type=${KAIWU_PYTORCH_READ_DATA_FROM_REVERB_TYPE:-unset} predict_batch_size=${KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE:-unset} train_batch_size=${KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE:-unset} send_sample_size=${KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE:-unset}"
         python3 - <<'PY'
         from pathlib import Path
@@ -155,9 +187,11 @@ services:
 
         project = os.environ.get("KAIWU_PROJECT_CODE", "robot_vacuum")
         root = Path(f"/data/projects/{project}")
+        tools_root = Path("/root/tools")
         workspace_code = Path("/workspace/code")
         sys.path.insert(0, str(workspace_code))
 
+        from agent_ppo.utils.run_scoped_stop_patch import apply_run_scoped_stop_patches
         from agent_ppo.utils.zmq_patch import patch_zmq_runtime_files
 
         def format_toml_value(value):
@@ -188,6 +222,10 @@ services:
         patched_zmq_targets = patch_zmq_runtime_files(root, os.environ.get("KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE"))
         for patched_target in patched_zmq_targets:
             print(f"[learner-zmq] forced spawn multiprocessing context in {patched_target}")
+
+        patched_stop_targets = apply_run_scoped_stop_patches(root, tools_root)
+        for patched_target in patched_stop_targets:
+            print(f"[learner-stop] patched run-scoped stop guard in {patched_target}")
 
         for relative in (
             "kaiwudrl/common/utils/mem_buffer.py",
@@ -315,7 +353,11 @@ services:
         trainer_target = root / "kaiwudrl/server/learner/trainer.py"
         text = trainer_target.read_text()
         trainer_marker = 'self.logger.info("train skip model_file_saver process because push_to_cos is disabled")'
-        if trainer_marker not in text:
+        trainer_already_compatible = (
+            "self.model_file_saver = ModelSignerThread(self.logger)" in text
+            or "self.model_file_saver = None" in text
+        )
+        if trainer_marker not in text and not trainer_already_compatible:
             import_line = "from agent_ppo.utils.model_signer import ModelSignerThread\n"
             if "ModelSignerThread" not in text:
                 text = text.replace(
@@ -698,6 +740,16 @@ services:
         )
         replace_toml_key(
             learner_conf_target,
+            "replay_buffer_capacity",
+            "KAIWU_EXPERIMENT_REPLAY_BUFFER_CAPACITY",
+        )
+        replace_toml_key(
+            learner_conf_target,
+            "preload_ratio",
+            "KAIWU_EXPERIMENT_PRELOAD_RATIO",
+        )
+        replace_toml_key(
+            learner_conf_target,
             "reverb_num_workers_per_iterator",
             "KAIWU_REVERB_NUM_WORKERS_PER_ITERATOR",
         )
@@ -771,7 +823,8 @@ services:
             "from pathlib import Path\n"
             "\n"
             "from agent_ppo.conf.conf import Config\n"
-            "from agent_ppo.workflow.preload_checkpoint import resolve_latest_preload, resolve_training_preload, seed_preload_from_resume\n"
+            "from agent_ppo.workflow.preload_checkpoint import resolve_training_preload\n"
+            "from agent_ppo.workflow.startup_mode import maybe_clear_external_state_for_scratch\n"
             "\n"
             "def format_toml_value(value):\n"
             "    try:\n"
@@ -852,15 +905,13 @@ services:
             "learner_conf = root / 'kaiwudrl/conf/kaiwudrl/learner.toml'\n"
             "framework_conf = root / 'kaiwudrl/conf/kaiwudrl/configure.toml'\n"
             "code_dir = Path('/workspace/code')\n"
-            "start_mode = (os.environ.get('KAIWU_TRAINING_START_MODE', 'preload') or 'preload').strip().lower()\n"
-            "existing_preload = resolve_latest_preload(code_dir)\n"
-            "if start_mode not in ('scratch', 'random', 'from_scratch', 'fresh') and existing_preload is None and os.environ.get('KAIWU_PRELOAD_MODEL', 'auto').strip().lower() in ('', 'auto', 'latest', '1', 'true', 'on'):\n"
-            "    seed_ref = os.environ.get('KAIWU_PRELOAD_SEED_CHECKPOINT') or Config.TRAINING_BASELINE_CHECKPOINT or Config.RESUME_CHECKPOINT\n"
-            "    seed_preload_from_resume(code_dir, seed_ref, checkpoint_id='0')\n"
+            "maybe_clear_external_state_for_scratch(os.environ)\n"
             "preload = resolve_training_preload(code_dir, os.environ)\n"
             "\n"
             "replace_toml_key(learner_conf, 'pytorch_read_data_from_reverb_type', 'KAIWU_PYTORCH_READ_DATA_FROM_REVERB_TYPE')\n"
             "replace_toml_key(learner_conf, 'replay_buffer_cache_multiplier', 'KAIWU_EXPERIMENT_REPLAY_BUFFER_CACHE_MULTIPLIER')\n"
+            "replace_toml_key(learner_conf, 'replay_buffer_capacity', 'KAIWU_EXPERIMENT_REPLAY_BUFFER_CAPACITY')\n"
+            "replace_toml_key(learner_conf, 'preload_ratio', 'KAIWU_EXPERIMENT_PRELOAD_RATIO')\n"
             "replace_toml_key(learner_conf, 'reverb_num_workers_per_iterator', 'KAIWU_REVERB_NUM_WORKERS_PER_ITERATOR')\n"
             "replace_toml_key(app_conf, 'replay_buffer_type', 'KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE')\n"
             "replace_toml_key(app_conf, 'train_batch_size', 'KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE')\n"
@@ -948,7 +999,7 @@ services:
           LC_ALL=C.UTF-8 pip install --quiet torch==2.2.0 --index-url https://download.pytorch.org/whl/cu118
           python3 -c "import torch; print('[pytorch-upgrade] PyTorch', torch.__version__)"
         fi
-        bash -c '/root/tools/start_train_client.sh learner & sleep 10 && python3 /data/projects/robot_vacuum/kaiwudrl/post_init_patch.py && wait'
+        bash -c 'if [ -f /workspace/code/agent_ppo/conf/monitor_builder.py ]; then cp /workspace/code/agent_ppo/conf/monitor_builder.py /data/projects/robot_vacuum/agent_ppo/conf/monitor_builder.py; echo "[learner-cp] synced monitor_builder.py from workspace"; fi; /root/tools/start_train_client.sh learner & sleep 10 && python3 /data/projects/robot_vacuum/kaiwudrl/post_init_patch.py && wait'
     deploy:
       resources:
         reservations:
@@ -983,6 +1034,8 @@ services:
       - '-lc'
       - |
         set -euo pipefail
+        export KAIWU_RUN_BOOT_TS="$$(date +%s)"
+        export KAIWU_CURRENT_RUN_MANIFEST=/workspace/code/$${KAIWU_STATE_ROOT:-runtime_state}/current/run_session.json
         : "$${KAIWU_AISRV_NUM:?KAIWU_AISRV_NUM is required}"
         : "$${KAIWU_AISRV_GPU1_NUM:?KAIWU_AISRV_GPU1_NUM is required}"
         : "$${KAIWU_AISRV_GPU2_NUM:?KAIWU_AISRV_GPU2_NUM is required}"
@@ -1018,9 +1071,15 @@ services:
         python3 - <<'PY'
         from pathlib import Path
         import os
+        import sys
 
         project = os.environ.get("KAIWU_PROJECT_CODE", "robot_vacuum")
         root = Path(f"/data/projects/{project}")
+        tools_root = Path("/root/tools")
+        workspace_code = Path("/workspace/code")
+        sys.path.insert(0, str(workspace_code))
+
+        from agent_ppo.utils.run_scoped_stop_patch import apply_run_scoped_stop_patches
 
         spawn_snippets = [
             "\n".join([
@@ -1053,6 +1112,10 @@ services:
                     text = text.replace(snippet, "", 1)
             if text != original:
                 target.write_text(text)
+
+        patched_stop_targets = apply_run_scoped_stop_patches(root, tools_root)
+        for patched_target in patched_stop_targets:
+            print(f"[aisrv-stop] patched run-scoped stop guard in {patched_target}")
 
         monitor_target = root / "common_python/monitor/monitor_manager.py"
         text = monitor_target.read_text()
@@ -1145,7 +1208,11 @@ services:
         trainer_target = root / "kaiwudrl/server/learner/trainer.py"
         text = trainer_target.read_text()
         trainer_marker = 'self.logger.info("train skip model_file_saver process because push_to_cos is disabled")'
-        if trainer_marker not in text:
+        trainer_already_compatible = (
+            "self.model_file_saver = ModelSignerThread(self.logger)" in text
+            or "self.model_file_saver = None" in text
+        )
+        if trainer_marker not in text and not trainer_already_compatible:
             old = "\n".join([
                 "        if self.agent_wrapper.is_chief:",
                 "            # model_file_saver, 用于保存模型文件到持久化设备, 比如COS, 采用单独的进程处理, 只有主learner进程才会执行",
@@ -1167,6 +1234,8 @@ services:
             if old not in text:
                 raise SystemExit(f"Failed to patch {trainer_target}: model_file_saver anchor not found")
             text = text.replace(old, new, 1)
+        elif trainer_already_compatible and trainer_marker not in text:
+            print(f"[post-init] {trainer_target} already uses compatible model_file_saver logic, skipping patch")
         debug_marker = 'self.logger.info("train debug milestone after_alloc_utils")'
         if debug_marker not in text:
             replacements = [
@@ -1356,7 +1425,8 @@ services:
             "from pathlib import Path\n"
             "\n"
             "from agent_ppo.conf.conf import Config\n"
-            "from agent_ppo.workflow.preload_checkpoint import resolve_latest_preload, resolve_training_preload, seed_preload_from_resume\n"
+            "from agent_ppo.workflow.preload_checkpoint import resolve_training_preload\n"
+            "from agent_ppo.workflow.startup_mode import maybe_clear_external_state_for_scratch\n"
             "\n"
             "def format_toml_value(value):\n"
             "    try:\n"
@@ -1400,11 +1470,7 @@ services:
             "root = Path(f'/data/projects/{project}')\n"
             "app_conf = root / 'conf/configure_app.toml'\n"
             "code_dir = Path('/workspace/code')\n"
-            "start_mode = (os.environ.get('KAIWU_TRAINING_START_MODE', 'preload') or 'preload').strip().lower()\n"
-            "existing_preload = resolve_latest_preload(code_dir)\n"
-            "if start_mode not in ('scratch', 'random', 'from_scratch', 'fresh') and existing_preload is None and os.environ.get('KAIWU_PRELOAD_MODEL', 'auto').strip().lower() in ('', 'auto', 'latest', '1', 'true', 'on'):\n"
-            "    seed_ref = os.environ.get('KAIWU_PRELOAD_SEED_CHECKPOINT') or Config.TRAINING_BASELINE_CHECKPOINT or Config.RESUME_CHECKPOINT\n"
-            "    seed_preload_from_resume(code_dir, seed_ref, checkpoint_id='0')\n"
+            "maybe_clear_external_state_for_scratch(os.environ)\n"
             "preload = resolve_training_preload(code_dir, os.environ)\n"
             "replace_toml_key(app_conf, 'replay_buffer_type', 'KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE')\n"
             "replace_toml_key(app_conf, 'send_sample_size', 'KAIWU_EXPERIMENT_SEND_SAMPLE_SIZE')\n"

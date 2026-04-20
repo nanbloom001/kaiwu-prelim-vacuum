@@ -17,19 +17,29 @@ code-robot_vacuum-public-*.zip
 
 code/*.pkl
 code/*.meta.json
+code/*.state.json
 code/eval_logs/
 code/eval_results.json
 code/.benchmark_done
-!code/best_model.pkl
-!code/latest_model.pkl
-!code/model.ckpt-resume.pkl
-!code/model.ckpt-resume.meta.json
 code/resume_snapshots/
 code/manual_checkpoints/
 code/session_best/
+code/.current_run_session.json
+code/.current_run_session.lock
+code/.curriculum_state.lock
+code/curriculum_state.json
+code/curriculum_state.resume_snapshot.json
+code/curriculum_signals/
+code/runtime_state/
+code/agent_ppo/ckpt/
+code/saved_models/preload-main/
+code/saved_models/resume-fallback-step*/
+code/saved_models/resume-main-step*/
+code/saved_models/v7-charge-constraint-step*/
 
 license.dat
 dev/
+.conda-numpy/
 
 # 环境变量（可能包含敏感信息）
 .env
@@ -55,6 +65,7 @@ TRAINING_LOG.md
 MONITOR_RECORD.md
 auto_monitor.sh
 .monitor_state
+train/context/sessions/scratch_reset_*/
 
 # 系统文件
 .DS_Store

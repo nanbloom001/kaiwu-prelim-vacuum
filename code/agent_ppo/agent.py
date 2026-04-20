@@ -12,6 +12,7 @@ Robot Vacuum Agent.
 
 import os
 import json
+import time
 from pathlib import Path
 
 import torch
@@ -280,6 +281,8 @@ class Agent(BaseAgent):
             "path": None,
             "id": None,
             "checkpoint_id": None,
+            "checkpoint_step": None,
+            "global_step_since_resume": None,
         }
         self.enable_load_model_cache = _env_flag("KAIWU_AGENT_LOAD_MODEL_CACHE", Config.AGENT_LOAD_MODEL_CACHE)
         self._last_loaded_model_path = None
@@ -287,6 +290,10 @@ class Agent(BaseAgent):
         self._model_load_call_count = 0
         self._model_load_reload_count = 0
         self._model_load_cache_hit_count = 0
+        self._last_loaded_checkpoint_step = None
+        self._last_real_model_reload_ts = 0.0
+        self._load_model_transition_guard = False
+        self._load_model_stage_transition_cooldown = False
         self._predict_fallback_count = 0
         self._predict_error_count = 0
         self._runtime_probe_stages = set()
@@ -350,7 +357,17 @@ class Agent(BaseAgent):
 
         将原始 env_obs 转换为 ObsData（69D 特征 + 合法动作掩码）。
         """
-        feature, legal_action, reward, reward_components = self.preprocessor.feature_process(env_obs, self.last_action)
+        runtime_payload = dict((env_obs or {}).get("runtime") or {})
+        current_progress = self.current_model_ref.get("global_step_since_resume")
+        if current_progress is None:
+            current_progress = self.current_model_ref.get("checkpoint_step")
+        try:
+            runtime_payload.setdefault("global_step_since_resume", max(int(current_progress or 0), 0))
+        except (TypeError, ValueError):
+            runtime_payload.setdefault("global_step_since_resume", 0)
+        obs_payload = dict(env_obs or {})
+        obs_payload["runtime"] = runtime_payload
+        feature, legal_action, reward, reward_components = self.preprocessor.feature_process(obs_payload, self.last_action)
         if isinstance(reward_components, dict):
             reward_payload = dict(reward_components)
             reward_payload.setdefault("reward_total", float(reward))
@@ -527,10 +544,13 @@ class Agent(BaseAgent):
         state_dict_cpu = {k: v.clone().cpu() for k, v in self.model.state_dict().items()}
         torch.save(state_dict_cpu, model_file_path)
         checkpoint_id = parse_checkpoint_id(model_file_path) or str(id)
+        checkpoint_step = self._parse_checkpoint_step(checkpoint_id)
         self.current_model_ref = {
             "path": model_file_path,
             "id": str(id),
             "checkpoint_id": checkpoint_id,
+            "checkpoint_step": checkpoint_step,
+            "global_step_since_resume": checkpoint_step,
         }
         self.archive.log_checkpoint(
             {
@@ -572,6 +592,10 @@ class Agent(BaseAgent):
                 len(unexpected),
             )
 
+    def set_load_model_context(self, transition_guard=False, stage_transition_cooldown=False):
+        self._load_model_transition_guard = bool(transition_guard)
+        self._load_model_stage_transition_cooldown = bool(stage_transition_cooldown)
+
     def load_model(self, path=None, id="1"):
         """Load model checkpoint.
 
@@ -587,39 +611,55 @@ class Agent(BaseAgent):
         model_file_path = f"{path}/model.ckpt-{id}.pkl"
         self._model_load_call_count += 1
         model_mtime_ns = self._get_model_mtime_ns(Path(model_file_path))
+        checkpoint_id = parse_checkpoint_id(model_file_path) or str(id)
         should_reload = True
+        now_ts = time.time()
         if self.enable_load_model_cache:
-            should_reload = self._should_reload_model(model_file_path, model_mtime_ns)
+            should_reload = self._should_reload_model(
+                model_file_path,
+                model_mtime_ns,
+                checkpoint_id=checkpoint_id,
+                now_ts=now_ts,
+            )
 
         if should_reload:
             self._load_state_dict_compat(torch.load(model_file_path, map_location=self.device))
             self._last_loaded_model_path = model_file_path
             self._last_loaded_model_mtime_ns = model_mtime_ns
+            self._last_loaded_checkpoint_step = self._parse_checkpoint_step(checkpoint_id)
+            self._last_real_model_reload_ts = now_ts
             self._model_load_reload_count += 1
-        else:
-            self._model_load_cache_hit_count += 1
-
-        checkpoint_id = parse_checkpoint_id(model_file_path) or str(id)
-        self.current_model_ref = {
-            "path": model_file_path,
-            "id": str(id),
-            "checkpoint_id": checkpoint_id,
-        }
-        self.archive.log_event(
-            "checkpoint_loaded",
-            {
+            self.current_model_ref = {
                 "path": model_file_path,
                 "id": str(id),
                 "checkpoint_id": checkpoint_id,
-            },
-        )
-        self.logger.info(f"load model {model_file_path} successfully")
+                "checkpoint_step": self._last_loaded_checkpoint_step,
+                "global_step_since_resume": self._last_loaded_checkpoint_step,
+            }
+            self.archive.log_event(
+                "checkpoint_loaded",
+                {
+                    "path": model_file_path,
+                    "id": str(id),
+                    "checkpoint_id": checkpoint_id,
+                },
+            )
+            self.logger.info(f"load model {model_file_path} successfully")
+        else:
+            self._model_load_cache_hit_count += 1
+            if self.logger:
+                self.logger.info(
+                    "skip reload model %s checkpoint_id=%s cache_hit=1",
+                    model_file_path,
+                    checkpoint_id,
+                )
 
     def get_runtime_metrics(self):
         return {
             "load_model_calls": self._model_load_call_count,
             "load_model_reloads": self._model_load_reload_count,
             "load_model_cache_hits": self._model_load_cache_hit_count,
+            "last_loaded_checkpoint_step": self._last_loaded_checkpoint_step,
             "predict_fallback_count": self._predict_fallback_count,
             "predict_error_count": self._predict_error_count,
         }
@@ -630,7 +670,32 @@ class Agent(BaseAgent):
         except FileNotFoundError:
             return None
 
-    def _should_reload_model(self, model_file_path, model_mtime_ns):
+    def _parse_checkpoint_step(self, checkpoint_id):
+        if checkpoint_id is None:
+            return None
+        text = str(checkpoint_id).strip()
+        if not text.isdigit():
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            return None
+
+    def _should_reload_model(self, model_file_path, model_mtime_ns, checkpoint_id=None, now_ts=None):
+        now_ts = float(now_ts or time.time())
+        checkpoint_step = self._parse_checkpoint_step(checkpoint_id)
+        if checkpoint_step is not None and self._last_loaded_checkpoint_step is not None:
+            step_gap = checkpoint_step - int(self._last_loaded_checkpoint_step)
+            min_reload_gap = Config.AGENT_MIN_RELOAD_STEP_GAP
+            if self._load_model_transition_guard or self._load_model_stage_transition_cooldown:
+                min_reload_gap = max(min_reload_gap, int(Config.AGENT_TRANSITION_GUARD_RELOAD_STEP_GAP))
+            reload_interval = max(int(Config.AGENT_MIN_RELOAD_INTERVAL_SECONDS), 0)
+            if step_gap <= 0:
+                return False
+            if step_gap <= 500:
+                return False
+            if step_gap < min_reload_gap and (now_ts - float(self._last_real_model_reload_ts)) < reload_interval:
+                return False
         if self._last_loaded_model_path != model_file_path:
             return True
         if model_mtime_ns is None:
@@ -752,7 +817,7 @@ class Agent(BaseAgent):
         safe = safe_sample_action([0.0] * len(legal_action), legal_action, use_max=True)
         neutral_mode = np.full((Config.MODE_NUM,), 1.0 / Config.MODE_NUM, dtype=np.float32)
         neutral_target = np.full((Config.TARGET_DIM,), 1.0 / Config.TARGET_DIM, dtype=np.float32)
-        neutral_anchor = np.array([0.5, 0.5], dtype=np.float32)
+        neutral_anchor = np.full((Config.ROUTE_ANCHOR_DIM,), 1.0 / Config.ROUTE_ANCHOR_DIM, dtype=np.float32)
         return self._build_act_data(
             action=safe["action"],
             d_action=safe["action"],

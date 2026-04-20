@@ -4,202 +4,79 @@
 # Copyright (c) 1998 - 2026 Tencent. All Rights Reserved.
 ###########################################################################
 """
-Monitor panel configuration builder for Robot Vacuum.
+精简版训练监控面板配置。
+
+设计原则：
+- 只保留关键指标
+- 相关指标按 3 个一组顺序排列，便于面板一行展示
+- 中文优先，必要时保留英文 metric key
 """
 
 from kaiwudrl.common.monitor.monitor_config_builder import MonitorConfigBuilder
 
 
+def _add_line_panel(builder, title_cn, metric_name, expr=None):
+    panel = builder.add_panel(name=title_cn, name_en=metric_name, type="line")
+    panel.add_metric(metrics_name=metric_name, expr=expr or f"avg({metric_name}{{}})")
+    return panel.end_panel()
+
+
 def build_monitor():
     monitor = MonitorConfigBuilder()
 
-    config_dict = (
-        monitor.title("Robot Vacuum PPO")
-        .add_group(group_name="Algorithm", group_name_en="algorithm")
-        .add_panel(name="Reward", name_en="reward", type="line")
-        .add_metric(metrics_name="reward", expr="avg(reward{})")
-        .end_panel()
-        .add_panel(name="Total Loss", name_en="total_loss", type="line")
-        .add_metric(metrics_name="total_loss", expr="avg(total_loss{})")
-        .end_panel()
-        .add_panel(name="Value Loss", name_en="value_loss", type="line")
-        .add_metric(metrics_name="value_loss", expr="avg(value_loss{})")
-        .end_panel()
-        .add_panel(name="Policy Loss", name_en="policy_loss", type="line")
-        .add_metric(metrics_name="policy_loss", expr="avg(policy_loss{})")
-        .end_panel()
-        .add_panel(name="Entropy Loss", name_en="entropy_loss", type="line")
-        .add_metric(metrics_name="entropy_loss", expr="avg(entropy_loss{})")
-        .end_panel()
-        .add_panel(name="Avg Episode Steps", name_en="avg_episode_steps", type="line")
-        .add_metric(metrics_name="avg_episode_steps", expr="avg(avg_episode_steps{})")
-        .end_panel()
-        .add_panel(name="Avg Charge Count", name_en="avg_charge_count", type="line")
-        .add_metric(metrics_name="avg_charge_count", expr="avg(avg_charge_count{})")
-        .end_panel()
-        .add_panel(name="Avg Clean Score", name_en="avg_cleaned_cells", type="line")
-        .add_metric(metrics_name="avg_cleaned_cells", expr="avg(avg_cleaned_cells{})")
-        .end_panel()
-        .add_panel(name="Avg Remaining Charge", name_en="avg_remaining_charge", type="line")
-        .add_metric(metrics_name="avg_remaining_charge", expr="avg(avg_remaining_charge{})")
-        .end_panel()
-        .add_panel(name="Invalid Move Rate", name_en="avg_invalid_move_rate", type="line")
-        .add_metric(metrics_name="avg_invalid_move_rate", expr="avg(avg_invalid_move_rate{})")
-        .end_panel()
-        .add_panel(name="Charge Efficiency", name_en="avg_charge_efficiency", type="line")
-        .add_metric(metrics_name="avg_charge_efficiency", expr="avg(avg_charge_efficiency{})")
-        .end_panel()
-        .add_panel(name="Avg Clean Per Step", name_en="avg_clean_per_step", type="line")
-        .add_metric(metrics_name="avg_clean_per_step", expr="avg(avg_clean_per_step{})")
-        .end_panel()
-        .add_panel(name="Battery Fail Rate", name_en="battery_fail_rate", type="line")
-        .add_metric(metrics_name="battery_fail_rate", expr="avg(battery_fail_rate{})")
-        .end_panel()
-        .add_panel(name="Collision Fail Rate", name_en="collision_fail_rate", type="line")
-        .add_metric(metrics_name="collision_fail_rate", expr="avg(collision_fail_rate{})")
-        .end_panel()
-        .add_panel(name="Completed Rate", name_en="completed_rate", type="line")
-        .add_metric(metrics_name="completed_rate", expr="avg(completed_rate{})")
-        .end_panel()
-        .add_panel(name="CPS WIN", name_en="cps_win", type="line")
-        .add_metric(metrics_name="cps_win", expr="avg(cps_win{})")
-        .end_panel()
-        .add_panel(name="Avg Charge Count WIN", name_en="avg_charge_count_win", type="line")
-        .add_metric(metrics_name="avg_charge_count_win", expr="avg(avg_charge_count_win{})")
-        .end_panel()
-        .add_panel(name="Avg Expert Weight", name_en="avg_expert_weight", type="line")
-        .add_metric(metrics_name="avg_expert_weight", expr="avg(avg_expert_weight{})")
-        .end_panel()
-        .add_panel(name="Late Return Rate", name_en="late_return_rate", type="line")
-        .add_metric(metrics_name="late_return_rate", expr="avg(late_return_rate{})")
-        .end_panel()
-        .add_panel(name="Late Contract Rate", name_en="late_contract_rate", type="line")
-        .add_metric(metrics_name="late_contract_rate", expr="avg(late_contract_rate{})")
-        .end_panel()
-        .add_panel(name="Anchor Switch Rate", name_en="anchor_switch_rate", type="line")
-        .add_metric(metrics_name="anchor_switch_rate", expr="avg(anchor_switch_rate{})")
-        .end_panel()
-        .add_panel(name="Target Switch Rate", name_en="target_switch_rate", type="line")
-        .add_metric(metrics_name="target_switch_rate", expr="avg(target_switch_rate{})")
-        .end_panel()
-        .add_panel(name="Diag Rate All", name_en="diag_rate_all", type="line")
-        .add_metric(metrics_name="diag_rate_all", expr="avg(diag_rate_all{})")
-        .end_panel()
-        .add_panel(name="Diag Rate Contract", name_en="diag_rate_contract", type="line")
-        .add_metric(metrics_name="diag_rate_contract", expr="avg(diag_rate_contract{})")
-        .end_panel()
-        .add_panel(name="Diag Rate Return", name_en="diag_rate_return", type="line")
-        .add_metric(metrics_name="diag_rate_return", expr="avg(diag_rate_return{})")
-        .end_panel()
-        .add_panel(name="Return Progress", name_en="return_progress_per_step", type="line")
-        .add_metric(metrics_name="return_progress_per_step", expr="avg(return_progress_per_step{})")
-        .end_panel()
-        .add_panel(name="Return Eff Ratio", name_en="return_efficiency_ratio", type="line")
-        .add_metric(metrics_name="return_efficiency_ratio", expr="avg(return_efficiency_ratio{})")
-        .end_panel()
-        .add_panel(name="Return Stall Rate", name_en="return_stall_rate", type="line")
-        .add_metric(metrics_name="return_stall_rate", expr="avg(return_stall_rate{})")
-        .end_panel()
-        .add_panel(name="Recoverability", name_en="recoverability_score_avg", type="line")
-        .add_metric(metrics_name="recoverability_score_avg", expr="avg(recoverability_score_avg{})")
-        .end_panel()
-        .add_panel(name="Recover Viol Rate", name_en="recoverability_violation_rate", type="line")
-        .add_metric(metrics_name="recoverability_violation_rate", expr="avg(recoverability_violation_rate{})")
-        .end_panel()
-        .add_panel(name="Wall Hugging Rate", name_en="wall_hugging_clean_floor_rate", type="line")
-        .add_metric(metrics_name="wall_hugging_clean_floor_rate", expr="avg(wall_hugging_clean_floor_rate{})")
-        .end_panel()
-        .add_panel(name="Stale Boundary Rate", name_en="stale_boundary_follow_rate", type="line")
-        .add_metric(metrics_name="stale_boundary_follow_rate", expr="avg(stale_boundary_follow_rate{})")
-        .end_panel()
-        .add_panel(name="Missed Charge Rate", name_en="missed_charge_opportunity_rate", type="line")
-        .add_metric(metrics_name="missed_charge_opportunity_rate", expr="avg(missed_charge_opportunity_rate{})")
-        .end_panel()
-        .add_panel(name="Target Hold Rate", name_en="suboptimal_target_hold_rate", type="line")
-        .add_metric(metrics_name="suboptimal_target_hold_rate", expr="avg(suboptimal_target_hold_rate{})")
-        .end_panel()
-        .add_panel(name="Planner Div Rate", name_en="planner_policy_divergence_rate", type="line")
-        .add_metric(metrics_name="planner_policy_divergence_rate", expr="avg(planner_policy_divergence_rate{})")
-        .end_panel()
-        .add_panel(name="Mode Depart", name_en="mode_usage_depart", type="line")
-        .add_metric(metrics_name="mode_usage_depart", expr="avg(mode_usage_depart{})")
-        .end_panel()
-        .add_panel(name="Mode Expand", name_en="mode_usage_expand", type="line")
-        .add_metric(metrics_name="mode_usage_expand", expr="avg(mode_usage_expand{})")
-        .end_panel()
-        .add_panel(name="Mode Harvest", name_en="mode_usage_harvest", type="line")
-        .add_metric(metrics_name="mode_usage_harvest", expr="avg(mode_usage_harvest{})")
-        .end_panel()
-        .add_panel(name="Mode Contract", name_en="mode_usage_contract", type="line")
-        .add_metric(metrics_name="mode_usage_contract", expr="avg(mode_usage_contract{})")
-        .end_panel()
-        .add_panel(name="Mode Return", name_en="mode_usage_return", type="line")
-        .add_metric(metrics_name="mode_usage_return", expr="avg(mode_usage_return{})")
-        .end_panel()
-        .add_panel(name="Mode Evade", name_en="mode_usage_evade", type="line")
-        .add_metric(metrics_name="mode_usage_evade", expr="avg(mode_usage_evade{})")
-        .end_panel()
-        .add_panel(name="Anchor WinRate", name_en="anchor_win_rate", type="line")
-        .add_metric(metrics_name="anchor_win_rate", expr="avg(anchor_win_rate{})")
-        .end_panel()
-        .add_panel(name="Mild WinRate", name_en="mild_win_rate", type="line")
-        .add_metric(metrics_name="mild_win_rate", expr="avg(mild_win_rate{})")
-        .end_panel()
-        .add_panel(name="Broad WinRate", name_en="broad_win_rate", type="line")
-        .add_metric(metrics_name="broad_win_rate", expr="avg(broad_win_rate{})")
-        .end_panel()
-        .add_panel(name="Curriculum Stage", name_en="curriculum_stage_idx", type="line")
-        .add_metric(metrics_name="curriculum_stage_idx", expr="avg(curriculum_stage_idx{})")
-        .end_panel()
-        .add_panel(name="Curr Start Tier", name_en="curriculum_start_tier", type="line")
-        .add_metric(metrics_name="curriculum_start_tier", expr="avg(curriculum_start_tier{})")
-        .end_panel()
-        .add_panel(name="Curriculum Progress", name_en="curriculum_progress", type="line")
-        .add_metric(metrics_name="curriculum_progress", expr="avg(curriculum_progress{})")
-        .end_panel()
-        .add_panel(name="Lite Bench Used", name_en="curriculum_lite_benchmark_used", type="line")
-        .add_metric(metrics_name="curriculum_lite_benchmark_used", expr="avg(curriculum_lite_benchmark_used{})")
-        .end_panel()
-        .add_panel(name="Obs Phase Active", name_en="curriculum_observation_phase_active", type="line")
-        .add_metric(metrics_name="curriculum_observation_phase_active", expr="avg(curriculum_observation_phase_active{})")
-        .end_panel()
-        .add_panel(name="Profile Anchor", name_en="curriculum_profile_anchor_weight", type="line")
-        .add_metric(metrics_name="curriculum_profile_anchor_weight", expr="avg(curriculum_profile_anchor_weight{})")
-        .end_panel()
-        .add_panel(name="Profile Mild", name_en="curriculum_profile_mild_weight", type="line")
-        .add_metric(metrics_name="curriculum_profile_mild_weight", expr="avg(curriculum_profile_mild_weight{})")
-        .end_panel()
-        .add_panel(name="Profile Broad", name_en="curriculum_profile_broad_weight", type="line")
-        .add_metric(metrics_name="curriculum_profile_broad_weight", expr="avg(curriculum_profile_broad_weight{})")
-        .end_panel()
-        .add_panel(name="Profile BroadEval", name_en="curriculum_profile_broad_eval_weight", type="line")
-        .add_metric(metrics_name="curriculum_profile_broad_eval_weight", expr="avg(curriculum_profile_broad_eval_weight{})")
-        .end_panel()
-        .add_panel(name="Curr Gate Step", name_en="curriculum_gate_global_step_ratio", type="line")
-        .add_metric(metrics_name="curriculum_gate_global_step_ratio", expr="avg(curriculum_gate_global_step_ratio{})")
-        .end_panel()
-        .add_panel(name="Curr Gate Stall", name_en="curriculum_gate_return_stall_ratio", type="line")
-        .add_metric(metrics_name="curriculum_gate_return_stall_ratio", expr="avg(curriculum_gate_return_stall_ratio{})")
-        .end_panel()
-        .add_panel(name="Curr Stall Margin", name_en="curriculum_return_stall_margin", type="line")
-        .add_metric(metrics_name="curriculum_return_stall_margin", expr="avg(curriculum_return_stall_margin{})")
-        .end_panel()
-        .add_panel(name="Resume Score", name_en="resume_readiness_score", type="line")
-        .add_metric(metrics_name="resume_readiness_score", expr="avg(resume_readiness_score{})")
-        .end_panel()
-        .add_panel(name="Resume Safety", name_en="resume_score_safety", type="line")
-        .add_metric(metrics_name="resume_score_safety", expr="avg(resume_score_safety{})")
-        .end_panel()
-        .add_panel(name="Resume Behavior", name_en="resume_score_behavior", type="line")
-        .add_metric(metrics_name="resume_score_behavior", expr="avg(resume_score_behavior{})")
-        .end_panel()
-        .add_panel(name="Preserve Score", name_en="checkpoint_preservation_score", type="line")
-        .add_metric(metrics_name="checkpoint_preservation_score", expr="avg(checkpoint_preservation_score{})")
-        .end_panel()
-        .add_panel(name="Predict Fallback", name_en="predict_fallback_count", type="line")
-        .add_metric(metrics_name="predict_fallback_count", expr="avg(predict_fallback_count{})")
-        .end_panel()
-        .end_group()
-        .build()
+    builder = monitor.title("Robot Vacuum PPO").add_group(
+        group_name="关键训练指标",
+        group_name_en="core_training_dashboard",
     )
-    return config_dict
+
+    panels = [
+        # 结果概览
+        ("完成率", "completed_rate"),
+        ("电池失败率", "battery_fail_rate"),
+        ("碰撞失败率", "collision_fail_rate"),
+        # 效率表现
+        ("平均清扫分", "avg_cleaned_cells"),
+        ("平均清扫效率", "avg_clean_per_step"),
+        ("胜局 CPS", "cps_win"),
+        # 步数与充电
+        ("平均步数", "avg_episode_steps"),
+        ("平均充电次数", "avg_charge_count"),
+        ("胜局充电次数", "avg_charge_count_win"),
+        # 充电行为
+        ("平均剩余电量", "avg_remaining_charge"),
+        ("每次充电清扫分", "avg_clean_per_charge_when_charged"),
+        ("零充电失败率", "zero_charge_battery_fail_rate"),
+        # 完成质量
+        ("胜局平均清扫分", "avg_clean_score_win"),
+        ("完成局充电次数", "avg_charge_count_completed"),
+        ("电池失败局充电次数", "avg_charge_count_battery_fail"),
+        # 规划与返航
+        ("规划偏离率", "planner_policy_divergence_rate"),
+        ("返航停滞率", "return_stall_rate"),
+        ("返航效率比", "return_efficiency_ratio"),
+        # 行为结构
+        ("扩张占比", "mode_usage_expand"),
+        ("收缩占比", "mode_usage_contract"),
+        ("覆盖效率20", "avg_coverage_efficiency_20"),
+        # 约束系统
+        ("电池约束系数", "lambda_battery"),
+        ("电池过程成本", "battery_process_cost_mean"),
+        ("高需能停滞率", "high_need_return_stall_rate"),
+        # 分课程胜率
+        ("Anchor胜率", "anchor_win_rate"),
+        ("Mild胜率", "mild_win_rate"),
+        ("Broad胜率", "broad_win_rate"),
+        # 课程系统
+        ("课程阶段", "curriculum_stage_idx"),
+        ("课程进度", "curriculum_progress"),
+        ("停滞等级", "curriculum_stagnation_level"),
+        # 训练数值
+        ("总奖励", "reward"),
+        ("总损失", "total_loss"),
+        ("熵损失", "entropy_loss"),
+    ]
+
+    for title_cn, metric_name in panels:
+        builder = _add_line_panel(builder, title_cn, metric_name)
+
+    return builder.end_group().build()

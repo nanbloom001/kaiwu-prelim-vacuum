@@ -426,7 +426,7 @@ def _finalize_parallel_benchmark(
         "policy_mode": manifest.get("policy_mode", benchmark_mod._benchmark_policy_mode()),
         "git_commit": manifest.get("git_commit", benchmark_mod._get_git_commit()),
         "elapsed_seconds": round(time.time() - float(manifest.get("created_at", time.time())), 1),
-        "rounds": {r["name"]: r["desc"] for r in benchmark_mod.ROUNDS},
+        "rounds": {r["name"]: r["desc"] for r in manifest.get("rounds", benchmark_mod.ROUNDS)},
         "per_round": aggregated["per_round"],
         "overall": aggregated["overall"],
         "episodes": episode_results,
