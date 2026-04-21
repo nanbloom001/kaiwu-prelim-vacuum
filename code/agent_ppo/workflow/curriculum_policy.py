@@ -40,6 +40,7 @@ DEGRADED_MAINLINE_PROFILE_WEIGHTS = {
     "warmup": (("anchor", 0.52), ("mild", 0.33), ("broad", 0.15)),
 }
 PROFILE_KEYS = ("anchor", "mild", "broad", "broad_eval")
+S1_SURVIVAL_PROFILE_WEIGHTS = (("anchor", 0.60), ("mild", 0.30), ("broad", 0.10))
 WARMUP_BATTERY_GUARD_WEIGHTS = (("anchor", 0.65), ("mild", 0.30), ("broad", 0.05))
 TRANSITION_PROFILE_WEIGHTS = {
     "blend": (("anchor", 0.45), ("mild", 0.40), ("broad", 0.15)),
@@ -73,6 +74,10 @@ def _metric(metrics: dict[str, Any] | None, key: str, default: float = 0.0) -> f
         return float(metrics.get(key, default))
     except (TypeError, ValueError):
         return float(default)
+
+
+def _current_train_phase() -> str:
+    return str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
 
 
 def _meets_s0_exit(global_step_since_resume: int, metrics: dict[str, Any] | None, learning: dict[str, Any] | None) -> bool:
@@ -247,6 +252,8 @@ def choose_stage_decision(
     context: dict[str, Any],
     stage_entry_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if _current_train_phase() == "s1_survival":
+        return {"proposed_stage": "warmup", "promotion_reason": "phase_lock"}
     global_step_since_resume = int(context.get("global_step_since_resume", 0))
     window_metrics = context.get("window_metrics")
     bootstrap_metrics = context.get("bootstrap_metrics")
@@ -376,6 +383,13 @@ def profile_plan_for_runtime(stage: str, state: dict[str, Any] | None = None) ->
     current_stage = str(stage or state.get("stage") or "warmup").strip().lower()
     if current_stage not in STAGE_INDEX:
         current_stage = "warmup"
+    if _current_train_phase() == "s1_survival":
+        return {
+            "weights": S1_SURVIVAL_PROFILE_WEIGHTS,
+            "weight_map": _weights_to_dict(S1_SURVIVAL_PROFILE_WEIGHTS),
+            "observation_phase_active": False,
+            "tightened": True,
+        }
     adaptive_enabled = str(os.getenv("KAIWU_CURRICULUM_ADAPTIVE_PROFILE_ENABLED", "1") or "1").strip().lower() not in {
         "0", "false", "no", "off"
     }
@@ -493,22 +507,59 @@ def stagnation_status(
     if int(global_step_since_resume) - int(entered_global_step) < int(min_steps):
         return 0, []
 
+    if _current_train_phase() == "s1_survival":
+        reasons = []
+        avg_cps = _metric(metrics, "avg_clean_per_step", 0.0) or 0.0
+        zero_charge_fail = _metric(metrics, "zero_charge_battery_fail_rate", 0.0) or 0.0
+        battery_positive_reward_rate = _metric(metrics, "battery_positive_reward_rate", 0.0) or 0.0
+        if avg_cps < 0.46:
+            reasons.append("collapse")
+        if zero_charge_fail > 0.40:
+            reasons.append("charge")
+        if battery_positive_reward_rate > 0.20:
+            reasons.append("reward")
+        if len(reasons) < 2:
+            return 0, reasons
+
+        windows = int(stagnant_windows)
+        if windows >= 8:
+            return 3, reasons
+        if windows >= 5:
+            return 2, reasons
+        if windows >= 3:
+            return 1, reasons
+        return 0, reasons
+
     thresholds = {
-        "warmup": {"cps": 0.32, "planner": 0.80, "expand": 0.01, "stall": 0.52},
-        "blend": {"cps": 0.38, "planner": 0.72, "expand": 0.03, "stall": 0.45},
-        "robust": {"cps": 0.45, "planner": 0.60, "expand": 0.06, "stall": 0.35},
-        "eval_hard": {"cps": 0.45, "planner": 0.55, "expand": 0.08, "stall": 0.30},
+        "warmup": {"cps": 0.32, "planner": 0.55, "expand": 0.03, "stall": 0.45},
+        "blend": {"cps": 0.38, "planner": 0.50, "expand": 0.03, "stall": 0.40},
+        "robust": {"cps": 0.45, "planner": 0.42, "expand": 0.06, "stall": 0.32},
+        "eval_hard": {"cps": 0.45, "planner": 0.35, "expand": 0.08, "stall": 0.28},
     }
     target = thresholds.get(stage, thresholds["robust"])
     reasons = []
     if _metric(metrics, "avg_clean_per_step", 0.0) < target["cps"]:
         reasons.append("cps")
-    if _metric(metrics, "planner_policy_divergence_rate", 1.0) > target["planner"]:
+    planner_metric = _metric(
+        metrics,
+        "reliable_planner_divergence_rate",
+        _metric(metrics, "route_phase_planner_divergence_rate", 1.0),
+    )
+    if planner_metric > target["planner"]:
         reasons.append("planner")
     if _metric(metrics, "mode_usage_expand", 0.0) < target["expand"]:
         reasons.append("expand")
-    if _metric(metrics, "return_stall_rate", 0.0) > target["stall"]:
+    stall_metric = _metric(
+        metrics,
+        "route_phase_return_stall_rate",
+        _metric(metrics, "high_need_return_stall_rate", _metric(metrics, "return_stall_rate", 0.0)),
+    )
+    if stall_metric > target["stall"]:
         reasons.append("stall")
+    if _metric(metrics, "zero_charge_battery_fail_rate", 0.0) > 0.55:
+        reasons.append("charge")
+    if _metric(metrics, "battery_positive_reward_rate", 0.0) > 0.20:
+        reasons.append("reward")
 
     if len(reasons) < 2:
         return 0, reasons

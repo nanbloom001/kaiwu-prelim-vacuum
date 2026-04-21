@@ -33,6 +33,7 @@ RUN_SESSION_MANIFEST_FILE = "run_session.json"
 CURRICULUM_STATE_FILE = "curriculum_state.json"
 CURRICULUM_STATE_SNAPSHOT_FILE = "curriculum_state.snapshot.json"
 CURRICULUM_SIGNALS_DIR_NAME = "curriculum_signals"
+COMPARISON_SAMPLES_FILE = "comparison_samples.json"
 RUN_SESSION_LOCK_FILE = "run_session.lock"
 CURRICULUM_STATE_LOCK_FILE = "curriculum_state.lock"
 LATEST_PRELOAD_FILE = "latest_preload.json"
@@ -99,6 +100,7 @@ class RunStateLayout:
     run_dir: Path
     run_manifest_path: Path
     curriculum_state_path: Path
+    comparison_samples_path: Path
     curriculum_signal_dir: Path
     resume_dir: Path
     resume_latest_dir: Path
@@ -131,6 +133,7 @@ class RuntimeStateLayout:
             run_dir=run_dir,
             run_manifest_path=run_dir / RUN_SESSION_MANIFEST_FILE,
             curriculum_state_path=run_dir / CURRICULUM_STATE_FILE,
+            comparison_samples_path=run_dir / COMPARISON_SAMPLES_FILE,
             curriculum_signal_dir=run_dir / CURRICULUM_SIGNALS_DIR_NAME,
             resume_dir=resume_dir,
             resume_latest_dir=resume_latest_dir,
@@ -364,6 +367,7 @@ __all__ = [
     "CURRICULUM_STATE_FILE",
     "CURRICULUM_STATE_SNAPSHOT_FILE",
     "CURRICULUM_SIGNALS_DIR_NAME",
+    "COMPARISON_SAMPLES_FILE",
     "RUN_SESSION_LOCK_FILE",
     "CURRICULUM_STATE_LOCK_FILE",
     "LATEST_PRELOAD_FILE",

@@ -58,6 +58,8 @@ SampleData = create_cls(
     target_teacher_mask=Config.SAMPLE_TARGET_TEACHER_MASK_DIM,
     return_action_teacher=Config.SAMPLE_RETURN_ACTION_DIM,
     return_action_teacher_mask=Config.SAMPLE_RETURN_ACTION_MASK_DIM,
+    route_phase_action_teacher=Config.SAMPLE_ROUTE_PHASE_ACTION_DIM,
+    route_phase_action_teacher_mask=Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM,
     battery_risk_label=Config.SAMPLE_AUX_LABEL_DIM,
     collision_risk_label=Config.SAMPLE_AUX_LABEL_DIM,
     constraint_battery_process_cost=Config.SAMPLE_CONSTRAINT_COST_DIM,
@@ -140,6 +142,8 @@ def sample_process(step_records, episode_idx=0):
     target_teacher_mask_seq = _to_scalar_sequence(step_records, "target_teacher_mask")
     return_action_teacher_seq = _to_int_sequence(step_records, "return_action_teacher")
     return_action_teacher_mask_seq = _to_scalar_sequence(step_records, "return_action_teacher_mask")
+    route_phase_action_teacher_seq = _to_int_sequence(step_records, "route_phase_action_teacher")
+    route_phase_action_teacher_mask_seq = _to_scalar_sequence(step_records, "route_phase_action_teacher_mask")
     battery_risk_label_seq = _to_scalar_sequence(step_records, "battery_risk_label")
     collision_risk_label_seq = _to_scalar_sequence(step_records, "collision_risk_label")
     constraint_battery_process_cost_seq = _to_scalar_sequence(step_records, "constraint_battery_process_cost")
@@ -154,6 +158,7 @@ def sample_process(step_records, episode_idx=0):
     route_anchor_teacher_mask_seq = route_anchor_teacher_mask_seq * teacher_scale
     target_teacher_mask_seq = target_teacher_mask_seq * teacher_scale
     return_action_teacher_mask_seq = return_action_teacher_mask_seq * teacher_scale
+    route_phase_action_teacher_mask_seq = route_phase_action_teacher_mask_seq * teacher_scale
 
     samples = []
     chunk_len = Config.SEQ_CHUNK_LEN
@@ -184,6 +189,10 @@ def sample_process(step_records, episode_idx=0):
         target_teacher_mask_chunk = _pad_seq(target_teacher_mask_seq[sl], chunk_len, dtype=np.float32)
         return_action_teacher_chunk = _pad_seq(return_action_teacher_seq[sl], chunk_len, dtype=np.int64)
         return_action_teacher_mask_chunk = _pad_seq(return_action_teacher_mask_seq[sl], chunk_len, dtype=np.float32)
+        route_phase_action_teacher_chunk = _pad_seq(route_phase_action_teacher_seq[sl], chunk_len, dtype=np.int64)
+        route_phase_action_teacher_mask_chunk = _pad_seq(
+            route_phase_action_teacher_mask_seq[sl], chunk_len, dtype=np.float32
+        )
         battery_risk_chunk = _pad_seq(battery_risk_label_seq[sl], chunk_len, dtype=np.float32)
         collision_risk_chunk = _pad_seq(collision_risk_label_seq[sl], chunk_len, dtype=np.float32)
         constraint_battery_process_cost_chunk = _pad_seq(
@@ -198,6 +207,7 @@ def sample_process(step_records, episode_idx=0):
             route_anchor_teacher_mask_chunk[actual_len:] = 0.0
             target_teacher_mask_chunk[actual_len:] = 0.0
             return_action_teacher_mask_chunk[actual_len:] = 0.0
+            route_phase_action_teacher_mask_chunk[actual_len:] = 0.0
             fallback_mask_chunk[actual_len:] = 1.0
 
         samples.append(
@@ -221,6 +231,8 @@ def sample_process(step_records, episode_idx=0):
                 target_teacher_mask=target_teacher_mask_chunk.astype(np.float32),
                 return_action_teacher=return_action_teacher_chunk.astype(np.int64),
                 return_action_teacher_mask=return_action_teacher_mask_chunk.astype(np.float32),
+                route_phase_action_teacher=route_phase_action_teacher_chunk.astype(np.int64),
+                route_phase_action_teacher_mask=route_phase_action_teacher_mask_chunk.astype(np.float32),
                 battery_risk_label=battery_risk_chunk.astype(np.float32),
                 collision_risk_label=collision_risk_chunk.astype(np.float32),
                 constraint_battery_process_cost=constraint_battery_process_cost_chunk.astype(np.float32),

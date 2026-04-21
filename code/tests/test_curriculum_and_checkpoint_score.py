@@ -2,6 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 import importlib
+import importlib.util
 import unittest
 import json
 import os
@@ -1704,7 +1705,10 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             "KAIWU_CURRICULUM_BLEND_GUARD_STEPS",
             "KAIWU_CURRICULUM_ROBUST_GUARD_STEPS",
             "KAIWU_EPISODE_COMPLETED_BONUS",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
             "KAIWU_EPISODE_FAIL_EARLY_SCALE",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
         ]
         original = {key: os.environ.get(key) for key in env_keys}
         try:
@@ -1723,14 +1727,16 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             self.assertAlmostEqual(conf_module.Config.REWARD_CPS_BONUS_BASELINE, 0.58, places=5)
             self.assertAlmostEqual(conf_module.Config.REWARD_CPS_BONUS_SPAN, 0.22, places=5)
             self.assertAlmostEqual(conf_module.Config.FRONTIER_REWARD_SCALE, 0.08, places=5)
-            self.assertAlmostEqual(conf_module.Config.BATTERY_FAIL_TASK_REWARD_SCALE, 0.50, places=5)
-            self.assertAlmostEqual(conf_module.Config.EARLY_BATTERY_FAIL_TASK_REWARD_SCALE, 0.30, places=5)
+            self.assertAlmostEqual(conf_module.Config.BATTERY_FAIL_TASK_REWARD_SCALE, 0.28, places=5)
+            self.assertAlmostEqual(conf_module.Config.EARLY_BATTERY_FAIL_TASK_REWARD_SCALE, 0.10, places=5)
             self.assertTrue(conf_module.Config.REWARD_SCHEDULE_ENABLED)
             self.assertEqual(conf_module.Config.REWARD_SCHEDULE_WARM_STEPS, 5000)
             self.assertEqual(conf_module.Config.REWARD_SCHEDULE_TOTAL_STEPS, 20000)
             self.assertAlmostEqual(conf_module.Config.NECESSARY_CHARGE_BONUS_SCALE_PEAK, 1.40, places=5)
-            self.assertAlmostEqual(conf_module.Config.BATTERY_FAIL_TASK_REWARD_SCALE_PEAK, 0.40, places=5)
-            self.assertAlmostEqual(conf_module.Config.EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK, 0.20, places=5)
+            self.assertAlmostEqual(conf_module.Config.BATTERY_FAIL_TASK_REWARD_SCALE_PEAK, 0.18, places=5)
+            self.assertAlmostEqual(conf_module.Config.EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK, 0.06, places=5)
+            self.assertAlmostEqual(conf_module.Config.ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST, 0.75, places=5)
+            self.assertAlmostEqual(conf_module.Config.BATTERY_TERMINAL_COST_SCALE, 39.0, places=5)
             self.assertAlmostEqual(conf_module.Config.BATTERY_SAFE_NEED_THRESHOLD, 0.12, places=5)
             self.assertAlmostEqual(conf_module.Config.BATTERY_CRITICAL_NEED_THRESHOLD, 0.28, places=5)
             self.assertAlmostEqual(conf_module.Config.LAMBDA_BATTERY_INIT, 0.60, places=5)
@@ -1751,6 +1757,7 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             self.assertEqual(conf_module.Config.CURRICULUM_ROBUST_GUARD_STEPS, 12000)
             self.assertEqual(conf_module.Config.CURRICULUM_STAGE_TRANSITION_COOLDOWN_STEPS, 8000)
             self.assertAlmostEqual(conf_module.Config.EPISODE_COMPLETED_BONUS, 6.0, places=5)
+            self.assertAlmostEqual(conf_module.Config.EPISODE_BATTERY_FAIL_BONUS, -12.0, places=5)
             self.assertAlmostEqual(conf_module.Config.EPISODE_FAIL_EARLY_SCALE, 1.2, places=5)
         finally:
             for key, value in original.items():
@@ -1799,10 +1806,10 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertGreater(middle["scheduled_necessary_charge_bonus_scale"], 1.05)
         self.assertAlmostEqual(end["scheduled_necessary_charge_bonus_scale"], 1.05, places=5)
         self.assertAlmostEqual(late["scheduled_necessary_charge_bonus_scale"], 1.05, places=5)
-        self.assertAlmostEqual(start["scheduled_battery_fail_task_reward_scale"], 0.40, places=5)
-        self.assertAlmostEqual(start["scheduled_early_battery_fail_task_reward_scale"], 0.20, places=5)
-        self.assertAlmostEqual(end["scheduled_battery_fail_task_reward_scale"], 0.50, places=5)
-        self.assertAlmostEqual(end["scheduled_early_battery_fail_task_reward_scale"], 0.30, places=5)
+        self.assertAlmostEqual(start["scheduled_battery_fail_task_reward_scale"], 0.18, places=5)
+        self.assertAlmostEqual(start["scheduled_early_battery_fail_task_reward_scale"], 0.06, places=5)
+        self.assertAlmostEqual(end["scheduled_battery_fail_task_reward_scale"], 0.28, places=5)
+        self.assertAlmostEqual(end["scheduled_early_battery_fail_task_reward_scale"], 0.10, places=5)
 
     def test_warmup_profile_guard_holds_and_releases_on_battery_health(self):
         from agent_ppo.workflow.curriculum_policy import profile_plan_for_runtime
@@ -1887,6 +1894,132 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertEqual(level2, 2)
         self.assertIn("planner", reasons2)
 
+    def test_curriculum_stagnation_status_uses_route_phase_metrics_and_charge_flags(self):
+        from agent_ppo.workflow.curriculum_policy import stagnation_status
+
+        level, reasons = stagnation_status(
+            stage="warmup",
+            metrics={
+                "avg_clean_per_step": 0.40,
+                "reliable_planner_divergence_rate": 0.70,
+                "mode_usage_expand": 0.05,
+                "route_phase_return_stall_rate": 0.50,
+                "zero_charge_battery_fail_rate": 0.70,
+                "battery_positive_reward_rate": 0.25,
+            },
+            global_step_since_resume=12000,
+            entered_global_step=0,
+            stagnant_windows=8,
+        )
+        self.assertEqual(level, 3)
+        self.assertIn("planner", reasons)
+        self.assertIn("stall", reasons)
+        self.assertIn("charge", reasons)
+        self.assertIn("reward", reasons)
+
+    def test_profile_plan_for_runtime_uses_fixed_survival_weights_when_train_phase_is_s1(self):
+        from agent_ppo.workflow.curriculum_policy import profile_plan_for_runtime
+
+        state = {
+            "stage": "warmup",
+            "global_step_since_resume": 20000,
+            "last_global_metrics": {
+                "battery_fail_rate": 0.50,
+                "zero_charge_battery_fail_rate": 0.70,
+                "avg_clean_per_step": 0.20,
+                "planner_policy_divergence_rate": 0.95,
+            },
+        }
+        with patch.dict(os.environ, {"KAIWU_TRAIN_PHASE": "s1_survival"}, clear=False):
+            plan = profile_plan_for_runtime("warmup", state)
+
+        self.assertAlmostEqual(plan["weight_map"]["anchor"], 0.60, places=4)
+        self.assertAlmostEqual(plan["weight_map"]["mild"], 0.30, places=4)
+        self.assertAlmostEqual(plan["weight_map"]["broad"], 0.10, places=4)
+        self.assertFalse(plan["observation_phase_active"])
+        self.assertTrue(plan["tightened"])
+
+    def test_choose_stage_decision_freezes_warmup_when_train_phase_is_s1(self):
+        from agent_ppo.workflow.curriculum_policy import choose_stage_decision
+
+        context = {
+            "global_step_since_resume": 40000,
+            "window_metrics": {
+                "_count": 40,
+                "win_rate": 0.95,
+                "battery_fail_rate": 0.01,
+                "collision_fail_rate": 0.01,
+                "avg_clean_per_step": 0.90,
+                "return_stall_rate": 0.05,
+                "planner_policy_divergence_rate": 0.10,
+                "zero_charge_battery_fail_rate": 0.0,
+            },
+            "bootstrap_metrics": {
+                "_count": 20,
+                "win_rate": 0.95,
+                "battery_fail_rate": 0.01,
+                "collision_fail_rate": 0.01,
+                "avg_clean_per_step": 0.90,
+                "return_stall_rate": 0.05,
+                "planner_policy_divergence_rate": 0.10,
+                "zero_charge_battery_fail_rate": 0.0,
+            },
+            "learning_metrics": {"entropy_loss": 0.60, "entropy_trend_ratio": 1.0},
+            "resume_fast_track": True,
+            "training_start_mode": "scratch",
+            "preload_enabled": False,
+            "entered_global_step": 0,
+        }
+
+        with patch.dict(os.environ, {"KAIWU_TRAIN_PHASE": "s1_survival"}, clear=False):
+            decision = choose_stage_decision("warmup", context, None)
+
+        self.assertEqual(decision["proposed_stage"], "warmup")
+        self.assertEqual(decision["promotion_reason"], "phase_lock")
+
+    def test_curriculum_stagnation_status_s1_survival_only_uses_charge_reward_and_collapse(self):
+        from agent_ppo.workflow.curriculum_policy import stagnation_status
+
+        with patch.dict(os.environ, {"KAIWU_TRAIN_PHASE": "s1_survival"}, clear=False):
+            level, reasons = stagnation_status(
+                stage="warmup",
+                metrics={
+                    "avg_clean_per_step": 0.50,
+                    "planner_policy_divergence_rate": 0.95,
+                    "mode_usage_expand": 0.0,
+                    "route_phase_return_stall_rate": 0.60,
+                    "zero_charge_battery_fail_rate": 0.10,
+                    "battery_positive_reward_rate": 0.10,
+                },
+                global_step_since_resume=12000,
+                entered_global_step=0,
+                stagnant_windows=8,
+            )
+        self.assertEqual(level, 0)
+        self.assertEqual(reasons, [])
+
+        with patch.dict(os.environ, {"KAIWU_TRAIN_PHASE": "s1_survival"}, clear=False):
+            level2, reasons2 = stagnation_status(
+                stage="warmup",
+                metrics={
+                    "avg_clean_per_step": 0.40,
+                    "planner_policy_divergence_rate": 0.95,
+                    "mode_usage_expand": 0.0,
+                    "route_phase_return_stall_rate": 0.60,
+                    "zero_charge_battery_fail_rate": 0.50,
+                    "battery_positive_reward_rate": 0.30,
+                },
+                global_step_since_resume=12000,
+                entered_global_step=0,
+                stagnant_windows=8,
+            )
+        self.assertEqual(level2, 3)
+        self.assertIn("collapse", reasons2)
+        self.assertIn("charge", reasons2)
+        self.assertIn("reward", reasons2)
+        self.assertNotIn("planner", reasons2)
+        self.assertNotIn("stall", reasons2)
+
     def test_apply_terminal_outcome_to_step_records_writes_collision_cost_into_last_sample(self):
         if importlib.util.find_spec("numpy") is None:
             self.skipTest("numpy is not available in the host test environment")
@@ -1916,15 +2049,22 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         if importlib.util.find_spec("numpy") is None:
             self.skipTest("numpy is not available in the host test environment")
         from agent_ppo.workflow.train_workflow import EpisodeRunner
+        import agent_ppo.conf.conf as conf_module
 
         reward_schedule = {
-            "scheduled_battery_fail_task_reward_scale": 0.5,
-            "scheduled_early_battery_fail_task_reward_scale": 0.3,
+            "scheduled_battery_fail_task_reward_scale": 0.28,
+            "scheduled_early_battery_fail_task_reward_scale": 0.10,
         }
 
         base_cost, base_scale, base_zero = EpisodeRunner._compute_battery_fail_outcome(
             charge_count=2.0,
             battery_fail_type="mid_recoverability_loss",
+            battery_fail_severity=0.6,
+            reward_schedule=reward_schedule,
+        )
+        late_cost, late_scale, late_zero = EpisodeRunner._compute_battery_fail_outcome(
+            charge_count=2.0,
+            battery_fail_type="late_near_completion",
             battery_fail_severity=0.6,
             reward_schedule=reward_schedule,
         )
@@ -1936,9 +2076,19 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         )
 
         self.assertFalse(base_zero)
+        self.assertFalse(late_zero)
         self.assertTrue(zero_flag)
-        self.assertGreater(zero_cost, base_cost)
-        self.assertLessEqual(zero_scale, base_scale)
+        expected_base_cost = (
+            conf_module.Config.BATTERY_TERMINAL_COST_SCALE * 0.6
+            + abs(conf_module.Config.EPISODE_BATTERY_FAIL_BONUS)
+        )
+        self.assertAlmostEqual(base_cost, expected_base_cost, places=5)
+        self.assertAlmostEqual(late_cost, expected_base_cost, places=5)
+        self.assertAlmostEqual(base_scale, reward_schedule["scheduled_battery_fail_task_reward_scale"], places=5)
+        self.assertAlmostEqual(late_scale, reward_schedule["scheduled_battery_fail_task_reward_scale"], places=5)
+        expected_zero_cost = expected_base_cost + conf_module.Config.ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST * 0.6
+        self.assertAlmostEqual(zero_cost, expected_zero_cost, places=5)
+        self.assertAlmostEqual(zero_scale, reward_schedule["scheduled_early_battery_fail_task_reward_scale"], places=5)
 
     def test_choose_stage_decision_resume_stabilization_holds_current_stage(self):
         from agent_ppo.workflow.curriculum_policy import choose_stage_decision
@@ -2190,6 +2340,325 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         inferred = Preprocessor._infer_mode(prep)
 
         self.assertNotEqual(inferred, Preprocessor.MODE_CONTRACT)
+
+    def test_infer_mode_requires_two_soft_triggers_for_contract(self):
+        if importlib.util.find_spec("numpy") is None:
+            self.skipTest("numpy is not available in the host test environment")
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor.__new__(Preprocessor)
+        prep.battery = 60.0
+        prep.battery_max = 200.0
+        prep.nearest_npc_dist = 10.0
+        prep.charger_slack = 20.0
+        prep.future_recoverability_score = 1.0
+        prep.route_contract_pressure = 0.0
+        prep.total_charger = 4
+        prep.steps_since_charge = 100
+        prep.local_dirt_density = 0.0
+        prep.dirty_adjacent = 0
+        prep._get_guidance = lambda: {
+            "margin": 50.0,
+            "all_charger_known_path_count": 4,
+            "unknown_path_ratio": 0.0,
+            "planner_topk_reachable_count": 4,
+            "planner_multi_route_recoverability": 1.0,
+        }
+
+        inferred = Preprocessor._infer_mode(prep)
+        self.assertNotEqual(inferred, Preprocessor.MODE_CONTRACT)
+
+        prep.charger_slack = 5.0
+        prep._get_guidance = lambda: {
+            "margin": 12.0,
+            "all_charger_known_path_count": 4,
+            "unknown_path_ratio": 0.0,
+            "planner_topk_reachable_count": 4,
+            "planner_multi_route_recoverability": 1.0,
+        }
+        inferred2 = Preprocessor._infer_mode(prep)
+        self.assertEqual(inferred2, Preprocessor.MODE_CONTRACT)
+
+    def test_infer_mode_s1_survival_uses_strong_plus_weak_or_two_weak_for_contract(self):
+        if importlib.util.find_spec("numpy") is None:
+            self.skipTest("numpy is not available in the host test environment")
+        from agent_ppo.conf.conf import Config
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor.__new__(Preprocessor)
+        prep.battery = 70.0
+        prep.battery_max = 200.0
+        prep.nearest_npc_dist = 10.0
+        prep.charger_slack = 7.0
+        prep.future_recoverability_score = 1.0
+        prep.route_contract_pressure = 0.0
+        prep.total_charger = 4
+        prep.steps_since_charge = 100
+        prep.local_dirt_density = 0.0
+        prep.dirty_adjacent = 0
+        prep._get_guidance = lambda: {
+            "margin": 50.0,
+            "all_charger_known_path_count": 4,
+            "unknown_path_ratio": 0.0,
+            "planner_topk_reachable_count": 4,
+            "planner_multi_route_recoverability": 1.0,
+        }
+
+        with patch.dict(os.environ, {"KAIWU_TRAIN_PHASE": "s1_survival"}, clear=False), \
+            patch.object(Config, "PREPARE_RETURN_SLACK_THRESHOLD", 10.0), \
+            patch.object(Config, "CHARGE_MARGIN_WARN", 22.0), \
+            patch.object(Config, "CONTRACT_ROUTE_PRESSURE_THRESHOLD", 0.45), \
+            patch.object(Config, "CONTRACT_BATTERY_RATIO", 0.32), \
+            patch.object(Config, "CONTRACT_RECOVERABILITY_THRESHOLD", 0.18):
+            inferred = Preprocessor._infer_mode(prep)
+            self.assertNotEqual(inferred, Preprocessor.MODE_CONTRACT)
+
+            prep.battery = 62.0
+            inferred2 = Preprocessor._infer_mode(prep)
+            self.assertEqual(inferred2, Preprocessor.MODE_CONTRACT)
+
+            prep.battery = 70.0
+            prep.charger_slack = 20.0
+            prep.future_recoverability_score = 0.10
+            prep._get_guidance = lambda: {
+                "margin": 50.0,
+                "all_charger_known_path_count": 4,
+                "unknown_path_ratio": 0.0,
+                "planner_topk_reachable_count": 4,
+                "planner_multi_route_recoverability": 0.10,
+            }
+            inferred3 = Preprocessor._infer_mode(prep)
+            self.assertEqual(inferred3, Preprocessor.MODE_CONTRACT)
+
+    def test_run_training_phase_merges_base_and_phase_env_without_mutating_base(self):
+        script_path = Path(__file__).resolve().parents[2] / "train" / "run_training_phase.py"
+        spec = importlib.util.spec_from_file_location("run_training_phase", script_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            base_env = tmp_path / "base.env"
+            phase_env = tmp_path / "phase.env"
+            merged_env = tmp_path / "merged.env"
+            base_env.write_text("A=1\nB=base\n", encoding="utf-8")
+            phase_env.write_text("B=phase\nC=3\n", encoding="utf-8")
+
+            merged = module.build_phase_env_file(
+                base_env_path=base_env,
+                phase_env_path=phase_env,
+                output_path=merged_env,
+                extra_overrides={"D": "4"},
+            )
+
+            self.assertEqual(merged["A"], "1")
+            self.assertEqual(merged["B"], "phase")
+            self.assertEqual(merged["C"], "3")
+            self.assertEqual(merged["D"], "4")
+            self.assertEqual(base_env.read_text(encoding="utf-8"), "A=1\nB=base\n")
+
+    def test_sample_window_metrics_include_bootstrap_and_global_points(self):
+        from agent_ppo.workflow.curriculum_state import _compute_sample_window_metrics
+
+        records = []
+        for idx in range(1, 121):
+            records.append(
+                {
+                    "result": "completed",
+                    "clean_score": float(idx),
+                    "finished_steps": 100.0,
+                    "charge_count": 1.0,
+                    "remaining_charge": 50.0,
+                    "invalid_move_rate": 0.0,
+                    "charge_efficiency": 10.0,
+                    "clean_per_charge_when_charged": 10.0,
+                    "clean_per_step": float(idx),
+                    "expert_weight": 0.0,
+                    "profile": "anchor",
+                }
+            )
+
+        sample_metrics = _compute_sample_window_metrics(records)
+
+        self.assertEqual(
+            set(sample_metrics.keys()),
+            {"bootstrap_10", "bootstrap_20", "global_40", "global_80", "global_120"},
+        )
+        self.assertEqual(sample_metrics["bootstrap_10"]["_count"], 10)
+        self.assertEqual(sample_metrics["global_120"]["_count"], 120)
+        self.assertAlmostEqual(sample_metrics["bootstrap_10"]["avg_clean_score"], 115.5, places=5)
+        self.assertAlmostEqual(sample_metrics["bootstrap_20"]["avg_clean_score"], 110.5, places=5)
+        self.assertAlmostEqual(sample_metrics["global_40"]["avg_clean_score"], 100.5, places=5)
+        self.assertAlmostEqual(sample_metrics["global_80"]["avg_clean_score"], 80.5, places=5)
+        self.assertAlmostEqual(sample_metrics["global_120"]["avg_clean_score"], 60.5, places=5)
+
+    def test_comparison_samples_capture_first_crossing_only_once(self):
+        from agent_ppo.workflow.curriculum_state import _update_comparison_samples_payload
+
+        def make_record(idx: int) -> dict:
+            return {
+                "result": "completed",
+                "clean_score": float(idx),
+                "finished_steps": 100.0,
+                "charge_count": 1.0,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 10.0,
+                "clean_per_charge_when_charged": 10.0,
+                "clean_per_step": float(idx),
+                "expert_weight": 0.0,
+                "profile": "anchor",
+            }
+
+        first_records = [make_record(idx) for idx in range(1, 13)]
+        payload = _update_comparison_samples_payload(
+            {},
+            first_records,
+            run_session_id="run-1",
+            training_start_mode="scratch",
+            global_episode_count=12,
+            global_step_since_resume=1200,
+            captured_at_ts=1.0,
+        )
+        sample_points = payload["sample_points"]
+        self.assertIn("bootstrap_10", sample_points)
+        self.assertNotIn("bootstrap_20", sample_points)
+        self.assertEqual(sample_points["bootstrap_10"]["actual_global_episode_count"], 12)
+        self.assertAlmostEqual(sample_points["bootstrap_10"]["metrics"]["avg_clean_score"], 5.5, places=5)
+
+        second_records = [make_record(idx) for idx in range(1, 26)]
+        payload2 = _update_comparison_samples_payload(
+            payload,
+            second_records,
+            run_session_id="run-1",
+            training_start_mode="scratch",
+            global_episode_count=25,
+            global_step_since_resume=2500,
+            captured_at_ts=2.0,
+        )
+        sample_points2 = payload2["sample_points"]
+        self.assertEqual(sample_points2["bootstrap_10"]["actual_global_episode_count"], 12)
+        self.assertAlmostEqual(sample_points2["bootstrap_10"]["captured_at_ts"], 1.0, places=5)
+        self.assertIn("bootstrap_20", sample_points2)
+        self.assertAlmostEqual(sample_points2["bootstrap_20"]["metrics"]["avg_clean_score"], 10.5, places=5)
+
+    def test_compare_training_runs_uses_saved_samples_and_legacy_snapshots(self):
+        script_path = Path(__file__).resolve().parents[2] / "train" / "compare_training_runs.py"
+        spec = importlib.util.spec_from_file_location("compare_training_runs", script_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        def make_record(idx: int) -> dict:
+            return {
+                "result": "completed",
+                "clean_score": float(idx),
+                "finished_steps": 100.0,
+                "charge_count": 1.0,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 10.0,
+                "clean_per_charge_when_charged": 10.0,
+                "clean_per_step": float(idx),
+                "expert_weight": 0.0,
+                "profile": "anchor",
+            }
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            baseline_dir = tmp_path / "baseline-run"
+            target_dir = tmp_path / "target-run"
+            baseline_dir.mkdir(parents=True, exist_ok=True)
+            (target_dir / "resume" / "snapshots").mkdir(parents=True, exist_ok=True)
+
+            (baseline_dir / "comparison_samples.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "run_session_id": "baseline-run",
+                        "sample_points": {
+                            "bootstrap_10": {
+                                "sample_point": "bootstrap_10",
+                                "episode_threshold": 10,
+                                "actual_global_episode_count": 10,
+                                "global_step_since_resume": 1000,
+                                "captured_at_ts": 1.0,
+                                "metrics": {
+                                    "battery_positive_reward_rate": 0.0,
+                                    "zero_charge_battery_fail_rate": 0.0,
+                                    "battery_fail_rate": 0.0,
+                                    "avg_clean_per_step": 5.5,
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot_payload = {
+                "global_episode_count": 25,
+                "global_step_since_resume": 2500,
+                "updated_at_ts": 2.0,
+                "recent_episodes": [make_record(idx) for idx in range(101, 126)],
+            }
+            (target_dir / "resume" / "snapshots" / "resume-time-1.curriculum.json").write_text(
+                json.dumps(snapshot_payload, ensure_ascii=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = module.build_comparison_report(str(baseline_dir), str(target_dir))
+
+        bootstrap10 = report["sample_points"]["bootstrap_10"]
+        self.assertEqual(report["baseline_run"], "baseline-run")
+        self.assertEqual(report["target_run"], "target-run")
+        self.assertAlmostEqual(bootstrap10["target"]["metrics"]["avg_clean_score"], 105.5, places=5)
+        self.assertEqual(bootstrap10["target"]["derived_from"], "legacy_snapshot")
+        self.assertAlmostEqual(bootstrap10["delta_vs_baseline"]["avg_clean_per_step"], 100.0, places=5)
+
+    def test_docker_compose_exposes_s1_survival_tuning_envs(self):
+        compose_text = Path(__file__).resolve().parents[2].joinpath("train", ".docker-compose.yaml").read_text(encoding="utf-8")
+        required = [
+            "KAIWU_TRAIN_PHASE:",
+            "KAIWU_CONTRACT_RECOVERABILITY_THRESHOLD:",
+            "KAIWU_CHARGE_MARGIN_WARN:",
+            "KAIWU_CONTRACT_ROUTE_PRESSURE_THRESHOLD:",
+            "KAIWU_CONTRACT_SOFT_TRIGGER_MIN_HITS:",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE:",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE:",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE:",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK:",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK:",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST:",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE:",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY:",
+        ]
+        for needle in required:
+            self.assertIn(needle, compose_text)
+
+    def test_s1_survival_phase_overlay_matches_minimal_closed_loop_targets(self):
+        phase_text = Path(__file__).resolve().parents[2].joinpath("train", "phases", "s1_survival.env").read_text(encoding="utf-8")
+        expected_lines = [
+            "KAIWU_PREPARE_RETURN_SLACK_THRESHOLD=10.0",
+            "KAIWU_CONTRACT_BATTERY_RATIO=0.32",
+            "KAIWU_CONTRACT_RECOVERABILITY_THRESHOLD=0.18",
+            "KAIWU_CHARGE_MARGIN_WARN=22.0",
+            "KAIWU_CONTRACT_ROUTE_PRESSURE_THRESHOLD=0.45",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE=40.0",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE=0.24",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE=0.08",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.16",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.05",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST=0.95",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS=-16.0",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.55",
+        ]
+        for line in expected_lines:
+            self.assertIn(line, phase_text)
 
     def test_benchmark_aggregate_overall_contains_completed_and_failure_rates(self):
         if importlib.util.find_spec("numpy") is None:

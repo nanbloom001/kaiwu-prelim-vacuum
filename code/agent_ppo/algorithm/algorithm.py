@@ -39,6 +39,8 @@ class Algorithm:
         "target_teacher_mask",
         "return_action_teacher",
         "return_action_teacher_mask",
+        "route_phase_action_teacher",
+        "route_phase_action_teacher_mask",
         "battery_risk_label",
         "collision_risk_label",
         "constraint_battery_process_cost",
@@ -539,6 +541,16 @@ class Algorithm:
         field_map["return_action_teacher_mask"] = batch_tensor[:, begin : begin + Config.SAMPLE_RETURN_ACTION_MASK_DIM]
         begin += Config.SAMPLE_RETURN_ACTION_MASK_DIM
 
+        field_map["route_phase_action_teacher"] = batch_tensor[
+            :, begin : begin + Config.SAMPLE_ROUTE_PHASE_ACTION_DIM
+        ].to(dtype=torch.long)
+        begin += Config.SAMPLE_ROUTE_PHASE_ACTION_DIM
+
+        field_map["route_phase_action_teacher_mask"] = batch_tensor[
+            :, begin : begin + Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM
+        ]
+        begin += Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM
+
         field_map["battery_risk_label"] = batch_tensor[:, begin : begin + Config.SAMPLE_AUX_LABEL_DIM]
         begin += Config.SAMPLE_AUX_LABEL_DIM
 
@@ -586,6 +598,12 @@ class Algorithm:
         target_teacher_mask = torch.as_tensor(field_map["target_teacher_mask"], dtype=torch.float32).to(**to_device)
         return_action_teacher = torch.as_tensor(field_map["return_action_teacher"], dtype=torch.long).to(**to_device)
         return_action_teacher_mask = torch.as_tensor(field_map["return_action_teacher_mask"], dtype=torch.float32).to(**to_device)
+        route_phase_action_teacher = torch.as_tensor(
+            field_map["route_phase_action_teacher"], dtype=torch.long
+        ).to(**to_device)
+        route_phase_action_teacher_mask = torch.as_tensor(
+            field_map["route_phase_action_teacher_mask"], dtype=torch.float32
+        ).to(**to_device)
         battery_risk_label = torch.as_tensor(field_map["battery_risk_label"], dtype=torch.float32).to(**to_device)
         collision_risk_label = torch.as_tensor(field_map["collision_risk_label"], dtype=torch.float32).to(**to_device)
         constraint_battery_process_cost = torch.as_tensor(
@@ -616,6 +634,8 @@ class Algorithm:
             "target_teacher_mask": target_teacher_mask.view(batch_size, seq_len),
             "return_action_teacher": return_action_teacher.view(batch_size, seq_len),
             "return_action_teacher_mask": return_action_teacher_mask.view(batch_size, seq_len),
+            "route_phase_action_teacher": route_phase_action_teacher.view(batch_size, seq_len),
+            "route_phase_action_teacher_mask": route_phase_action_teacher_mask.view(batch_size, seq_len),
             "battery_risk_label": battery_risk_label.view(batch_size, seq_len),
             "collision_risk_label": collision_risk_label.view(batch_size, seq_len),
             "constraint_battery_process_cost": constraint_battery_process_cost.view(batch_size, seq_len),
@@ -641,6 +661,7 @@ class Algorithm:
         route_anchor_teacher_mask = batch["route_anchor_teacher_mask"][:, learn_slice]
         target_teacher_mask = batch["target_teacher_mask"][:, learn_slice]
         return_action_teacher_mask = batch["return_action_teacher_mask"][:, learn_slice]
+        route_phase_action_teacher_mask = batch["route_phase_action_teacher_mask"][:, learn_slice]
         battery_label = batch["battery_risk_label"][:, learn_slice]
         collision_label = batch["collision_risk_label"][:, learn_slice]
         fallback_mask = batch["fallback_mask"][:, learn_slice]
@@ -708,18 +729,22 @@ class Algorithm:
         route_anchor_teacher_active = route_anchor_teacher_mask * valid_mask
         target_teacher_active = target_teacher_mask * valid_mask
         return_action_teacher_active = return_action_teacher_mask * valid_mask
+        route_phase_action_teacher_active = route_phase_action_teacher_mask * valid_mask
         mode_teacher_raw_count = mode_teacher_active.sum()
         route_anchor_teacher_raw_count = route_anchor_teacher_active.sum()
         target_teacher_raw_count = target_teacher_active.sum()
         return_action_teacher_raw_count = return_action_teacher_active.sum()
+        route_phase_action_teacher_raw_count = route_phase_action_teacher_active.sum()
         mode_teacher_count = mode_teacher_raw_count.clamp_min(1.0)
         route_anchor_teacher_count = route_anchor_teacher_raw_count.clamp_min(1.0)
         target_teacher_count = target_teacher_raw_count.clamp_min(1.0)
         return_action_teacher_count = return_action_teacher_raw_count.clamp_min(1.0)
+        route_phase_action_teacher_count = route_phase_action_teacher_raw_count.clamp_min(1.0)
         mode_teacher_active_rate = mode_teacher_raw_count / valid_count
         route_anchor_teacher_active_rate = route_anchor_teacher_raw_count / valid_count
         target_teacher_active_rate = target_teacher_raw_count / valid_count
         return_action_teacher_active_rate = return_action_teacher_raw_count / valid_count
+        route_phase_action_teacher_active_rate = route_phase_action_teacher_raw_count / valid_count
         mode_teacher_loss = F.cross_entropy(
             mode_logits.reshape(-1, Config.MODE_NUM),
             batch["mode_teacher"][:, learn_slice].reshape(-1),
@@ -750,6 +775,15 @@ class Algorithm:
         return_action_teacher_loss = (
             return_action_teacher_loss * return_action_teacher_active
         ).sum() / return_action_teacher_count
+        route_phase_policy_teacher_loss = F.cross_entropy(
+            logits.reshape(-1, Config.ACTION_NUM),
+            batch["route_phase_action_teacher"][:, learn_slice].reshape(-1),
+            ignore_index=-1,
+            reduction="none",
+        ).view_as(route_phase_action_teacher_active)
+        route_phase_policy_teacher_loss = (
+            route_phase_policy_teacher_loss * route_phase_action_teacher_active
+        ).sum() / route_phase_action_teacher_count
 
         aux_battery_loss = F.binary_cross_entropy_with_logits(aux_battery, battery_label, reduction="none")
         aux_collision_loss = F.binary_cross_entropy_with_logits(aux_collision, collision_label, reduction="none")
@@ -776,6 +810,7 @@ class Algorithm:
             + Config.ROUTE_ANCHOR_TEACHER_WEIGHT * route_anchor_teacher_loss
             + Config.TARGET_TEACHER_WEIGHT * target_teacher_loss
             + Config.RETURN_ACTION_TEACHER_WEIGHT * return_action_teacher_loss
+            + Config.ROUTE_PHASE_POLICY_TEACHER_WEIGHT * route_phase_policy_teacher_loss
             + Config.AUX_BATTERY_RISK_WEIGHT * aux_battery_loss
             + self.lambda_collision * aux_collision_loss
         )
@@ -794,10 +829,12 @@ class Algorithm:
             "route_anchor_teacher_loss": float(route_anchor_teacher_loss.item()),
             "target_teacher_loss": float(target_teacher_loss.item()),
             "return_action_teacher_loss": float(return_action_teacher_loss.item()),
+            "route_phase_policy_teacher_loss": float(route_phase_policy_teacher_loss.item()),
             "mode_teacher_active_rate": float(mode_teacher_active_rate.item()),
             "route_anchor_teacher_active_rate": float(route_anchor_teacher_active_rate.item()),
             "target_teacher_active_rate": float(target_teacher_active_rate.item()),
             "return_action_teacher_active_rate": float(return_action_teacher_active_rate.item()),
+            "route_phase_action_teacher_active_rate": float(route_phase_action_teacher_active_rate.item()),
             "aux_battery_loss": float(aux_battery_loss.item()),
             "aux_collision_loss": float(aux_collision_loss.item()),
             "battery_process_cost_mean": float(battery_process_cost_mean.item()),
@@ -816,6 +853,7 @@ class Algorithm:
             "route_anchor_teacher_loss": route_anchor_teacher_loss,
             "target_teacher_loss": target_teacher_loss,
             "return_action_teacher_loss": return_action_teacher_loss,
+            "route_phase_policy_teacher_loss": route_phase_policy_teacher_loss,
             "aux_battery_loss": aux_battery_loss,
             "aux_collision_loss": aux_collision_loss,
             "total_loss": total_loss,

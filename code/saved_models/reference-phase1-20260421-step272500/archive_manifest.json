@@ -1,0 +1,66 @@
+{
+  "archive_type": "experimental_reference",
+  "archive_name": "reference-phase1-20260421-step272500",
+  "selected_step": 272500,
+  "selection_time_window": "2026-04-21 08:18:00 ~ 08:22:45",
+  "intended_use": [
+    "curriculum comparison anchor",
+    "continuing-training experiment reference",
+    "benchmark-side qualitative comparison"
+  ],
+  "not_for_mainline_resume": true,
+  "reason": "Chosen as the closest validated reference to the user's requested 08:20 time window. The raw learner checkpoint at step 272500 was no longer available in retained host/framework paths, so the archive stores the nearest still-available session_best asset produced at 2026-04-21 08:19:44 after the 272500/273000 loading window.",
+  "source_run_session_id": "20260420-205346",
+  "source_asset": {
+    "asset_kind": "session_best_fallback",
+    "source_helper_session": "20260421-010416-pid-443",
+    "source_best_model_path": "code/runtime_state/runs/20260420-205346/session_best/20260421-010416-pid-443/best_model.pkl",
+    "source_best_score_path": "code/runtime_state/runs/20260420-205346/session_best/20260421-010416-pid-443/best_score.json",
+    "original_training_point_requested": "/data/ckpt/robot_vacuum_ppo/model.ckpt-272500.pkl",
+    "original_training_point_available": false
+  },
+  "loaded_checkpoint_evidence": [
+    {
+      "time": "2026-04-21 08:19:08",
+      "helper_log": "train/log/aisrv/aisrv_kaiwu_rl_helper_pid440_log_2026-04-21-01.log",
+      "loaded_checkpoint_id": 272500
+    },
+    {
+      "time": "2026-04-21 08:19:45",
+      "helper_log": "train/log/aisrv/aisrv_kaiwu_rl_helper_pid443_log_2026-04-21-01.log",
+      "loaded_checkpoint_id": 273000
+    }
+  ],
+  "selection_evidence": {
+    "best_score_updated_at": "2026-04-21 08:19:44",
+    "best_robust_score": 2076.4,
+    "best_avg_score": 702.4,
+    "best_resume_readiness_score": 62.2854,
+    "best_preservation_score": 54.2228,
+    "episode_cnt": 116
+  },
+  "associated_episode_example": {
+    "time": "2026-04-21 08:22:41",
+    "helper_log": "train/log/aisrv/aisrv_kaiwu_rl_helper_pid440_log_2026-04-21-01.log",
+    "episode_id": 114,
+    "result": "WIN",
+    "clean_score": 802.0,
+    "steps": 1000,
+    "profile": "mild"
+  },
+  "window_metrics_reference": {
+    "window_source": "latest available same-run curriculum_state after the selected time window",
+    "win_rate": 0.8,
+    "battery_fail_rate": 0.125,
+    "zero_charge_battery_fail_rate": 0.6,
+    "battery_positive_reward_rate": 0.8,
+    "avg_clean_per_step": 0.6734841912459475,
+    "mode_usage_expand": 0.037417180553362864,
+    "mode_usage_contract": 0.005019485737313837,
+    "mode_usage_return": 0.14472776426565123,
+    "planner_policy_divergence_rate": 0.8353147037081099,
+    "route_phase_planner_divergence_rate": 0.581365484323873,
+    "reliable_planner_divergence_rate": 0.0,
+    "route_phase_return_stall_rate": 0.34222458641368114
+  }
+}

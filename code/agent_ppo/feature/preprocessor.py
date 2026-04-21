@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import deque
 import math
+import os
 
 import numpy as np
 
@@ -1205,20 +1206,40 @@ class Preprocessor:
             or margin <= Config.CHARGE_MARGIN_LOW
         ):
             return self.MODE_RETURN
-        if (
-            self.charger_slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD
-            or battery_ratio <= Config.CONTRACT_BATTERY_RATIO
-            or self.future_recoverability_score <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
-            or planner_multi_route_recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
-            or self.route_contract_pressure >= 0.5
-            or margin <= Config.CHARGE_MARGIN_WARN
-            or (
-                known_path_count < min(self.total_charger, 2)
-                and planner_topk_reachable_count <= 0
-                and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
-                and unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD
+        contract_soft_hits = 0
+        contract_soft_hits += int(self.charger_slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD)
+        contract_soft_hits += int(battery_ratio <= Config.CONTRACT_BATTERY_RATIO)
+        contract_soft_hits += int(self.future_recoverability_score <= Config.CONTRACT_RECOVERABILITY_THRESHOLD)
+        contract_soft_hits += int(
+            planner_multi_route_recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
+        )
+        contract_soft_hits += int(
+            self.route_contract_pressure >= Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD
+        )
+        contract_soft_hits += int(margin <= Config.CHARGE_MARGIN_WARN)
+        contract_hard_risk = bool(
+            known_path_count < min(self.total_charger, 2)
+            and planner_topk_reachable_count <= 0
+            and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
+            and unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD
+        )
+        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
+        if train_phase == "s1_survival":
+            strong_hits = 0
+            strong_hits += int(self.charger_slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD)
+            strong_hits += int(margin <= Config.CHARGE_MARGIN_WARN)
+            strong_hits += int(self.route_contract_pressure >= Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD)
+
+            weak_hits = 0
+            weak_hits += int(battery_ratio <= Config.CONTRACT_BATTERY_RATIO)
+            weak_hits += int(self.future_recoverability_score <= Config.CONTRACT_RECOVERABILITY_THRESHOLD)
+            weak_hits += int(
+                planner_multi_route_recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
             )
-        ):
+
+            if ((strong_hits >= 1 and weak_hits >= 1) or weak_hits >= 2 or contract_hard_risk):
+                return self.MODE_CONTRACT
+        elif contract_soft_hits >= Config.CONTRACT_SOFT_TRIGGER_MIN_HITS or contract_hard_risk:
             return self.MODE_CONTRACT
         if self.steps_since_charge <= Config.DEPART_STEPS:
             return self.MODE_DEPART
@@ -1410,6 +1431,10 @@ class Preprocessor:
             and self._last_action >= 0
             and suggested_action is not None
             and int(self._last_action) != int(suggested_action)
+        )
+        route_phase_active = bool(self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN))
+        route_phase_reliable_active = bool(
+            route_phase_active and return_action_reliable and suggested_action is not None
         )
 
         high_need_stall_indicator = 0.0
@@ -1752,6 +1777,8 @@ class Preprocessor:
             target_teacher_mask = 0.0
             return_action_teacher = -1
             return_action_teacher_mask = 0.0
+            route_phase_action_teacher = -1
+            route_phase_action_teacher_mask = 0.0
         else:
             mode_teacher = self.MODE_NAME_TO_ID.get(teacher.get("route_mode", "expand"), self.MODE_EXPAND)
             route_anchor_teacher = self._target_teacher_from_guidance({"target": teacher.get("route_anchor")})
@@ -1770,6 +1797,22 @@ class Preprocessor:
                     return_action_teacher_mask = max(return_action_teacher_mask, 0.80)
                 elif return_action_reliable:
                     return_action_teacher_mask = max(return_action_teacher_mask, 0.65)
+            route_phase_action_teacher = -1
+            route_phase_action_teacher_mask = 0.0
+            if (
+                self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
+                and suggested_action is not None
+            ):
+                route_phase_action_teacher = int(suggested_action)
+                if return_action_reliable:
+                    if battery_state == "critical":
+                        route_phase_action_teacher_mask = 1.0
+                    else:
+                        route_phase_action_teacher_mask = 0.8
+                elif anchor_reliable or target_reliable:
+                    route_phase_action_teacher_mask = 0.6
+                if battery_state == "critical" and route_phase_action_teacher_mask <= 0.0:
+                    route_phase_action_teacher_mask = 1.0
 
         battery_risk_label = 1.0 if (charge_need_score >= Config.BATTERY_CRITICAL_NEED_THRESHOLD or slack < 0.0) else 0.0
 
@@ -1792,6 +1835,8 @@ class Preprocessor:
             "target_teacher_mask": float(target_teacher_mask),
             "return_action_teacher": int(return_action_teacher),
             "return_action_teacher_mask": float(return_action_teacher_mask),
+            "route_phase_action_teacher": int(route_phase_action_teacher),
+            "route_phase_action_teacher_mask": float(route_phase_action_teacher_mask),
             "battery_risk_label": float(battery_risk_label),
             "collision_risk_label": float(collision_risk_label),
             "fallback_mask": 0.0,

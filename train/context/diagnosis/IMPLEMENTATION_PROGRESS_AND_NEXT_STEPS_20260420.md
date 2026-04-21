@@ -5,6 +5,7 @@
 > - [UNIFIED_PROBLEM_DIAGNOSIS_REPORT_20260420.md](/home/user/TcKaiwuFinal/train/context/diagnosis/UNIFIED_PROBLEM_DIAGNOSIS_REPORT_20260420.md)
 > - [DEEP_PROBLEM_DIAGNOSIS_REPORT_20260420.md](/home/user/TcKaiwuFinal/train/context/diagnosis/DEEP_PROBLEM_DIAGNOSIS_REPORT_20260420.md)
 > - [FULL_REPO_AUDIT_FINDINGS_20260420.md](/home/user/TcKaiwuFinal/train/context/diagnosis/FULL_REPO_AUDIT_FINDINGS_20260420.md)
+> - [MULTI_AGENT_SYNTHESIS_REPORT_20260421.md](/home/user/TcKaiwuFinal/train/context/diagnosis/MULTI_AGENT_SYNTHESIS_REPORT_20260421.md)
 
 ## 1. 当前问题总判断
 
@@ -464,3 +465,205 @@
 后续不要再忘记的核心顺序是：
 
 > **先补 return 动作模板学习信号，再做短窗口结构验证，最后才重构 curriculum 门槛。**
+
+## 10. 2026-04-20 晚间新增落实：v1-lite 主链
+
+这一节记录下午方案细化后，已经实际落到代码里的 **v1-lite 第一批主改动**，以及仍未落实的项。
+
+### 10.1 已落实：`contract gate rewrite`
+
+已落实：
+
+- 在 [preprocessor.py](/home/user/TcKaiwuFinal/code/agent_ppo/feature/preprocessor.py) 中，把 `contract` 进入逻辑从“多条件任一触发”改成了：
+  - soft trigger 命中至少 `2` 项才进 `contract`
+  - `unknown path risk` 保留为单独 hard trigger
+- 在 [conf.py](/home/user/TcKaiwuFinal/code/agent_ppo/conf/conf.py) 中同步调整了相关阈值：
+  - `PREPARE_RETURN_SLACK_THRESHOLD: 8.0 -> 6.0`
+  - `CONTRACT_BATTERY_RATIO: 0.28 -> 0.24`
+  - `CONTRACT_RECOVERABILITY_THRESHOLD: 0.15 -> 0.08`
+  - `CHARGE_MARGIN_WARN: 20.0 -> 14.0`
+  - 新增：
+    - `CONTRACT_ROUTE_PRESSURE_THRESHOLD = 0.65`
+    - `CONTRACT_SOFT_TRIGGER_MIN_HITS = 2`
+
+目标：
+
+- 降低 `mode_usage_contract`
+- 恢复 `mode_usage_expand`
+- 避免过早收缩
+
+状态：**已落实**
+
+### 10.2 已落实：route-phase direct policy guidance
+
+已落实：
+
+- 不再只依赖 `return_action` aux head
+- 在主动作路径上新增 route-phase 直接监督：
+  - `route_phase_action_teacher`
+  - `route_phase_action_teacher_mask`
+- 已接入：
+  - [preprocessor.py](/home/user/TcKaiwuFinal/code/agent_ppo/feature/preprocessor.py)
+  - [definition.py](/home/user/TcKaiwuFinal/code/agent_ppo/feature/definition.py)
+  - [algorithm.py](/home/user/TcKaiwuFinal/code/agent_ppo/algorithm/algorithm.py)
+- learner 中新增：
+  - `route_phase_policy_teacher_loss`
+- 新增配置：
+  - `ROUTE_PHASE_POLICY_TEACHER_WEIGHT = 0.35`
+
+当前语义：
+
+- 仅在 `planning/critical + CONTRACT/RETURN + return_action_reliable + suggested_action 存在` 时激活
+- 监督对象是 `policy_logits`
+- 不是 `return_action_logits`
+
+目标：
+
+- 更直接降低 `planner_policy_divergence`
+- 更直接降低 `return_stall`
+
+状态：**已落实**
+
+### 10.3 已落实：route-phase / reliable 指标链
+
+已落实：
+
+- 在 [train_workflow.py](/home/user/TcKaiwuFinal/code/agent_ppo/workflow/train_workflow.py) 中新增 episode 诊断指标：
+  - `route_phase_planner_divergence_rate`
+  - `reliable_planner_divergence_rate`
+  - `route_phase_return_stall_rate`
+- 在 [curriculum_state.py](/home/user/TcKaiwuFinal/code/agent_ppo/workflow/curriculum_state.py) 中补齐：
+  - recent episode 聚合
+  - window 聚合
+  - `avg_*` alias
+- 在 [monitor_builder.py](/home/user/TcKaiwuFinal/code/agent_ppo/conf/monitor_builder.py) 中新增展示：
+  - `可靠规划偏离率`
+  - `路由阶段停滞率`
+
+状态：**已落实**
+
+### 10.4 已落实：curriculum / degraded gate 改到新口径
+
+已落实：
+
+- 在 [curriculum_policy.py](/home/user/TcKaiwuFinal/code/agent_ppo/workflow/curriculum_policy.py) 中：
+  - `planner` 维度改为优先使用：
+    - `reliable_planner_divergence_rate`
+    - fallback `route_phase_planner_divergence_rate`
+  - `stall` 维度改为优先使用：
+    - `route_phase_return_stall_rate`
+    - fallback `high_need_return_stall_rate`
+  - 新增停滞 reason：
+    - `charge`
+    - `reward`
+- 在 [curriculum_state.py](/home/user/TcKaiwuFinal/code/agent_ppo/workflow/curriculum_state.py) 中：
+  - `degraded_mainline` 判定已切到新口径，不再只盯 raw planner/stall
+
+状态：**已落实**
+
+### 10.5 已落实：checkpoint / submission scoring 口径同步
+
+已落实：
+
+- 在 [checkpoint_score.py](/home/user/TcKaiwuFinal/code/agent_ppo/workflow/checkpoint_score.py) 中：
+  - `resume_eligible` 不再依赖：
+    - `route_anchor_teacher_active_rate`
+    - `target_teacher_active_rate`
+  - 改为看：
+    - `zero_charge_battery_fail_rate`
+    - `reliable_planner_divergence_rate`
+    - `route_phase_return_stall_rate`
+- 同时修复了 benchmark 兼容问题：
+  - benchmark 仍只产出：
+    - `return_stall_rate`
+    - `planner_policy_divergence_rate`
+  - scoring 现在会 fallback 到旧字段，不会静默吃掉行为评分
+
+状态：**已落实**
+
+### 10.6 已落实：review 指出的两条集成修复
+
+已落实：
+
+1. benchmark scoring 新旧字段兼容 fallback  
+2. `_window_metrics()` 新 route-phase 指标在 monitor payload 中改为读取真实 key，而不是错误的 `avg_*` key
+
+状态：**已落实**
+
+### 10.7 最新测试状态
+
+最新宿主机 conda 回归结果：
+
+```bash
+/home/user/TcKaiwuFinal/.conda-numpy/bin/python -m unittest \
+  tests.test_curriculum_and_checkpoint_score \
+  tests.test_ltsppo_contracts \
+  tests.test_algorithm_stability
+```
+
+结果：
+
+- `Ran 80 tests`
+- `OK`
+
+说明：
+
+- v1-lite 主链在契约层和 learner/schema 层已经闭合
+
+### 10.8 当前还未落实的项
+
+以下内容仍未落实，属于 v1-lite 之后或运行态验证阶段。
+
+#### A. 仍未落实：supervision-lite 消融
+
+还没动：
+
+- `MODE_TEACHER_WEIGHT` 下调
+- `ROUTE_ANCHOR_TEACHER_WEIGHT` 下调
+- `TARGET_TEACHER_WEIGHT` 下调
+
+当前结论：
+
+- 这些不进入 v1 主实现
+- 只作为 v2 受控消融候选
+
+状态：**未落实**
+
+#### B. 仍未落实：运行态短窗口对照验证
+
+还没做的对照组：
+
+1. baseline
+2. gate-only
+3. full-v1-lite
+
+当前结论：
+
+- 代码与测试已准备好
+- 还没有进入新一轮 scratch 短窗口 A/B 运行态验证
+
+状态：**未落实**
+
+#### C. 仍未落实：benchmark 侧直接产出 route-phase 新指标
+
+当前只修了 scoring fallback，**没有**直接修改 `agent_ppo.eval.benchmark` 去产出：
+
+- `route_phase_return_stall_rate`
+- `reliable_planner_divergence_rate`
+
+这意味着：
+
+- submission scoring 已不再失真
+- 但 benchmark 输出本身仍是旧口径
+
+状态：**未落实**
+
+### 10.9 当前最新一句话总结
+
+当前已经完成的是：
+
+> **v1-lite 的主实现链：`contract gate rewrite + route-phase direct policy guidance + route-phase/reliable 指标 + curriculum/checkpoint gate 同步`。**
+
+当前还没完成的是：
+
+> **运行态对照验证，以及 supervision-lite 第二阶段消融。**

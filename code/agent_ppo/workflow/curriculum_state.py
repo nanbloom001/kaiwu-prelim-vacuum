@@ -57,6 +57,14 @@ except ImportError:  # pragma: no cover
 
 SIGNAL_TTL_SECONDS = 20 * 60
 STATE_VERSION = 1
+COMPARISON_SAMPLE_VERSION = 1
+SAMPLE_WINDOW_EPISODES = (
+    ("bootstrap_10", 10),
+    ("bootstrap_20", 20),
+    ("global_40", 40),
+    ("global_80", 80),
+    ("global_120", 120),
+)
 FAST_SKIP_GLOBAL_EPISODES = 20
 FULL_WINDOW_GLOBAL_EPISODES = 40
 RECENT_EPISODE_KEEP = FULL_WINDOW_GLOBAL_EPISODES * 3
@@ -73,6 +81,9 @@ RETURN_WINDOW_ALIAS_KEYS = (
     ("return_progress_per_step", "avg_return_progress_per_step"),
     ("return_efficiency_ratio", "avg_return_efficiency_ratio"),
     ("high_need_return_stall_rate", "avg_high_need_return_stall_rate"),
+    ("route_phase_return_stall_rate", "avg_route_phase_return_stall_rate"),
+    ("route_phase_planner_divergence_rate", "avg_route_phase_planner_divergence_rate"),
+    ("reliable_planner_divergence_rate", "avg_reliable_planner_divergence_rate"),
 )
 
 _LEARNER_LOG_STATE_PATTERNS = {
@@ -242,6 +253,7 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
         "return_progress_per_step": avg("return_progress_per_step"),
         "return_efficiency_ratio": avg("return_efficiency_ratio"),
         "return_stall_rate": avg("return_stall_rate"),
+        "route_phase_return_stall_rate": avg("route_phase_return_stall_rate"),
         "recoverability_score_avg": avg("recoverability_score_avg"),
         "recoverability_violation_rate": avg("recoverability_violation_rate"),
         "wall_hugging_clean_floor_rate": avg("wall_hugging_clean_floor_rate"),
@@ -251,6 +263,8 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
         "charger_nearby_not_charged_rate": avg("charger_nearby_not_charged_rate"),
         "suboptimal_target_hold_rate": avg("suboptimal_target_hold_rate"),
         "planner_policy_divergence_rate": avg("planner_policy_divergence_rate"),
+        "route_phase_planner_divergence_rate": avg("route_phase_planner_divergence_rate"),
+        "reliable_planner_divergence_rate": avg("reliable_planner_divergence_rate"),
         "avg_path_cross_count_50": avg("avg_path_cross_count_50"),
         "avg_coverage_efficiency_20": avg("avg_coverage_efficiency_20"),
         "avg_all_charger_known_path_count": avg("avg_all_charger_known_path_count"),
@@ -304,6 +318,49 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
     for source_key, alias_key in RETURN_WINDOW_ALIAS_KEYS:
         payload[alias_key] = payload.get(source_key)
     return payload
+
+
+def _compute_sample_window_metrics(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    sample_metrics: dict[str, dict[str, Any]] = {}
+    ordered_records = list(records or [])
+    for sample_key, episode_count in SAMPLE_WINDOW_EPISODES:
+        metrics = _aggregate_episode_records(ordered_records[-episode_count:], episode_count)
+        if metrics is not None:
+            sample_metrics[sample_key] = metrics
+    return sample_metrics
+
+
+def _update_comparison_samples_payload(
+    payload: dict[str, Any] | None,
+    records: list[dict[str, Any]],
+    *,
+    run_session_id: str,
+    training_start_mode: str,
+    global_episode_count: int,
+    global_step_since_resume: int,
+    captured_at_ts: float,
+) -> dict[str, Any]:
+    updated = deepcopy(payload or {})
+    updated["version"] = int(updated.get("version") or COMPARISON_SAMPLE_VERSION)
+    updated["run_session_id"] = str(run_session_id)
+    updated["training_start_mode"] = str(training_start_mode or "")
+    sample_points = updated.setdefault("sample_points", {})
+    ordered_records = list(records or [])
+    for sample_key, episode_count in SAMPLE_WINDOW_EPISODES:
+        if sample_key in sample_points or global_episode_count < episode_count or len(ordered_records) < episode_count:
+            continue
+        metrics = _aggregate_episode_records(ordered_records[:episode_count], episode_count)
+        if metrics is None:
+            continue
+        sample_points[sample_key] = {
+            "sample_point": sample_key,
+            "episode_threshold": int(episode_count),
+            "actual_global_episode_count": int(global_episode_count),
+            "global_step_since_resume": int(global_step_since_resume),
+            "captured_at_ts": float(captured_at_ts),
+            "metrics": metrics,
+        }
+    return updated
 
 
 def _merge_recent_episodes(state: dict[str, Any], signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -363,6 +420,7 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
         "return_progress_per_step",
         "return_efficiency_ratio",
         "return_stall_rate",
+        "route_phase_return_stall_rate",
         "recoverability_score_avg",
         "recoverability_violation_rate",
         "wall_hugging_clean_floor_rate",
@@ -372,6 +430,8 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
         "charger_nearby_not_charged_rate",
         "suboptimal_target_hold_rate",
         "planner_policy_divergence_rate",
+        "route_phase_planner_divergence_rate",
+        "reliable_planner_divergence_rate",
         "avg_path_cross_count_50",
         "avg_coverage_efficiency_20",
         "avg_all_charger_known_path_count",
@@ -643,6 +703,7 @@ def _default_state() -> dict[str, Any]:
         "stage_entry_metrics": {},
         "last_global_metrics": {},
         "last_bootstrap_metrics": {},
+        "sample_window_metrics": {},
         "last_learning_metrics": {},
         "global_episode_count": 0,
         "global_step_since_resume": 0,
@@ -704,6 +765,24 @@ class SharedCurriculumStateStore:
         run_layout.run_dir.mkdir(parents=True, exist_ok=True)
         _write_json(run_layout.curriculum_state_path, state)
 
+    def _persist_comparison_samples(self, state: dict[str, Any]) -> None:
+        session_id = str(state.get("source_session_id") or "").strip()
+        if not session_id:
+            return
+        run_layout = self.layout.for_run(session_id)
+        existing = _read_json(run_layout.comparison_samples_path) or {}
+        updated = _update_comparison_samples_payload(
+            existing,
+            state.get("recent_episodes") or [],
+            run_session_id=session_id,
+            training_start_mode=str(state.get("training_start_mode") or ""),
+            global_episode_count=int(state.get("global_episode_count", 0) or 0),
+            global_step_since_resume=int(state.get("global_step_since_resume", 0) or 0),
+            captured_at_ts=float(state.get("updated_at_ts") or _now_ts()),
+        )
+        if updated != existing:
+            _write_json(run_layout.comparison_samples_path, updated)
+
     def write_signal(self, source_id: str, payload: dict[str, Any]) -> None:
         record = {
             "source_id": source_id,
@@ -764,6 +843,7 @@ class SharedCurriculumStateStore:
                     "stage_entry_metrics",
                     "last_global_metrics",
                     "last_bootstrap_metrics",
+                    "sample_window_metrics",
                     "last_learning_metrics",
                     "global_episode_count",
                     "global_step_since_resume",
@@ -838,7 +918,7 @@ class SharedCurriculumStateStore:
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-    def _refresh_state_impl(self) -> dict[str, Any]:
+def _refresh_state_impl(self) -> dict[str, Any]:
         state = self.read_state()
         now = _now_ts()
         learner_log_metrics = _latest_learner_log_metrics(self.code_dir)
@@ -863,11 +943,13 @@ class SharedCurriculumStateStore:
             state["updated_at_ts"] = now
             _write_json(self.state_path, state)
             self._persist_run_state_view(state)
+            self._persist_comparison_samples(state)
             return state
 
         recent_episodes = _merge_recent_episodes(state, signals)
-        bootstrap_metrics = _aggregate_episode_records(recent_episodes[-FAST_SKIP_GLOBAL_EPISODES:], FAST_SKIP_GLOBAL_EPISODES)
-        window_metrics = _aggregate_episode_records(recent_episodes[-FULL_WINDOW_GLOBAL_EPISODES:], FULL_WINDOW_GLOBAL_EPISODES)
+        sample_window_metrics = _compute_sample_window_metrics(recent_episodes)
+        bootstrap_metrics = sample_window_metrics.get("bootstrap_20")
+        window_metrics = sample_window_metrics.get("global_40")
         if bootstrap_metrics is None:
             bootstrap_metrics = _aggregate_metrics(signals, "bootstrap_metrics", FAST_SKIP_GLOBAL_EPISODES)
         if window_metrics is None:
@@ -1015,12 +1097,29 @@ class SharedCurriculumStateStore:
         state["curriculum_stagnation_reason"] = stagnation_reason
         state["invalid_for_promotion"] = bool(stagnation_level >= 2)
         state["requires_reward_revision"] = bool(stagnation_level >= 3)
-        degrade_flags = [
-            _metric(metrics_for_progress, "battery_fail_rate", 0.0) >= 0.45,
-            _metric(metrics_for_progress, "zero_charge_battery_fail_rate", 0.0) >= 0.55,
-            _metric(metrics_for_progress, "planner_policy_divergence_rate", 0.0) >= 0.84,
-            _metric(metrics_for_progress, "return_stall_rate", 0.0) >= 0.55,
-        ] if metrics_for_progress else []
+        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
+        if metrics_for_progress and train_phase == "s1_survival":
+            degrade_flags = [
+                _metric(metrics_for_progress, "zero_charge_battery_fail_rate", 0.0) >= 0.40,
+                _metric(metrics_for_progress, "battery_positive_reward_rate", 0.0) >= 0.20,
+                _metric(metrics_for_progress, "avg_clean_per_step", 0.0) < 0.46,
+            ]
+        else:
+            degrade_flags = [
+                _metric(metrics_for_progress, "battery_fail_rate", 0.0) >= 0.45,
+                _metric(metrics_for_progress, "zero_charge_battery_fail_rate", 0.0) >= 0.55,
+                _metric(
+                    metrics_for_progress,
+                    "reliable_planner_divergence_rate",
+                    _metric(metrics_for_progress, "route_phase_planner_divergence_rate", 0.0),
+                ) >= 0.60,
+                _metric(
+                    metrics_for_progress,
+                    "route_phase_return_stall_rate",
+                    _metric(metrics_for_progress, "return_stall_rate", 0.0),
+                ) >= 0.45,
+                _metric(metrics_for_progress, "battery_positive_reward_rate", 0.0) >= 0.20,
+            ] if metrics_for_progress else []
         degraded_windows = int(state.get("degraded_mainline_windows", 0))
         if sum(1 for flag in degrade_flags if flag) >= 2:
             degraded_windows += 1
@@ -1047,6 +1146,7 @@ class SharedCurriculumStateStore:
         state["curriculum_progress"] = round(stage_progress(state["stage"], metrics_for_progress, learning_metrics), 4)
         state["last_global_metrics"] = deepcopy(window_metrics or {})
         state["last_bootstrap_metrics"] = deepcopy(bootstrap_metrics or {})
+        state["sample_window_metrics"] = deepcopy(sample_window_metrics)
         state["last_learning_metrics"] = deepcopy(learning_metrics or {})
         state["global_episode_count"] = global_episode_count
         state["global_step_since_resume"] = global_step_since_resume
@@ -1057,4 +1157,8 @@ class SharedCurriculumStateStore:
         state["updated_at_ts"] = now
         _write_json(self.state_path, state)
         self._persist_run_state_view(state)
+        self._persist_comparison_samples(state)
         return state
+
+
+SharedCurriculumStateStore._refresh_state_impl = _refresh_state_impl

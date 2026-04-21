@@ -52,7 +52,9 @@ def build_monitor():
         ("电池失败局充电次数", "avg_charge_count_battery_fail"),
         # 规划与返航
         ("规划偏离率", "planner_policy_divergence_rate"),
+        ("可靠规划偏离率", "avg_reliable_planner_divergence_rate"),
         ("返航停滞率", "return_stall_rate"),
+        ("路由阶段停滞率", "avg_route_phase_return_stall_rate"),
         ("返航效率比", "return_efficiency_ratio"),
         # 行为结构
         ("扩张占比", "mode_usage_expand"),

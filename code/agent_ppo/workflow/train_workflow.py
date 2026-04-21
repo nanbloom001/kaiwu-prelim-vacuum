@@ -1053,6 +1053,9 @@ class EpisodeRunner:
             "return_progress_per_step": sum(ep.get("return_progress_per_step", 0.0) for ep in buf) / n,
             "return_efficiency_ratio": sum(ep.get("return_efficiency_ratio", 0.0) for ep in buf) / n,
             "return_stall_rate": sum(ep.get("return_stall_rate", 0.0) for ep in buf) / n,
+            "route_phase_return_stall_rate": sum(
+                ep.get("route_phase_return_stall_rate", 0.0) for ep in buf
+            ) / n,
             "recoverability_score_avg": sum(ep.get("recoverability_score_avg", 0.0) for ep in buf) / n,
             "recoverability_violation_rate": sum(ep.get("recoverability_violation_rate", 0.0) for ep in buf) / n,
             "wall_hugging_clean_floor_rate": sum(ep.get("wall_hugging_clean_floor_rate", 0.0) for ep in buf) / n,
@@ -1062,6 +1065,12 @@ class EpisodeRunner:
             "charger_nearby_not_charged_rate": sum(ep.get("charger_nearby_not_charged_rate", 0.0) for ep in buf) / n,
             "suboptimal_target_hold_rate": sum(ep.get("suboptimal_target_hold_rate", 0.0) for ep in buf) / n,
             "planner_policy_divergence_rate": sum(ep.get("planner_policy_divergence_rate", 0.0) for ep in buf) / n,
+            "route_phase_planner_divergence_rate": sum(
+                ep.get("route_phase_planner_divergence_rate", 0.0) for ep in buf
+            ) / n,
+            "reliable_planner_divergence_rate": sum(
+                ep.get("reliable_planner_divergence_rate", 0.0) for ep in buf
+            ) / n,
             "avg_path_cross_count_50": sum(ep.get("avg_path_cross_count_50", 0.0) for ep in buf) / n,
             "avg_coverage_efficiency_20": sum(ep.get("avg_coverage_efficiency_20", 0.0) for ep in buf) / n,
             "avg_all_charger_known_path_count": sum(ep.get("avg_all_charger_known_path_count", 0.0) for ep in buf) / n,
@@ -1551,6 +1560,8 @@ class EpisodeRunner:
                         "target_teacher_mask": float(reward_payload["target_teacher_mask"]),
                         "return_action_teacher": int(reward_payload["return_action_teacher"]),
                         "return_action_teacher_mask": float(reward_payload["return_action_teacher_mask"]),
+                        "route_phase_action_teacher": int(reward_payload["route_phase_action_teacher"]),
+                        "route_phase_action_teacher_mask": float(reward_payload["route_phase_action_teacher_mask"]),
                         "battery_risk_label": float(reward_payload["battery_risk_label"]),
                         "collision_risk_label": float(reward_payload["collision_risk_label"]),
                         "fallback_mask": float(reward_payload["fallback_mask"]),
@@ -1576,6 +1587,14 @@ class EpisodeRunner:
                         "charger_nearby_not_charged": 1.0 if charger_nearby_not_charged else 0.0,
                         "suboptimal_target_hold": 1.0 if suboptimal_target_hold else 0.0,
                         "planner_policy_divergence": 0.0 if planner_action_match else 1.0,
+                        "route_phase_active": 1.0 if runtime_mode in (3, 4) else 0.0,
+                        "route_phase_reliable_active": 1.0
+                        if (
+                            runtime_mode in (3, 4)
+                            and bool(guidance.get("return_action_reliable", False))
+                            and planner_suggested_action >= 0
+                        )
+                        else 0.0,
                         "planner_suggested_action": planner_suggested_action,
                         "planner_action_margin": float(guidance.get("action_margin", 0.0)),
                         "all_charger_known_path_count": float(all_charger_known_path_count),
@@ -1766,6 +1785,7 @@ class EpisodeRunner:
             "return_progress_per_step": diagnostics["return_progress_per_step"],
             "return_efficiency_ratio": diagnostics["return_efficiency_ratio"],
             "return_stall_rate": diagnostics["return_stall_rate"],
+            "route_phase_return_stall_rate": diagnostics["route_phase_return_stall_rate"],
             "recoverability_score_avg": diagnostics["recoverability_score_avg"],
             "recoverability_violation_rate": diagnostics["recoverability_violation_rate"],
             "wall_hugging_clean_floor_rate": diagnostics["wall_hugging_clean_floor_rate"],
@@ -1775,6 +1795,8 @@ class EpisodeRunner:
             "charger_nearby_not_charged_rate": diagnostics["charger_nearby_not_charged_rate"],
             "suboptimal_target_hold_rate": diagnostics["suboptimal_target_hold_rate"],
             "planner_policy_divergence_rate": diagnostics["planner_policy_divergence_rate"],
+            "route_phase_planner_divergence_rate": diagnostics["route_phase_planner_divergence_rate"],
+            "reliable_planner_divergence_rate": diagnostics["reliable_planner_divergence_rate"],
             "avg_path_cross_count_50": diagnostics["avg_path_cross_count_50"],
             "avg_coverage_efficiency_20": diagnostics["avg_coverage_efficiency_20"],
             "avg_all_charger_known_path_count": diagnostics["avg_all_charger_known_path_count"],
@@ -1848,7 +1870,10 @@ class EpisodeRunner:
                 f"win_rate:{cur_metrics['win_rate']:.2f} "
                 f"avg_cs:{cur_metrics['avg_clean_score']:.0f} avg_cc:{cur_metrics['avg_charge_count']:.1f} "
                 f"battery_fail:{cur_metrics['battery_fail_rate']:.2f} "
-                f"return_stall:{cur_metrics['return_stall_rate']:.2f}"
+                f"return_stall:{cur_metrics['return_stall_rate']:.2f} "
+                f"route_phase_stall:{cur_metrics.get('route_phase_return_stall_rate', 0.0):.2f} "
+                f"planner_div:{cur_metrics['planner_policy_divergence_rate']:.2f} "
+                f"reliable_planner_div:{cur_metrics.get('reliable_planner_divergence_rate', 0.0):.2f}"
             )
 
         # Per-map score tracking for generalization monitoring
@@ -2023,12 +2048,11 @@ class EpisodeRunner:
     def _compute_battery_fail_outcome(charge_count, battery_fail_type, battery_fail_severity, reward_schedule):
         severity = float(max(battery_fail_severity, 0.0))
         battery_terminal_cost = Config.BATTERY_TERMINAL_COST_SCALE * severity
+        battery_terminal_cost += abs(Config.EPISODE_BATTERY_FAIL_BONUS)
         if battery_fail_type == "early_unrecoverable":
             task_reward_scale = reward_schedule["scheduled_early_battery_fail_task_reward_scale"]
-        elif battery_fail_type != "late_near_completion":
-            task_reward_scale = reward_schedule["scheduled_battery_fail_task_reward_scale"]
         else:
-            task_reward_scale = 1.0
+            task_reward_scale = reward_schedule["scheduled_battery_fail_task_reward_scale"]
 
         zero_charge_battery_fail = float(charge_count or 0.0) <= 0.0
         if zero_charge_battery_fail:
@@ -2087,6 +2111,8 @@ class EpisodeRunner:
                 "target_teacher_mask": float(reward.get("target_teacher_mask", 0.0)),
                 "return_action_teacher": int(reward.get("return_action_teacher", -1)),
                 "return_action_teacher_mask": float(reward.get("return_action_teacher_mask", 0.0)),
+                "route_phase_action_teacher": int(reward.get("route_phase_action_teacher", -1)),
+                "route_phase_action_teacher_mask": float(reward.get("route_phase_action_teacher_mask", 0.0)),
                 "battery_risk_label": float(reward.get("battery_risk_label", 0.0)),
                 "collision_risk_label": float(reward.get("collision_risk_label", 0.0)),
                 "fallback_mask": float(reward.get("fallback_mask", 0.0)),
@@ -2110,6 +2136,8 @@ class EpisodeRunner:
             "target_teacher_mask": 0.0,
             "return_action_teacher": -1,
             "return_action_teacher_mask": 0.0,
+            "route_phase_action_teacher": -1,
+            "route_phase_action_teacher_mask": 0.0,
             "battery_risk_label": 0.0,
             "collision_risk_label": 0.0,
             "fallback_mask": 0.0,
@@ -2134,6 +2162,7 @@ class EpisodeRunner:
                 "return_progress_per_step": 0.0,
                 "return_efficiency_ratio": 0.0,
                 "return_stall_rate": 0.0,
+                "route_phase_return_stall_rate": 0.0,
                 "recoverability_score_avg": 0.0,
                 "recoverability_violation_rate": 0.0,
                 "wall_hugging_clean_floor_rate": 0.0,
@@ -2143,6 +2172,8 @@ class EpisodeRunner:
                 "charger_nearby_not_charged_rate": 0.0,
                 "suboptimal_target_hold_rate": 0.0,
                 "planner_policy_divergence_rate": 0.0,
+                "route_phase_planner_divergence_rate": 0.0,
+                "reliable_planner_divergence_rate": 0.0,
                 "avg_path_cross_count_50": 0.0,
                 "avg_coverage_efficiency_20": 0.0,
                 "avg_all_charger_known_path_count": 0.0,
@@ -2175,6 +2206,9 @@ class EpisodeRunner:
         recoverability = [float(rec.get("future_recoverability_score", 0.0)) for rec in step_records]
         anchor_dists = [float(rec.get("anchor_return_dist", 0.0)) for rec in step_records]
         diag_actions = [float(rec.get("is_diag_action", 0.0)) for rec in step_records]
+        planner_divergence_flags = [float(rec.get("planner_policy_divergence", 0.0)) for rec in step_records]
+        route_phase_masks = [float(rec.get("route_phase_active", 0.0)) for rec in step_records]
+        route_phase_reliable_masks = [float(rec.get("route_phase_reliable_active", 0.0)) for rec in step_records]
         total = float(len(step_records))
 
         target_steps = [t for t in targets if t > 0]
@@ -2200,11 +2234,14 @@ class EpisodeRunner:
         route_phase_steps = [idx for idx, mode in enumerate(modes) if mode in (3, 4)]
         progress_deltas = []
         stall_count = 0
+        route_phase_stall_count = 0
         for prev_idx, cur_idx in zip(route_phase_steps, route_phase_steps[1:]):
             progress = anchor_dists[prev_idx] - anchor_dists[cur_idx]
             progress_deltas.append(progress)
             if progress <= 0.0:
                 stall_count += 1
+                if route_phase_masks[cur_idx] > 0.0:
+                    route_phase_stall_count += 1
         return_progress_per_step = float(sum(progress_deltas) / max(len(progress_deltas), 1))
         return_efficiency_ratio = float(
             (anchor_dists[route_phase_steps[0]] / max(len(route_phase_steps), 1))
@@ -2233,6 +2270,17 @@ class EpisodeRunner:
         planner_policy_divergence_rate = float(
             sum(float(rec.get("planner_policy_divergence", 0.0)) for rec in step_records) / total
         )
+        route_phase_planner_den = max(sum(route_phase_masks), 1.0)
+        route_phase_planner_divergence_rate = float(
+            sum(div for div, active in zip(planner_divergence_flags, route_phase_masks) if active > 0.0)
+            / route_phase_planner_den
+        )
+        reliable_planner_den = max(sum(route_phase_reliable_masks), 1.0)
+        reliable_planner_divergence_rate = float(
+            sum(div for div, active in zip(planner_divergence_flags, route_phase_reliable_masks) if active > 0.0)
+            / reliable_planner_den
+        )
+        route_phase_return_stall_rate = float(route_phase_stall_count / max(len(progress_deltas), 1))
 
         return {
             "late_return_rate": float(late_return_rate),
@@ -2245,6 +2293,7 @@ class EpisodeRunner:
             "return_progress_per_step": float(return_progress_per_step),
             "return_efficiency_ratio": float(return_efficiency_ratio),
             "return_stall_rate": float(return_stall_rate),
+            "route_phase_return_stall_rate": float(route_phase_return_stall_rate),
             "recoverability_score_avg": float(sum(recoverability) / max(len(recoverability), 1)),
             "recoverability_violation_rate": float(sum(1 for x in recoverability if x < 0.0) / max(len(recoverability), 1)),
             "wall_hugging_clean_floor_rate": wall_hugging_clean_floor_rate,
@@ -2254,6 +2303,8 @@ class EpisodeRunner:
             "charger_nearby_not_charged_rate": charger_nearby_not_charged_rate,
             "suboptimal_target_hold_rate": suboptimal_target_hold_rate,
             "planner_policy_divergence_rate": planner_policy_divergence_rate,
+            "route_phase_planner_divergence_rate": route_phase_planner_divergence_rate,
+            "reliable_planner_divergence_rate": reliable_planner_divergence_rate,
             "avg_path_cross_count_50": float(sum(float(rec.get("path_cross_count_50", 0.0)) for rec in step_records) / total),
             "avg_coverage_efficiency_20": float(sum(float(rec.get("coverage_efficiency_20", 0.0)) for rec in step_records) / total),
             "avg_all_charger_known_path_count": float(
@@ -2347,6 +2398,7 @@ class EpisodeRunner:
             "return_progress_per_step": round(m["return_progress_per_step"], 4),
             "return_efficiency_ratio": round(m["return_efficiency_ratio"], 4),
             "return_stall_rate": round(m["return_stall_rate"], 4),
+            "avg_route_phase_return_stall_rate": round(m.get("route_phase_return_stall_rate", 0.0), 4),
             "recoverability_score_avg": round(m["recoverability_score_avg"], 4),
             "recoverability_violation_rate": round(m["recoverability_violation_rate"], 4),
             "wall_hugging_clean_floor_rate": round(m["wall_hugging_clean_floor_rate"], 4),
@@ -2356,6 +2408,12 @@ class EpisodeRunner:
             "charger_nearby_not_charged_rate": round(m["charger_nearby_not_charged_rate"], 4),
             "suboptimal_target_hold_rate": round(m["suboptimal_target_hold_rate"], 4),
             "planner_policy_divergence_rate": round(m["planner_policy_divergence_rate"], 4),
+            "avg_route_phase_planner_divergence_rate": round(
+                m.get("route_phase_planner_divergence_rate", 0.0), 4
+            ),
+            "avg_reliable_planner_divergence_rate": round(
+                m.get("reliable_planner_divergence_rate", 0.0), 4
+            ),
             "avg_path_cross_count_50": round(m["avg_path_cross_count_50"], 4),
             "avg_coverage_efficiency_20": round(m["avg_coverage_efficiency_20"], 4),
             "avg_all_charger_known_path_count": round(m["avg_all_charger_known_path_count"], 4),

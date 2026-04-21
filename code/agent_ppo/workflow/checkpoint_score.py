@@ -117,7 +117,7 @@ RESUME_CATEGORY_SPECS: dict[str, tuple[float, list[MetricSpec]]] = {
             MetricSpec("battery_fail_rate", "window", "lower", 7.0, (0.05, 0.25)),
             MetricSpec("collision_fail_rate", "window", "lower", 6.0, (0.02, 0.12)),
             MetricSpec("late_return_rate", "window", "lower", 4.0, (0.03, 0.20)),
-            MetricSpec("return_stall_rate", "window", "lower", 5.0, (0.15, 0.55)),
+            MetricSpec("route_phase_return_stall_rate", "window", "lower", 5.0, (0.15, 0.45)),
         ],
     ),
     "efficiency": (
@@ -137,7 +137,7 @@ RESUME_CATEGORY_SPECS: dict[str, tuple[float, list[MetricSpec]]] = {
             MetricSpec("narrow_unknown_commit_rate", "window", "lower", 3.0, (0.03, 0.18)),
             MetricSpec("missed_charge_opportunity_rate", "window", "lower", 3.0, (0.0, 0.05)),
             MetricSpec("suboptimal_target_hold_rate", "window", "lower", 4.0, (0.02, 0.12)),
-            MetricSpec("planner_policy_divergence_rate", "window", "lower", 4.0, (0.12, 0.45)),
+            MetricSpec("reliable_planner_divergence_rate", "window", "lower", 4.0, (0.12, 0.45)),
         ],
     ),
     "learning": (
@@ -178,7 +178,7 @@ SUBMISSION_CATEGORY_SPECS: dict[str, tuple[float, list[MetricSpec]]] = {
         20.0,
         [
             MetricSpec("late_return_rate", "benchmark", "lower", 6.0, (0.03, 0.18)),
-            MetricSpec("return_stall_rate", "benchmark", "lower", 8.0, (0.15, 0.50)),
+            MetricSpec("route_phase_return_stall_rate", "benchmark", "lower", 8.0, (0.15, 0.45)),
             MetricSpec("recoverability_violation_rate", "benchmark", "lower", 6.0, (0.05, 0.25)),
         ],
     ),
@@ -190,15 +190,29 @@ SUBMISSION_CATEGORY_SPECS: dict[str, tuple[float, list[MetricSpec]]] = {
             MetricSpec("narrow_unknown_commit_rate", "benchmark", "lower", 3.0, (0.03, 0.16)),
             MetricSpec("missed_charge_opportunity_rate", "benchmark", "lower", 3.0, (0.0, 0.05)),
             MetricSpec("suboptimal_target_hold_rate", "benchmark", "lower", 4.0, (0.02, 0.10)),
-            MetricSpec("planner_policy_divergence_rate", "benchmark", "lower", 5.0, (0.12, 0.40)),
+            MetricSpec("reliable_planner_divergence_rate", "benchmark", "lower", 5.0, (0.12, 0.40)),
         ],
     ),
 }
 
 
+_BENCHMARK_FALLBACK_METRICS = {
+    "route_phase_return_stall_rate": "return_stall_rate",
+    "reliable_planner_divergence_rate": "planner_policy_divergence_rate",
+}
+
+
+def _with_benchmark_fallback(metrics: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not metrics:
+        return metrics
+    payload = dict(metrics)
+    for primary, fallback in _BENCHMARK_FALLBACK_METRICS.items():
+        if payload.get(primary) is None and payload.get(fallback) is not None:
+            payload[primary] = payload[fallback]
+    return payload
+
+
 def _resume_eligible(window_metrics: dict[str, Any], learning_metrics: dict[str, Any]) -> bool:
-    route_anchor_teacher = _as_float(learning_metrics.get("route_anchor_teacher_active_rate"))
-    target_teacher = _as_float(learning_metrics.get("target_teacher_active_rate"))
     clean_trend = _as_float(learning_metrics.get("value_clean_loss_trend_ratio"))
     return (
         int(_float_or(window_metrics.get("_count"), 0.0)) >= 20
@@ -207,14 +221,19 @@ def _resume_eligible(window_metrics: dict[str, Any], learning_metrics: dict[str,
         and _float_or(window_metrics.get("win_rate"), 0.0) >= 0.55
         and _float_or(window_metrics.get("battery_fail_rate"), 1.0) <= 0.25
         and _float_or(window_metrics.get("collision_fail_rate"), 1.0) <= 0.12
+        and _float_or(window_metrics.get("zero_charge_battery_fail_rate"), 1.0) <= 0.40
+        and _float_or(
+            window_metrics.get("reliable_planner_divergence_rate"),
+            _float_or(window_metrics.get("route_phase_planner_divergence_rate"), 1.0),
+        ) <= 0.60
+        and _float_or(window_metrics.get("route_phase_return_stall_rate"), 1.0) <= 0.45
         and _float_or(learning_metrics.get("entropy_loss"), 0.85) <= 1.05
-        and (route_anchor_teacher is None or route_anchor_teacher >= 0.60)
-        and (target_teacher is None or target_teacher >= 0.60)
         and (clean_trend is None or clean_trend <= 1.15)
     )
 
 
 def _submission_eligible(benchmark_metrics: dict[str, Any] | None) -> bool:
+    benchmark_metrics = _with_benchmark_fallback(benchmark_metrics)
     if not benchmark_metrics:
         return False
     return (
@@ -236,6 +255,7 @@ def _training_stability_bonus(learning_metrics: dict[str, Any]) -> float:
 
 
 def _benchmark_stability_bonus(benchmark_metrics: dict[str, Any] | None) -> float:
+    benchmark_metrics = _with_benchmark_fallback(benchmark_metrics)
     if not benchmark_metrics:
         return 0.0
     specs = [
@@ -276,10 +296,11 @@ def compute_checkpoint_scores(
     benchmark_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     learning_metrics = learning_metrics or {}
+    benchmark_metrics = _with_benchmark_fallback(benchmark_metrics or {})
     sources = {
         "window": window_metrics or {},
         "learning": learning_metrics,
-        "benchmark": benchmark_metrics or {},
+        "benchmark": benchmark_metrics,
     }
 
     resume_breakdown = {}
