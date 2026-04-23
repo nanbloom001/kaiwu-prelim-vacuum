@@ -10,7 +10,42 @@ Data definitions and chunked recurrent PPO sample processing.
 from __future__ import annotations
 
 import numpy as np
-from common_python.utils.common_func import create_cls
+
+try:
+    from common_python.utils.common_func import create_cls
+except ModuleNotFoundError:
+    def create_cls(name, **field_defaults):
+        """Fallback lightweight record factory for host-side package imports."""
+
+        field_names = tuple(field_defaults.keys())
+        defaults = dict(field_defaults)
+
+        def __init__(self, *args, **kwargs):
+            if len(args) > len(field_names):
+                raise TypeError(f"{name} expected at most {len(field_names)} positional arguments, got {len(args)}")
+            unknown = set(kwargs) - set(field_names)
+            if unknown:
+                unknown_fields = ", ".join(sorted(unknown))
+                raise TypeError(f"{name} got unexpected field(s): {unknown_fields}")
+
+            values = dict(defaults)
+            values.update(zip(field_names, args))
+            values.update(kwargs)
+            for field_name in field_names:
+                setattr(self, field_name, values[field_name])
+
+        def __repr__(self):
+            rendered = ", ".join(f"{field_name}={getattr(self, field_name)!r}" for field_name in field_names)
+            return f"{name}({rendered})"
+
+        namespace = {
+            "__init__": __init__,
+            "__repr__": __repr__,
+            "_fields": field_names,
+            "_field_defaults": defaults,
+        }
+        namespace.update(defaults)
+        return type(name, (), namespace)
 
 from agent_ppo.conf.conf import Config
 

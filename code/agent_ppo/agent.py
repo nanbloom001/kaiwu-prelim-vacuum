@@ -8,6 +8,11 @@ Author: Tencent AI Arena Authors
 
 Robot Vacuum Agent.
 清扫大作战 Agent 主类。
+
+Ownership boundary:
+- `train/.docker-compose.yaml` owns Linux framework hot-patches, startup patch injection, and env/TOML bridging.
+- `code/agent_ppo/agent.py` owns only agent-local runtime behavior plus the in-process `RemoteAgent.learn` hook
+  that depends on this module's business learn contract.
 """
 
 import os
@@ -137,6 +142,10 @@ def _emit_runtime_probe_once(logger, seen_stages, stage, payload):
 
 
 def _configure_torch_runtime(service_name: str, device) -> None:
+    """Configure process-local torch runtime knobs.
+
+    Compose owns environment delivery; the agent owns how those env values are consumed inside the Python process.
+    """
     is_learner = "learner" in service_name
     if is_learner:
         # Learner has noticeable CPU-side fetch/collate work. Avoid pinning it to 1 thread.
@@ -168,6 +177,12 @@ def _configure_torch_runtime(service_name: str, device) -> None:
 
 
 def _patch_remote_agent_batch_learn() -> None:
+    """Keep the batch-tensor learner fast path owned by the agent runtime.
+
+    This hook must stay in `agent.py` because it depends on `Agent.PREFER_BATCH_TENSOR_LEARN` and the current
+    business `learn()` contract. Compose startup patches own framework file rewrites, but should not duplicate or
+    relocate this in-process dispatch decision.
+    """
     if RemoteAgent is None or getattr(RemoteAgent, "_robot_vacuum_batch_tensor_patched", False):
         return
 
@@ -300,7 +315,8 @@ class Agent(BaseAgent):
         self._predict_error_count = 0
         self._runtime_probe_stages = set()
 
-        # Optional local bootstrap path. The default training entry now uses framework preload.
+        # Optional local bootstrap path. The default Linux training flow keeps resume/preload ownership in the
+        # framework + compose startup path; this branch is only an explicit agent-local fallback.
         use_local_resume_bootstrap = _env_flag(
             "KAIWU_USE_LOCAL_RESUME_BOOTSTRAP",
             Config.USE_LOCAL_RESUME_BOOTSTRAP,
