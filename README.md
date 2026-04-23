@@ -8,6 +8,30 @@
 
 最常用的入口都在 `train/` 目录。
 
+## 当前训练主线
+
+当前仓库已经不再只使用“直接 `docker compose up` 硬跑”的工作流。当前更推荐的主线是：
+
+1. 用 `train/run_training_phase.py` 启动带 phase overlay 的 scratch run
+2. 用 `train/phases/s1_survival.env` 管理当前阶段的 phase 参数
+3. 用 `train/compare_training_runs.py` 按固定窗口做同轮数比较
+4. 当前主参考方案见：
+   - `train/context/optimization/SURVIVAL_CPS_STABILIZATION_PLAN_20260421_1903.md`
+
+这一阶段的目标不是抽象地“把总平均训高”，而是同时看：
+
+1. 简单图 survival
+2. 难图 / 少充电桩图 survival
+3. `avg_clean_per_step`
+4. `battery_positive_reward_rate`
+5. `zero_charge_battery_fail_rate`
+6. `zero_charge_among_battery_fail_rate`
+
+这里当前统一口径是：
+
+- `zero_charge_battery_fail_rate` = `zero_charge battery fail / all episodes`
+- `zero_charge_among_battery_fail_rate` = `zero_charge battery fail / battery fail`
+
 ### 1. 启动训练
 
 ```bash
@@ -23,6 +47,24 @@ docker compose -f .docker-compose.yaml --profile distributed up -d --force-recre
 docker compose -f .docker-compose.yaml --profile distributed down
 ```
 
+如果要按当前 phase 工作流启动新一轮 scratch run，优先使用：
+
+```bash
+python3 run_training_phase.py s1_survival --seed-label <label>
+```
+
+只做 dry-run 检查 phase env 合并结果：
+
+```bash
+python3 run_training_phase.py s1_survival --seed-label <label> --dry-run
+```
+
+说明：
+
+- `train/phases/s1_survival.env` 是当前 survival / CPS 主线实验入口
+- phase launcher 会生成临时 env 文件，再统一起 compose
+- 当前阶段推荐所有对比 run 都走这个入口，避免手工散改 `.env`
+
 ### 2. 看训练状态
 
 ```bash
@@ -32,6 +74,28 @@ docker logs -f kaiwu-train-learner-1
 # 查看容器状态
 docker compose -f .docker-compose.yaml ps
 ```
+
+如果要看当前 run 的统一状态口径，优先看：
+
+- `code/runtime_state/current/run_session.json`
+- `code/runtime_state/current/curriculum_state.json`
+
+当前训练观察节奏固定为：
+
+1. `bootstrap_10`：早期预警
+2. `bootstrap_20`：方向判断 / 早停预警
+3. `global_40`：正式主判
+4. `global_80`：趋势复核
+5. `global_120`：局部收敛确认
+6. `global_160`：晚恢复复核
+7. `global_200`：晚恢复 / targeted-resume 复核
+
+经验上：
+
+- `10 ~ 20` 局就足够暴露方向
+- `40` 局足够正式判断这轮值不值得继续
+- `80 ~ 120` 局可以看模型是否开始收敛到某种局部最优
+- `160 ~ 200` 局只用于判断“是否存在晚恢复价值”，不用于洗白前面已失败的 run
 
 ### 3. 跑串行 benchmark
 
@@ -116,6 +180,40 @@ python3 compare_benchmarks.py 0 1
 - 并行 benchmark 汇总：`train/eval_parallel_results.json`
 - 并行 benchmark 明细：`train/eval_parallel_logs/<session_id>/`
 
+### 6. 对比训练 run
+
+当前已经内置固定窗口对比脚本：
+
+```bash
+python3 train/compare_training_runs.py <baseline_run> <target_run>
+```
+
+例如：
+
+```bash
+python3 train/compare_training_runs.py 20260421-134719 current
+python3 train/compare_training_runs.py 20260421-134719 20260421-180249
+```
+
+脚本默认比较这些固定节点：
+
+- `bootstrap_10`
+- `bootstrap_20`
+- `global_40`
+- `global_80`
+- `global_120`
+- `global_160`
+- `global_200`
+
+输出里：
+
+- `bootstrap_10 / 20` 使用 `local_10`，也就是记录点前 10 局平均
+- `global_40+` 使用 `local_20`，也就是记录点前 20 局平均
+- 旧的 `prefix` 指标继续保留在 JSON 报告里，只做辅助诊断
+- `global_40` 是主判
+- `global_80 / 120` 做趋势复核
+- `global_160 / 200` 只做晚恢复复核
+
 ## 仓库结构
 
 ```text
@@ -157,6 +255,12 @@ TcKaiwuFinal/
   - 串行 benchmark 入口。
 - [train/run_benchmark_parallel.sh](/home/user/TcKaiwuFinal/train/run_benchmark_parallel.sh)
   - 并行 benchmark 入口，当前默认建议用 `4×10`。
+- [train/run_training_phase.py](/home/user/TcKaiwuFinal/train/run_training_phase.py)
+  - 当前 phase 化训练入口，推荐用它启动 `s1_survival` 等阶段 run。
+- [train/phases/s1_survival.env](/home/user/TcKaiwuFinal/train/phases/s1_survival.env)
+  - 当前 survival / CPS 主线实验的 phase overlay。
+- [train/compare_training_runs.py](/home/user/TcKaiwuFinal/train/compare_training_runs.py)
+  - 固定窗口训练对比工具。
 - [train/compare_benchmarks.py](/home/user/TcKaiwuFinal/train/compare_benchmarks.py)
   - benchmark 对比工具。
 
@@ -195,19 +299,30 @@ TcKaiwuFinal/
 
 ### 日常训练
 
-1. 调整 `train/.env`、`code/agent_ppo/conf/conf.py` 或相关特征/规则代码。
-2. 在 `train/` 下执行：
+1. 当前主线优先调整：
+   - `train/phases/s1_survival.env`
+   - `code/agent_ppo/feature/preprocessor.py`
+   - `code/agent_ppo/conf/conf.py`
+2. 启动新 run 时优先使用：
+
+```bash
+cd train
+python3 run_training_phase.py s1_survival --seed-label <label>
+```
+
+3. 只在需要兼容旧工作流时，才直接在 `train/` 下执行：
 
 ```bash
 docker compose -f .docker-compose.yaml --profile distributed up -d --force-recreate
 ```
 
-3. 用 `docker logs -f kaiwu-train-learner-1` 观察：
+4. 用 `docker logs -f kaiwu-train-learner-1` 观察：
    - loss
    - entropy
    - data_fetch / real_train
    - 保存 checkpoint 的节奏
-4. 训练一段时间后停栈，再跑 benchmark 做 A/B 对比。
+5. 同时看 `code/runtime_state/current/curriculum_state.json` 的固定窗口指标。
+6. 训练一段时间后停栈，再跑 benchmark 或 `compare_training_runs.py` 做 A/B 对比。
 
 ### 日常评估
 
@@ -257,8 +372,17 @@ cd train && bash run_benchmark_parallel.sh --workers 4 --envs-per-worker 10 --ma
 # 查看最新 benchmark 对比
 cd train && python3 compare_benchmarks.py latest
 
+# phase 化启动新 run
+cd train && python3 run_training_phase.py s1_survival --seed-label trial-a
+
+# phase dry-run
+cd train && python3 run_training_phase.py s1_survival --seed-label trial-a --dry-run
+
+# 固定窗口对比训练 run
+python3 train/compare_training_runs.py 20260421-134719 current
+
 # 运行单测
-cd code && python3 -m pytest tests/ -v
+cd code && /home/user/TcKaiwuFinal/.conda-numpy/bin/python -m unittest tests.test_curriculum_and_checkpoint_score tests.test_ltsppo_contracts
 ```
 
 ## 环境要求
@@ -268,7 +392,12 @@ cd code && python3 -m pytest tests/ -v
 - NVIDIA GPU 驱动与容器运行时
 - Python 3.10+ 用于本地脚本和测试
 
+当前仓库本地测试默认建议使用：
+
+- `/home/user/TcKaiwuFinal/.conda-numpy/bin/python`
+
 ## 补充说明
 
 - 当前 `linux` 分支与早期 `win` 工作流已经不完全一致，优先以本 README、`CLAUDE.md` 和 `train/context/` 中的最新文档为准。
 - 如果只是想快速上手，先看本 README 的“快速开始”和“主要入口文件”两节就够了。
+- 如果当前目标是 survival / CPS 闭环，不要只看全局平均；至少同时看固定窗口和分桶结果。

@@ -85,6 +85,34 @@ def build_compose_command(
     ]
 
 
+def build_training_mode_overrides(start_mode: str, resume_bundle_dir: str = "") -> dict[str, str]:
+    mode = str(start_mode or "scratch").strip().lower()
+    if mode == "scratch":
+        return {
+            "KAIWU_TRAINING_START_MODE": "scratch",
+            "KAIWU_PRELOAD_MODEL": "0",
+            "KAIWU_PRELOAD_MODEL_DIR": "",
+            "KAIWU_PRELOAD_MODEL_ID": "",
+            "KAIWU_RESUME_BUNDLE_DIR": "",
+            "KAIWU_RESUME_RUN_ID": "",
+            "KAIWU_CURRICULUM_INITIAL_STAGE": "warmup",
+        }
+    if mode == "resume":
+        bundle_dir = str(resume_bundle_dir or "").strip()
+        if not bundle_dir:
+            raise ValueError("--resume-bundle-dir is required when --start-mode=resume")
+        return {
+            "KAIWU_TRAINING_START_MODE": "resume",
+            "KAIWU_PRELOAD_MODEL": "0",
+            "KAIWU_PRELOAD_MODEL_DIR": "",
+            "KAIWU_PRELOAD_MODEL_ID": "",
+            "KAIWU_RESUME_BUNDLE_DIR": bundle_dir,
+            "KAIWU_RESUME_RUN_ID": "",
+            "KAIWU_CURRICULUM_INITIAL_STAGE": "warmup",
+        }
+    raise ValueError(f"unsupported start mode: {start_mode}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start a training phase using an env overlay")
     parser.add_argument("phase", help="Phase name, e.g. s1_survival")
@@ -99,6 +127,8 @@ def parse_args() -> argparse.Namespace:
         help="Compose services to recreate",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print merged env and compose command only")
+    parser.add_argument("--start-mode", choices=["scratch", "resume"], default="scratch", help="Training start mode")
+    parser.add_argument("--resume-bundle-dir", default="", help="Explicit resume bundle directory when start mode is resume")
     return parser.parse_args()
 
 
@@ -109,14 +139,8 @@ def main() -> int:
     phase_env_path = train_dir / "phases" / f"{args.phase}.env"
     compose_file = train_dir / ".docker-compose.yaml"
 
-    extra_overrides = {
-        "KAIWU_TRAINING_START_MODE": "scratch",
-        "KAIWU_PRELOAD_MODEL": "0",
-        "KAIWU_PRELOAD_MODEL_DIR": "",
-        "KAIWU_PRELOAD_MODEL_ID": "",
-        "KAIWU_CURRICULUM_INITIAL_STAGE": "warmup",
-        "KAIWU_TRAIN_PHASE": args.phase,
-    }
+    extra_overrides = build_training_mode_overrides(args.start_mode, args.resume_bundle_dir)
+    extra_overrides["KAIWU_TRAIN_PHASE"] = args.phase
     if args.seed_label:
         extra_overrides["KAIWU_PHASE_RUN_LABEL"] = f"{args.phase}_{args.seed_label}"
 
@@ -142,8 +166,19 @@ def main() -> int:
                 "KAIWU_TRAIN_PHASE",
                 "KAIWU_TRAINING_START_MODE",
                 "KAIWU_PRELOAD_MODEL",
+                "KAIWU_RESUME_BUNDLE_DIR",
                 "KAIWU_CURRICULUM_INITIAL_STAGE",
                 "KAIWU_PHASE_RUN_LABEL",
+                "KAIWU_ENV_FIXED_DIFFICULTY",
+                "KAIWU_TRAIN_MAPS",
+                "KAIWU_TRAIN_MAP_RANDOM",
+                "KAIWU_TRAIN_ROBOT_COUNT",
+                "KAIWU_TRAIN_CHARGER_COUNT",
+                "KAIWU_TRAIN_MAX_STEP",
+                "KAIWU_TRAIN_BATTERY_MAX",
+                "KAIWU_BENCHMARK_POLICY_MODE",
+                "KAIWU_BENCHMARK_MAPS",
+                "KAIWU_BENCHMARK_ROUNDS_JSON",
             ):
                 if key in merged:
                     print(f"{key}={merged[key]}")

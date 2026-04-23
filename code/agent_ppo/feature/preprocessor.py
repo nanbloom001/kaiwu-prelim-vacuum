@@ -21,9 +21,23 @@ from agent_ppo.utils.constraint_utils import (
     classify_battery_state,
     compute_battery_process_cost_step,
     compute_charge_need_score,
+    compute_route_phase_reward_ready,
+    compute_route_phase_shadow_risk,
     compute_collision_process_cost_step,
     compute_slack_confidence,
     has_known_charge_route,
+)
+from agent_ppo.utils.return_readiness import (
+    control_stack_simplify_active,
+    cps_align_active,
+    evaluate_simplified_return_readiness,
+)
+from agent_ppo.utils.strong_heuristic import (
+    evaluate_strong_heuristic_mode,
+    logical_mode_to_teacher_name,
+    logical_mode_to_training_mode,
+    strong_heuristic_active,
+    strong_heuristic_slice2a_active,
 )
 from agent_ppo.utils.reward_schedule import get_reward_schedule
 
@@ -156,6 +170,7 @@ class Preprocessor:
         self.return_progress_ema = 0.0
         self.return_stall_ema = 0.0
         self._prev_charge_need_score = 0.0
+        self._prev_route_phase_shadow_risk = 0.0
         self._prev_charge_detour_proxy = 0.0
         self._prev_charge_interrupt_proxy = 0.0
         self._prev_all_charger_known_path_count = 0.0
@@ -1190,14 +1205,75 @@ class Preprocessor:
         battery_ratio = self.battery / max(self.battery_max, 1)
         guidance = self._get_guidance()
         margin = float(guidance.get("margin", 0.0))
+        on_charger = bool(guidance.get("on_charger", False))
+        charger_dist = float(guidance.get("charger_dist", getattr(self, "nearest_charger_dist", 0.0)))
         known_path_count = int(guidance.get("all_charger_known_path_count", 0))
         unknown_ratio = float(guidance.get("unknown_path_ratio", 0.0))
         planner_topk_reachable_count = int(guidance.get("planner_topk_reachable_count", known_path_count))
         planner_multi_route_recoverability = float(
             guidance.get("planner_multi_route_recoverability", self.future_recoverability_score)
         )
+        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
+        if strong_heuristic_active(train_phase):
+            mode_decision = evaluate_strong_heuristic_mode(
+                current_mode=self.current_mode,
+                mode_return=self.MODE_RETURN,
+                nearest_npc_dist=self.nearest_npc_dist,
+                on_charger=on_charger,
+                battery=self.battery,
+                battery_ratio=battery_ratio,
+                charger_dist=charger_dist,
+                charger_slack=self.charger_slack,
+                margin=margin,
+                future_recoverability_score=self.future_recoverability_score,
+                planner_multi_route_recoverability=planner_multi_route_recoverability,
+                known_path_count=known_path_count,
+                total_charger=self.total_charger,
+                unknown_ratio=unknown_ratio,
+                route_contract_pressure=self.route_contract_pressure,
+                return_battery_ratio=Config.RETURN_BATTERY_RATIO,
+                return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
+                return_exit_battery_ratio=Config.STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO,
+                pre_return_battery_ratio=Config.PREPARE_RETURN_BATTERY_RATIO,
+                pre_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
+                pre_return_recoverability_threshold=Config.STRONG_HEURISTIC_PRE_RETURN_RECOVERABILITY_THRESHOLD,
+                pre_return_unknown_ratio_threshold=Config.STRONG_HEURISTIC_PRE_RETURN_UNKNOWN_RATIO_THRESHOLD,
+                pre_return_route_pressure_threshold=Config.STRONG_HEURISTIC_PRE_RETURN_ROUTE_PRESSURE_THRESHOLD,
+                charge_margin_warn=Config.CHARGE_MARGIN_WARN,
+                evade_npc_distance=Config.STRONG_HEURISTIC_EVADE_NPC_DISTANCE,
+            )
+            return logical_mode_to_training_mode(str(mode_decision["logical_mode"]), self)
+
         if self.nearest_npc_dist <= 3.0:
             return self.MODE_EVADE
+        if control_stack_simplify_active(train_phase):
+            readiness = evaluate_simplified_return_readiness(
+                charger_slack=self.charger_slack,
+                battery_ratio=battery_ratio,
+                future_recoverability_score=self.future_recoverability_score,
+                planner_multi_route_recoverability=planner_multi_route_recoverability,
+                margin=margin,
+                route_contract_pressure=self.route_contract_pressure,
+                known_path_count=known_path_count,
+                total_charger=self.total_charger,
+                planner_topk_reachable_count=planner_topk_reachable_count,
+                unknown_ratio=unknown_ratio,
+                return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
+                return_battery_ratio=Config.RETURN_BATTERY_RATIO,
+                return_recoverability_threshold=Config.RETURN_RECOVERABILITY_THRESHOLD,
+                prepare_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
+                contract_battery_ratio=Config.CONTRACT_BATTERY_RATIO,
+                contract_recoverability_threshold=Config.CONTRACT_RECOVERABILITY_THRESHOLD,
+                charge_margin_low=Config.CHARGE_MARGIN_LOW,
+                charge_margin_warn=Config.CHARGE_MARGIN_WARN,
+                contract_route_pressure_threshold=Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
+                unknown_path_risk_battery_ratio=Config.UNKNOWN_PATH_RISK_BATTERY_RATIO,
+                unknown_path_risk_threshold=Config.UNKNOWN_PATH_RISK_THRESHOLD,
+            )
+            if readiness["return_now"]:
+                return self.MODE_RETURN
+            if readiness["pre_return_ready"]:
+                return self.MODE_CONTRACT
         if (
             self.charger_slack <= Config.RETURN_SLACK_THRESHOLD
             or battery_ratio <= Config.RETURN_BATTERY_RATIO
@@ -1223,7 +1299,6 @@ class Preprocessor:
             and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
             and unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD
         )
-        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
         if train_phase == "s1_survival":
             strong_hits = 0
             strong_hits += int(self.charger_slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD)
@@ -1278,10 +1353,26 @@ class Preprocessor:
                 return idx
         return 0
 
+    def _current_cell_is_clean_floor(self):
+        hx, hz = self.cur_pos
+        if not (0 <= hx < self.GRID_SIZE and 0 <= hz < self.GRID_SIZE):
+            return False
+        return bool(
+            self.explored_map[hx, hz] >= 0.5
+            and self.passable_map[hx, hz] >= 0.5
+            and self.dirty_memory[hx, hz] <= 0.5
+            and self.charger_map[hx, hz] <= 0.5
+        )
+
     def reward_process(self):
         gain_reward = 0.0
         task_reward = 0.0
         reward_schedule = get_reward_schedule(self.training_global_step)
+        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
+        simplify_control_stack = control_stack_simplify_active(train_phase)
+        cps_align_phase = cps_align_active(train_phase)
+        strong_heuristic_phase = strong_heuristic_active(train_phase)
+        strong_heuristic_slice2a_phase = strong_heuristic_slice2a_active(train_phase)
         battery_ratio = self.battery / max(self.battery_max, 1)
         guidance = self._get_guidance()
         slack = float(guidance.get("slack", self.charger_slack))
@@ -1290,6 +1381,9 @@ class Preprocessor:
         planner_topk_reachable_count = int(guidance.get("planner_topk_reachable_count", all_known_paths))
         unknown_target_ratio = float(guidance.get("unknown_path_ratio", 0.0))
         planner_best_target_route_diversity = float(guidance.get("planner_best_target_route_diversity", 0.0))
+        planner_multi_route_recoverability = float(
+            guidance.get("planner_multi_route_recoverability", self.future_recoverability_score)
+        )
         target_reliable = bool(guidance.get("target_reliable", False))
         anchor_reliable = bool(guidance.get("anchor_reliable", False))
         mode_reliable = bool(guidance.get("mode_reliable", False))
@@ -1309,11 +1403,13 @@ class Preprocessor:
         suboptimal_target_hold = self._is_suboptimal_target_hold(guidance)
 
         cleaning_scale = 1.0
-        if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
+        if self.current_mode == self.MODE_RETURN or (
+            not simplify_control_stack and self.current_mode == self.MODE_CONTRACT
+        ):
             cleaning_scale *= Config.CLEANING_RETURN_SCALE
-        if self.cur_visit_count >= 3:
+        if not strong_heuristic_phase and self.cur_visit_count >= 3:
             cleaning_scale *= Config.CLEANING_REVISIT_HARD_SCALE
-        elif self.cur_visit_count >= 2:
+        elif not strong_heuristic_phase and self.cur_visit_count >= 2:
             cleaning_scale *= Config.CLEANING_REVISIT_SOFT_SCALE
         if stale_boundary:
             cleaning_scale *= Config.CLEANING_STALE_BOUNDARY_SCALE
@@ -1354,7 +1450,9 @@ class Preprocessor:
         if self._last_action is not None and 0 <= self._last_action < Config.ACTION_NUM:
             dirty_approach_reward = 0.08 * float(self.directional_dirty[self._last_action])
 
-        if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
+        if self.current_mode == self.MODE_RETURN or (
+            not simplify_control_stack and self.current_mode == self.MODE_CONTRACT
+        ):
             explore_reward *= 0.25
             frontier_reward *= 0.25
         if stale_boundary:
@@ -1396,6 +1494,8 @@ class Preprocessor:
                 float(self.coverage_efficiency_20) - Config.COVERAGE_EFFICIENCY_BASELINE,
                 0.0,
             )
+        if cps_align_phase:
+            coverage_efficiency_bonus = 0.0
         heading_consistency_6 = self._compute_heading_consistency(window=6)
         loop_proxy = float(
             np.clip(
@@ -1466,6 +1566,8 @@ class Preprocessor:
             "planning": 1.0,
             "critical": 2.0,
         }.get(battery_state, 0.0)
+        current_cell_is_clean_floor = self._current_cell_is_clean_floor()
+        pre_return_ready = bool(self.current_mode == self.MODE_CONTRACT)
         geometry_state_gate = 1.0
         if battery_state == "planning":
             geometry_state_gate = 0.5
@@ -1516,6 +1618,24 @@ class Preprocessor:
             )
         )
         urgency = 1.0 if battery_state == "critical" else max(need_term, 0.0)
+        min_recoverability = min(
+            float(self.future_recoverability_score),
+            float(planner_multi_route_recoverability),
+        )
+        route_phase_shadow_risk = compute_route_phase_shadow_risk(
+            min_recoverability=min_recoverability,
+            charger_slack=self.charger_slack,
+            charge_margin_now=charge_margin_now,
+            planner_topk_reachable_count=planner_topk_reachable_count,
+            unknown_target_ratio=unknown_target_ratio,
+            route_contract_pressure=self.route_contract_pressure,
+            recoverability_warn=Config.STRONG_HEURISTIC_PRE_RETURN_RECOVERABILITY_THRESHOLD,
+            recoverability_span=0.70,
+            prepare_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
+            charge_margin_warn=Config.CHARGE_MARGIN_WARN,
+            unknown_ratio_threshold=Config.STRONG_HEURISTIC_PRE_RETURN_UNKNOWN_RATIO_THRESHOLD,
+        )
+        prev_route_phase_shadow_risk = self._prev_route_phase_shadow_risk if self.step_no > 1 else 0.0
         return_context_reliable = bool(
             self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
             and battery_state in ("planning", "critical")
@@ -1526,6 +1646,18 @@ class Preprocessor:
                 or known_route
                 or planner_topk_reachable_count > 0.0
             )
+        )
+        route_phase_reward_ready = compute_route_phase_reward_ready(
+            current_mode=self.current_mode,
+            mode_contract=self.MODE_CONTRACT,
+            mode_return=self.MODE_RETURN,
+            route_phase_reliable_active=route_phase_reliable_active,
+            return_action_reliable=return_action_reliable,
+            anchor_reliable=anchor_reliable,
+            target_reliable=target_reliable,
+            known_route_available=bool(known_route or planner_topk_reachable_count > 0.0),
+            route_phase_shadow_risk=route_phase_shadow_risk,
+            route_phase_shadow_risk_threshold=Config.SLICE2_ROUTE_PHASE_SHADOW_RISK_THRESHOLD,
         )
         slack_recovery = float(np.clip((self.charger_slack - self.last_charger_slack) / 6.0, 0.0, 1.0))
         charger_distance_recovery = float(
@@ -1550,8 +1682,24 @@ class Preprocessor:
                 * progress_signal
             )
 
+        risk_release_from_progress = 0.0
+        risk_release_from_charge_event = 0.0
+        risk_release_reward = 0.0
+        if strong_heuristic_slice2a_phase:
+            if self.just_charged:
+                risk_release_from_charge_event = (
+                    Config.SLICE2_RISK_RELEASE_SCALE
+                    * max(float(prev_charge_need_score) - float(charge_need_score), 0.0)
+                )
+            elif route_phase_reward_ready:
+                risk_release_from_progress = (
+                    Config.SLICE2_RISK_RELEASE_SCALE
+                    * max(float(prev_route_phase_shadow_risk) - float(route_phase_shadow_risk), 0.0)
+                )
+            risk_release_reward = risk_release_from_progress + risk_release_from_charge_event
+
         necessary_charge_bonus = 0.0
-        if self.just_charged and prev_charge_state in ("planning", "critical"):
+        if self.just_charged and prev_charge_state in ("planning", "critical") and not simplify_control_stack:
             charge_received_ratio = float(
                 np.clip(max(0.0, float(self.battery - self.pre_charge_battery + 1)) / max(self.battery_max, 1), 0.0, 0.4)
                 / 0.4
@@ -1563,7 +1711,7 @@ class Preprocessor:
             )
 
         unnecessary_charge_penalty = 0.0
-        if self.just_charged and prev_charge_state == "safe":
+        if self.just_charged and prev_charge_state == "safe" and not simplify_control_stack:
             extra_charge_cost_proxy = max(prev_charge_detour_proxy, prev_charge_interrupt_proxy)
             unnecessary_charge_penalty = -(
                 Config.UNNECESSARY_CHARGE_PENALTY
@@ -1577,7 +1725,11 @@ class Preprocessor:
         elif battery_state == "planning":
             detour_zone_scale = 0.3
         charge_detour_cost = 0.0
-        if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) and detour_zone_scale > 0.0:
+        if (
+            not simplify_control_stack
+            and self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
+            and detour_zone_scale > 0.0
+        ):
             charge_detour_cost = -Config.CHARGE_DETOUR_COST_SCALE * detour_raw * detour_zone_scale
 
         interrupt_zone_scale = 0.0
@@ -1586,8 +1738,45 @@ class Preprocessor:
         elif battery_state == "planning":
             interrupt_zone_scale = 0.15
         charge_interrupt_cost = 0.0
-        if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) and interrupt_zone_scale > 0.0:
+        if (
+            not simplify_control_stack
+            and self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
+            and interrupt_zone_scale > 0.0
+        ):
             charge_interrupt_cost = -Config.CHARGE_INTERRUPT_COST_SCALE * task_value_here * interrupt_zone_scale
+
+        risk_growth_while_clean_penalty = 0.0
+        if (
+            strong_heuristic_slice2a_phase
+            and self.current_mode not in (self.MODE_CONTRACT, self.MODE_RETURN, self.MODE_EVADE)
+            and not self.just_charged
+        ):
+            low_task_value_gate = 0.35 + 0.65 * (1.0 - float(np.clip(task_value_here, 0.0, 1.0)))
+            risk_growth_while_clean_penalty = -(
+                Config.SLICE2_RISK_GROWTH_CLEAN_PENALTY_SCALE
+                * max(float(charge_need_score) - float(prev_charge_need_score), 0.0)
+                * low_task_value_gate
+            )
+
+        route_phase_risk_growth_penalty = 0.0
+        if (
+            strong_heuristic_slice2a_phase
+            and route_phase_reward_ready
+            and not self.just_charged
+        ):
+            route_phase_risk_growth_penalty = -(
+                Config.SLICE2_ROUTE_PHASE_RISK_GROWTH_PENALTY_SCALE
+                * max(float(route_phase_shadow_risk) - float(prev_route_phase_shadow_risk), 0.0)
+                * (0.65 + 0.35 * urgency)
+            )
+
+        charge_opportunity_cost_penalty = 0.0
+        if strong_heuristic_slice2a_phase and self.just_charged:
+            charge_opportunity_cost_penalty = -(
+                Config.SLICE2_CHARGE_OPPORTUNITY_COST_PENALTY_SCALE
+                * (1.0 - float(np.clip(prev_charge_need_score, 0.0, 1.0)))
+                * max(float(prev_charge_detour_proxy), float(prev_charge_interrupt_proxy))
+            )
 
         skip_needed_charge_penalty = 0.0
         if battery_state in ("planning", "critical") and not self.just_charged and not bool(guidance.get("on_charger", False)):
@@ -1627,6 +1816,43 @@ class Preprocessor:
         ):
             coverage_tangle_penalty = -Config.COVERAGE_TANGLE_PENALTY_SCALE * tangle_raw * geometry_state_gate
 
+        effective_coverage_bonus = 0.0
+        clean_floor_revisit_penalty = 0.0
+        low_value_revisit_flag = False
+        if cps_align_phase:
+            if (
+                self.current_mode in (self.MODE_EXPAND, self.MODE_HARVEST)
+                and battery_state == "safe"
+                and not pre_return_ready
+            ):
+                progress_gate = (
+                    0.7 * float(np.clip(float(self.cleaned_this_step) / 2.0, 0.0, 1.0))
+                    + 0.3 * float(np.clip(float(self.new_explored_cells) / 4.0, 0.0, 1.0))
+                )
+                effective_coverage_bonus = (
+                    Config.EFFECTIVE_COVERAGE_BONUS_SCALE
+                    * progress_gate
+                    * max(float(self.coverage_efficiency_20) - Config.EFFECTIVE_COVERAGE_BONUS_BASELINE, 0.0)
+                )
+
+            low_value_revisit_flag = bool(
+                self.current_mode in (self.MODE_EXPAND, self.MODE_HARVEST)
+                and battery_state == "safe"
+                and not pre_return_ready
+                and current_cell_is_clean_floor
+                and self.cur_visit_count >= 2
+                and self.cleaned_this_step == 0
+                and self.dirty_adjacent == 0
+                and self.local_frontier_density < 0.05
+            )
+            if low_value_revisit_flag:
+                penalty_severity = (
+                    0.5 * float(np.clip((float(self.cur_visit_count) - 1.0) / 5.0, 0.0, 1.0))
+                    + 0.3 * float(np.clip(1.0 - float(self.coverage_efficiency_20), 0.0, 1.0))
+                    + 0.2 * loop_proxy
+                )
+                clean_floor_revisit_penalty = -Config.CLEAN_FLOOR_REVISIT_PENALTY_SCALE * penalty_severity
+
         prev_all_known_paths = self._prev_all_charger_known_path_count if self.step_no > 1 else all_known_paths
         prev_unknown_target_ratio = (
             self._prev_unknown_on_target_path_ratio if self.step_no > 1 else unknown_target_ratio
@@ -1641,10 +1867,12 @@ class Preprocessor:
 
         charger_access_discovery_bonus = 0.0
         if (
+            not simplify_control_stack
+            and (
             Config.CHARGER_ACCESS_DISCOVERY_BONUS_SCALE > 0.0
             and access_state_gate > 0.0
             and not self.just_charged
-        ):
+        )):
             discovery_known_term = 0.55 * (delta_known_routes / 2.0)
             discovery_unknown_term = 0.30 * delta_target_unknown_reduction
             discovery_diversity_term = 0.15 * (delta_route_diversity / 2.0)
@@ -1678,7 +1906,7 @@ class Preprocessor:
             and self.local_frontier_density >= Config.CHARGER_ACCESS_PROBE_FRONTIER_THRESHOLD
             and unknown_target_ratio > Config.CHARGER_ACCESS_PROBE_UNKNOWN_RATIO_MIN
         )
-        if Config.CHARGER_ACCESS_PROBE_BONUS_SCALE > 0.0 and probe_gate > 0.0:
+        if not simplify_control_stack and Config.CHARGER_ACCESS_PROBE_BONUS_SCALE > 0.0 and probe_gate > 0.0:
             charger_access_probe_bonus = (
                 Config.CHARGER_ACCESS_PROBE_BONUS_SCALE
                 * access_state_gate
@@ -1734,16 +1962,26 @@ class Preprocessor:
             + anchor_consistency_reward
             + sticky_anchor_penalty
             + planner_alignment_reward
-            + route_progress_bonus
-            + return_progress_shaping_bonus
-            + necessary_charge_bonus
-            + unnecessary_charge_penalty
-            + charge_detour_cost
-            + charge_interrupt_cost
-            + skip_needed_charge_penalty
-            + high_need_return_stall_penalty
             + coverage_tangle_penalty
+            + clean_floor_revisit_penalty
         )
+        if strong_heuristic_slice2a_phase:
+            task_reward += (
+                risk_release_reward
+                + route_phase_risk_growth_penalty
+                + charge_opportunity_cost_penalty
+            )
+        else:
+            task_reward += (
+                route_progress_bonus
+                + return_progress_shaping_bonus
+                + necessary_charge_bonus
+                + unnecessary_charge_penalty
+                + charge_detour_cost
+                + charge_interrupt_cost
+                + skip_needed_charge_penalty
+                + high_need_return_stall_penalty
+            )
 
         if self.cleaned_this_step > 0:
             self._cps_ema = 0.95 * self._cps_ema + 0.05 * 1.0
@@ -1758,13 +1996,19 @@ class Preprocessor:
             )
         )
         cps_bonus = cleaning_scale * Config.REWARD_CPS_BONUS_SCALE * cps_margin
+        if cps_align_phase:
+            cps_bonus = 0.0
         gain_reward += (
             cps_bonus
             + coverage_efficiency_bonus
+            + effective_coverage_bonus
             + edge_follow_bonus
-            + charger_access_discovery_bonus
-            + charger_access_probe_bonus
         )
+        if not strong_heuristic_slice2a_phase:
+            gain_reward += (
+                charger_access_discovery_bonus
+                + charger_access_probe_bonus
+            )
         task_reward += gain_reward
 
         teacher = self._get_teacher_guidance()
@@ -1789,13 +2033,17 @@ class Preprocessor:
             return_action_teacher = int(teacher.get("return_action", -1) if teacher.get("return_action") is not None else -1)
             return_action_teacher_mask = float(teacher.get("return_action_teacher_mask", 0.0))
             if battery_state in ("planning", "critical"):
-                if anchor_reliable:
+                if anchor_reliable and not strong_heuristic_phase:
                     route_anchor_teacher_mask = max(route_anchor_teacher_mask, 0.65)
-                if target_reliable:
+                if target_reliable and not strong_heuristic_phase:
                     target_teacher_mask = max(target_teacher_mask, 0.65)
-                if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) and return_action_reliable:
+                if (
+                    not strong_heuristic_phase
+                    and self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
+                    and return_action_reliable
+                ):
                     return_action_teacher_mask = max(return_action_teacher_mask, 0.80)
-                elif return_action_reliable:
+                elif not strong_heuristic_phase and return_action_reliable:
                     return_action_teacher_mask = max(return_action_teacher_mask, 0.65)
             route_phase_action_teacher = -1
             route_phase_action_teacher_mask = 0.0
@@ -1804,15 +2052,38 @@ class Preprocessor:
                 and suggested_action is not None
             ):
                 route_phase_action_teacher = int(suggested_action)
-                if return_action_reliable:
-                    if battery_state == "critical":
+                if simplify_control_stack:
+                    if self.current_mode == self.MODE_RETURN:
+                        if return_action_reliable:
+                            route_phase_action_teacher_mask = 1.0
+                        elif anchor_reliable or target_reliable:
+                            route_phase_action_teacher_mask = 0.8
+                    elif return_action_reliable or anchor_reliable or target_reliable:
+                        route_phase_action_teacher_mask = 0.5
+                else:
+                    if return_action_reliable:
+                        if battery_state == "critical":
+                            route_phase_action_teacher_mask = 1.0
+                        else:
+                            route_phase_action_teacher_mask = 0.8
+                    elif anchor_reliable or target_reliable:
+                        route_phase_action_teacher_mask = 0.6
+                    if (
+                        not strong_heuristic_slice2a_phase
+                        and battery_state == "critical"
+                        and route_phase_action_teacher_mask <= 0.0
+                    ):
                         route_phase_action_teacher_mask = 1.0
-                    else:
-                        route_phase_action_teacher_mask = 0.8
-                elif anchor_reliable or target_reliable:
-                    route_phase_action_teacher_mask = 0.6
-                if battery_state == "critical" and route_phase_action_teacher_mask <= 0.0:
-                    route_phase_action_teacher_mask = 1.0
+
+        if strong_heuristic_phase:
+            route_anchor_teacher_mask = 0.0
+            target_teacher_mask = 0.0
+            if not strong_heuristic_slice2a_phase:
+                route_phase_action_teacher = -1
+                route_phase_action_teacher_mask = 0.0
+            if self.current_mode != self.MODE_RETURN:
+                return_action_teacher = -1
+                return_action_teacher_mask = 0.0
 
         battery_risk_label = 1.0 if (charge_need_score >= Config.BATTERY_CRITICAL_NEED_THRESHOLD or slack < 0.0) else 0.0
 
@@ -1845,6 +2116,12 @@ class Preprocessor:
             "streak": streak_bonus,
             "explore": explore_reward,
             "frontier": frontier_reward,
+            "risk_release_reward": risk_release_reward,
+            "risk_release_from_progress": risk_release_from_progress,
+            "risk_release_from_charge_event": risk_release_from_charge_event,
+            "risk_growth_while_clean_penalty": risk_growth_while_clean_penalty,
+            "route_phase_risk_growth_penalty": route_phase_risk_growth_penalty,
+            "charge_opportunity_cost_penalty": charge_opportunity_cost_penalty,
             "charger_access_discovery_bonus": charger_access_discovery_bonus,
             "charger_access_probe_bonus": charger_access_probe_bonus,
             "npc": npc_penalty,
@@ -1863,24 +2140,32 @@ class Preprocessor:
             "high_need_return_stall_penalty": high_need_return_stall_penalty,
             "cleaning_context_scale": cleaning_scale,
             "cps_bonus": cps_bonus,
+            "effective_coverage_bonus": effective_coverage_bonus,
             "coverage_efficiency_bonus": coverage_efficiency_bonus,
             "coverage_tangle_penalty": coverage_tangle_penalty,
+            "clean_floor_revisit_penalty": clean_floor_revisit_penalty,
             "edge_follow_bonus": edge_follow_bonus,
+            "charge_reward_shadow_only_active": float(1.0 if strong_heuristic_slice2a_phase else 0.0),
             "scheduled_necessary_charge_bonus_scale": float(
                 reward_schedule["scheduled_necessary_charge_bonus_scale"]
             ),
             "battery_process_cost": float(battery_process_cost),
             "collision_process_cost": float(collision_process_cost),
             "charge_need_score": float(charge_need_score),
+            "route_phase_shadow_risk": float(route_phase_shadow_risk),
+            "route_phase_reward_ready": float(1.0 if route_phase_reward_ready else 0.0),
             "slack_confidence": float(slack_confidence),
             "has_known_route": float(1.0 if known_route else 0.0),
             "high_need_stall_indicator": float(high_need_stall_indicator),
             "battery_state_idx": float(battery_state_idx),
             "collision_risk_cost": float(collision_process_cost),
+            "current_cell_is_clean_floor": float(1.0 if current_cell_is_clean_floor else 0.0),
+            "low_value_revisit_flag": float(1.0 if low_value_revisit_flag else 0.0),
         }
         self._prev_future_recoverability_score = self.future_recoverability_score
         self._last_target_distance = self.current_target_dist
         self._prev_charge_need_score = float(charge_need_score)
+        self._prev_route_phase_shadow_risk = float(route_phase_shadow_risk)
         self._prev_charge_detour_proxy = float(detour_raw if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) else 0.0)
         self._prev_charge_interrupt_proxy = float(task_value_here if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN) else 0.0)
         self._prev_all_charger_known_path_count = float(all_known_paths)

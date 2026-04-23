@@ -276,6 +276,8 @@ class Agent(BaseAgent):
         self.reward_components = {}
         self.rnn_state = None
         self._last_expert_weight = 0.0
+        self._last_pre_return_bias_active = 0.0
+        self._last_return_bias_active = 0.0
         self._last_fallback_active = 0.0
         self.current_model_ref = {
             "path": None,
@@ -350,6 +352,8 @@ class Agent(BaseAgent):
         self.reward_components = {}
         self.rnn_state = None
         self._last_expert_weight = 0.0
+        self._last_pre_return_bias_active = 0.0
+        self._last_return_bias_active = 0.0
         self._last_fallback_active = 0.0
 
     def observation_process(self, env_obs):
@@ -426,7 +430,20 @@ class Agent(BaseAgent):
             return [self._build_safe_fallback_act_data(filtered_legal, 0.0, 0.0, 0.0)]
 
         self._last_expert_weight = 0.0
+        self._last_pre_return_bias_active = 0.0
+        self._last_return_bias_active = 0.0
         self._last_fallback_active = 0.0
+
+        logit_bias = np.asarray(
+            expert.get_logit_bias(self.preprocessor, filtered_legal, last_action=self.last_action),
+            dtype=np.float32,
+        ).reshape(-1)
+        if logit_bias.shape[0] != Config.ACTION_NUM:
+            logit_bias = np.zeros(Config.ACTION_NUM, dtype=np.float32)
+        logits = logits + logit_bias
+        self._last_expert_weight = float(getattr(expert, "_last_bias_weight", 0.0))
+        self._last_pre_return_bias_active = 1.0 if getattr(expert, "_last_bias_mode", None) == "pre_return" else 0.0
+        self._last_return_bias_active = 1.0 if getattr(expert, "_last_bias_mode", None) == "return" else 0.0
 
         clean_prob = self._legal_soft_max(logits, legal_arr)
         clean_prob, prob_fallback = sanitize_policy_probs(clean_prob, filtered_legal)
@@ -440,6 +457,9 @@ class Agent(BaseAgent):
         )
         if fallback.get("active") and fallback.get("action") is not None:
             self._last_fallback_active = 1.0
+            self._last_expert_weight = 0.0
+            self._last_pre_return_bias_active = 0.0
+            self._last_return_bias_active = 0.0
 
         if use_hard_override:
             if fallback.get("active") and fallback.get("action") is not None:
@@ -662,6 +682,9 @@ class Agent(BaseAgent):
             "last_loaded_checkpoint_step": self._last_loaded_checkpoint_step,
             "predict_fallback_count": self._predict_fallback_count,
             "predict_error_count": self._predict_error_count,
+            "last_expert_weight": self._last_expert_weight,
+            "last_pre_return_bias_active": self._last_pre_return_bias_active,
+            "last_return_bias_active": self._last_return_bias_active,
         }
 
     def _get_model_mtime_ns(self, model_path: Path):

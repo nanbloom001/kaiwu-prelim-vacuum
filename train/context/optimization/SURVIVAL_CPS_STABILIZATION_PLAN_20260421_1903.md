@@ -1,7 +1,7 @@
 # 生存率与 CPS 稳定提效方案
 
 > 日期: 2026-04-21 19:03:08 CST  
-> 修订: 2026-04-21 19:40:00 CST  
+> 修订: 2026-04-21 20:46:00 CST  
 > 适用阶段: `Objective Reset` 与 `v1-lite / minimal closed loop` 多轮验证后形成的新主线  
 > 目标: 在不贸然简化模型的前提下，优先把当前训练拉回到“高生存率 + 高 CPS + 可解释过渡行为”的稳定区间。  
 > 过期提醒: 若后续出现更新日期更晚的同主题方案，应优先读取更新版；但在没有更新版前，**不要跳过本方案继续引用 2026-04-20 或更早的旧路线**。
@@ -63,7 +63,12 @@
 ### 2.2 同时必须守住的健康约束
 
 1. `battery_positive_reward_rate` 必须稳定处于低位，不能重新回到“失败仍然赚钱”
-2. `zero_charge_battery_fail_rate` 必须持续下降，不能靠压 CPS 换出表面 survival
+2. `zero_charge_battery_fail_rate` 必须持续下降。这里的定义是：
+   - `zero_charge battery fail / all episodes`
+   - 它表示总体零充电失败风险，而不是“battery fail 中零充电占比”
+3. `zero_charge_among_battery_fail_rate` 继续保留，但只作为失败结构诊断指标：
+   - `zero_charge battery fail / battery fail`
+   - 当它偏高时，优先表示“失败结构仍偏向没形成首充闭环”，而不是直接表示总体 survival 更差
 3. `mode_usage_contract` 与 `mode_usage_return` 必须恢复为可解释的过渡层，而不是：
    - `contract` 几乎消失
    - 或过早进入保守态导致 CPS 被吃掉
@@ -143,7 +148,159 @@
    - `action_path_issue`
    - `bucket_split_issue`
 
+## 3.5 训练观察时间表
+
+当前阶段不再等到很后面才判断 run 好坏，而是固定按以下时间表看趋势。
+
+### 3.5.1 观察节点
+
+1. `bootstrap_10`
+2. `bootstrap_20`
+3. `global_40`
+4. `global_80`
+5. `global_120`
+6. `global_160`
+7. `global_200`
+
+### 3.5.2 每个节点的用途
+
+1. `bootstrap_10`
+   - 只做早期预警
+   - 判断这轮是否已经明显跑歪
+   - 不做最终通过/失败结论
+2. `bootstrap_20`
+   - 做第一次方向判断
+   - 同时执行第一轮的机械分流：
+     - `economics_residual`
+     - `transition_gate_issue`
+     - `action_path_issue`
+     - `bucket_split_issue`
+3. `global_40`
+   - 作为正式主判窗口
+   - 是否继续跑、是否判失败、是否进入下一轮，都以这里为准
+4. `global_80`
+   - 只做趋势复核
+   - 判断 run 是在恢复，还是在稳定化成某种局部策略形态
+5. `global_120`
+   - 用于确认该 run 是否已经收敛到某种稳定局部最优
+   - 不用于洗白一个已经在 `global_40` 明确失败的 run
+6. `global_160`
+   - 只做晚恢复复核
+   - 用于判断 run 是否存在“前缀失败但后段恢复”的 targeted-resume 价值
+7. `global_200`
+   - 只做晚恢复 / targeted-resume 复核
+   - 不改变 `global_40` 的主判结论
+
+### 3.5.3 经验判断口径
+
+对当前这条训练线，统一采用以下经验判断：
+
+1. `10 ~ 20` 局：
+   - 已足够暴露方向是否明显错误
+2. `40` 局左右：
+   - 已足够形成稳定行为倾向
+   - 也是当前最重要的正式主判点
+3. `80 ~ 120` 局：
+   - 可以判断模型是否开始收敛到某种局部策略形态
+4. `160 ~ 200` 局：
+   - 只用于判断是否存在晚恢复价值
+   - 不用于洗白前缀已失败的 run
+
+### 3.5.3A fixed-window 口径
+
+当前固定采样统一采用双口径，但主判只看 local：
+
+1. `bootstrap_10 / bootstrap_20`
+   - 使用 `local_10`
+   - 即记录点前 10 局平均
+2. `global_40 / 80 / 120 / 160 / 200`
+   - 使用 `local_20`
+   - 即记录点前 20 局平均
+3. 旧 `prefix` 指标继续保留：
+   - 只做辅助诊断
+   - 不再作为主判依据
+
+### 3.5.4 当前阶段的默认动作
+
+1. 若 `bootstrap_10` 已明显失衡：
+   - 记为早期预警，但继续看 `bootstrap_20`
+2. 若 `bootstrap_20` 已明显落入某类失败归因：
+   - 不继续幻想“多跑一点自然会好”
+   - 最晚到 `global_40` 做正式主判
+3. 若 `global_40` 明确失败：
+   - 当前 run 不再作为继续长跑候选
+   - `global_80 / 120` 只用于确认它是否稳定收敛成坏局部最优
+
 ## 4. 核心策略
+
+## 4A. 控制栈简化 v1 已实现
+
+> 记录时间：2026-04-22  
+> 对应分支：`linux-LTSPPO-control-stack-simplify`
+
+当前主方案已经落下第一版“控制栈简化”实验实现，目的不是继续在现有 `charge/return` 重控制栈里微调，而是先验证：
+
+> 在保持 LTSPPO 行为底座、`curriculum-lite` 和中等强度 battery-fail economics 不变的前提下，收缩 `contract/return` 控制链本身，是否能更稳地恢复 CPS。
+
+### 4A.1 已实现内容
+
+1. 新增独立实验 phase：
+   - `s1_survival_control_simplify_v1`
+2. 新增统一的 readiness 判定逻辑：
+   - `return_now`
+   - `pre_return_ready`
+3. `preprocessor._infer_mode()` 与 `expert.get_teacher_guidance()` 在该 phase 下共用同一套 readiness 判定，不再各自维护一套近似但不一致的 `contract/return` 触发逻辑。
+4. 在该 phase 下，`contract` 不再像 `return` 那样强压：
+   - `cleaning`
+   - `explore`
+   - `frontier`
+5. 在该 phase 下，charging local terrain 只保留核心项：
+   - `return_progress`
+   - `skip_needed_charge`
+   - `high_need_return_stall`
+6. teacher 观测链已补强：
+   - `mode/route_anchor/target/return_action/route_phase` active rate
+   - 对应 teacher loss
+7. 新增控制栈简化专用行为观测项：
+   - `pre_return_readiness_hit_rate`
+   - `readiness_to_return_transition_rate`
+   - `direct_return_without_readiness_rate`
+   - `return_entry_count`
+   - `readiness_supported_return_entry_count`
+
+### 4A.2 本轮实验边界
+
+这一版实现明确不做以下事情：
+
+1. 不简化 LTSPPO 主网络
+2. 不回退 `curriculum-lite`
+3. 不重新设计 compare 主判口径
+4. 不继续强化 battery-fail economics
+5. 不扩大 teacher 权重，只收缩其触发语义与观测链
+
+### 4A.3 本轮成功定义
+
+控制栈简化 v1 的成功，不看 `mode_usage_contract` 是否提升，而看：
+
+1. `global_40 / 80` 的 local CPS 是否高于当前重控制栈参考 run
+2. `route_phase_return_stall_rate` 是否下降
+3. `battery_fail_rate` 与 `zero_charge_battery_fail_rate` 是否不明显恶化
+4. `pre_return_readiness_hit_rate` 与 `readiness_to_return_transition_rate` 是否提供出更可解释的切换链路
+5. 解释这些 readiness 比率时，必须同时结合：
+   - `return_entry_count`
+   - `readiness_supported_return_entry_count`
+   若当前窗口没有 `return entry`，相关比率应视为 `n/a`，而不是 `0.0`
+
+### 4A.4 当前状态
+
+截至当前，这一版已经：
+
+1. 完成代码实现
+2. 完成单测
+3. 完成 `run_training_phase.py --dry-run`
+
+但还没有正式启动新的 scratch run。  
+后续实验应使用该独立 phase，而不是继续在旧 `s1_survival` phase 上追加小步参数回调。
 
 ### 4.1 reward economics：只做稳定底座，不再做主驱动
 
@@ -382,6 +539,30 @@
 2. contract / return 场景下的 route-phase 主动作 direct guidance
 3. `contract / return` 局部 reward 地形的小回调
 
+当前已选定的第一轮 phase overlay 参数为：
+
+1. `PREPARE_RETURN_SLACK_THRESHOLD = 7.5`
+2. `CONTRACT_BATTERY_RATIO = 0.27`
+3. `CONTRACT_RECOVERABILITY_THRESHOLD = 0.12`
+4. `CHARGE_MARGIN_WARN = 17.0`
+5. `CONTRACT_ROUTE_PRESSURE_THRESHOLD = 0.52`
+6. `ROUTE_PHASE_POLICY_TEACHER_WEIGHT = 0.50`
+7. `BATTERY_TERMINAL_COST_SCALE = 41.0`
+8. `BATTERY_FAIL_TASK_REWARD_SCALE = 0.22`
+9. `EARLY_BATTERY_FAIL_TASK_REWARD_SCALE = 0.07`
+10. `BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = 0.14`
+11. `EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = 0.04`
+12. `RETURN_PROGRESS_SHAPING_SCALE = 0.28`
+13. `SKIP_NEEDED_CHARGE_PENALTY = 0.20`
+14. `HIGH_NEED_RETURN_STALL_PENALTY = 0.12`
+15. `NECESSARY_CHARGE_BONUS_SCALE = 1.00`
+
+这一组选值的意图是：
+
+1. 保留当前 `curriculum-lite + economics cleanup` 形态，不再回到旧硬课程
+2. battery economics 暂时固定，优先恢复 CPS
+3. 通过轻度推迟 charge/return 触发，减少过度保守和过度充电
+
 这里的“局部 reward 地形”仅指：
 
 - 影响 `contract -> return -> charge` 过渡质量的局部 shaping
@@ -404,8 +585,9 @@
 3. `avg_clean_per_step`
 4. `battery_positive_reward_rate`
 5. `zero_charge_battery_fail_rate`
-6. `mode_usage_contract`
-7. `route_phase_action_teacher_active_rate`
+6. `zero_charge_among_battery_fail_rate`
+7. `mode_usage_contract`
+8. `route_phase_action_teacher_active_rate`
 
 早期分流规则：
 
@@ -420,6 +602,12 @@
    - 判为 `action_path_issue`
 5. 若简单图与难图 / 少充电桩图 survival 差值在 `bootstrap_20` 已经 `> 0.15`：
    - 预标记为 `bucket_split_issue`
+6. 若 `battery_positive_reward_rate <= 0.10` 且 `zero_charge_battery_fail_rate <= 0.15`，但 `zero_charge_among_battery_fail_rate > 0.60`：
+   - 预标记为“失败结构仍偏首充闭环缺失”
+   - 在 `transition_gate_issue` 与 `action_path_issue` 中优先排查：
+     - `contract -> return` 进入过晚
+     - `return` 主路径仍不稳定
+     - route-phase direct guidance 可靠覆盖不足
 
 `economics_residual` 旁路规则：
 
@@ -440,7 +628,7 @@
 2. `global_40` 时，难图 / 少充电桩图 survival `>= 0.78`
 3. `global_40` 时，`avg_clean_per_step >= 0.75`
 4. `battery_positive_reward_rate <= 0.10`
-5. `zero_charge_battery_fail_rate <= 0.45`
+5. `zero_charge_battery_fail_rate <= 0.15`
 6. `mode_usage_contract` 处于 `0.02 ~ 0.12`
 7. `route_phase_action_teacher_active_rate >= 0.10`
 
@@ -449,7 +637,7 @@
 1. 简单图 survival `< 0.88`
 2. 难图 / 少充电桩图 survival `< 0.72`
 3. `avg_clean_per_step < 0.70`
-4. `zero_charge_battery_fail_rate > 0.50`
+4. `zero_charge_battery_fail_rate > 0.18`
 5. `battery_positive_reward_rate > 0.15`
 6. `route_phase_action_teacher_active_rate < 0.08`
 
@@ -463,6 +651,11 @@
    - 归因为 `action_path_issue`
 4. 若简单图指标恢复明显，但难图 / 少充电桩图持续明显偏弱：
    - 归因为 `bucket_split_issue`
+5. 若 `zero_charge_battery_fail_rate` 已回到低位，但 `zero_charge_among_battery_fail_rate` 仍高：
+   - 不再优先怀疑 `economics_residual`
+   - 优先在以下两条里细分：
+     - `transition_gate_issue`：`contract` 进入过晚，导致少量失败仍集中在“没形成首充闭环”
+     - `action_path_issue`：已进入 `contract/return`，但回充路径学习仍漂，导致一旦 fail 就更容易是 zero-charge 类型
 
 ### 5.2 第二轮：分桶稳定化
 
@@ -581,13 +774,30 @@
 2. `battery_positive_reward_rate`
 3. `battery_fail_rate`
 4. `zero_charge_battery_fail_rate`
-5. `mode_usage_contract`
-6. `mode_usage_return`
-7. `route_phase_return_stall_rate`
-8. `route_phase_planner_divergence_rate`
-9. `reliable_planner_divergence_rate`
-10. `route_phase_action_teacher_active_rate`
-11. `route_phase_policy_teacher_loss`
+5. `zero_charge_among_battery_fail_rate`
+6. `mode_usage_contract`
+7. `mode_usage_return`
+8. `route_phase_return_stall_rate`
+9. `route_phase_planner_divergence_rate`
+10. `reliable_planner_divergence_rate`
+11. `route_phase_action_teacher_active_rate`
+12. `route_phase_policy_teacher_loss`
+
+### 6.2.1 这两个 zero-charge 指标的职责
+
+为了避免后续再次误判，统一按下面方式理解：
+
+1. `zero_charge_battery_fail_rate`
+   - 主风险指标
+   - 看总体零充电失败风险
+   - 可直接参与课程、停滞、主验收和主比较
+2. `zero_charge_among_battery_fail_rate`
+   - 结构诊断指标
+   - 看 battery fail 内部结构是否仍偏向“完全没形成首充闭环”
+   - 不单独作为主控流指标
+   - 只在失败归因时辅助判断：
+     - 更像 `transition_gate_issue`
+     - 还是更像 `action_path_issue`
 
 ### 6.3 固定比较方式
 

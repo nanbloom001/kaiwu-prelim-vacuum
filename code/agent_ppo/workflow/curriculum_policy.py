@@ -80,6 +80,44 @@ def _current_train_phase() -> str:
     return str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
 
 
+def curriculum_lite_enabled() -> bool:
+    return str(os.getenv("KAIWU_CURRICULUM_LITE", "0") or "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def curriculum_fixed_stage(current_stage: str | None = None) -> str:
+    stage = str(os.getenv("KAIWU_CURRICULUM_FIXED_STAGE", current_stage or "warmup") or "warmup").strip().lower()
+    if stage not in STAGE_INDEX:
+        return str(current_stage or "warmup").strip().lower() if str(current_stage or "warmup").strip().lower() in STAGE_INDEX else "warmup"
+    return stage
+
+
+def curriculum_fixed_profile_weights() -> tuple[tuple[str, float], ...]:
+    defaults = {
+        "anchor": 0.60,
+        "mild": 0.30,
+        "broad": 0.10,
+        "broad_eval": 0.0,
+    }
+    raw = {}
+    for key, default in defaults.items():
+        env_key = f"KAIWU_CURRICULUM_PROFILE_{key.upper()}"
+        try:
+            raw[key] = max(float(os.getenv(env_key, str(default)) or default), 0.0)
+        except (TypeError, ValueError):
+            raw[key] = float(default)
+    total = sum(raw.values())
+    if total <= 0:
+        raw = defaults
+        total = sum(raw.values())
+    normalized = {key: value / total for key, value in raw.items() if value > 0.0}
+    return tuple((key, normalized[key]) for key in PROFILE_KEYS if key in normalized)
+
+
 def _meets_s0_exit(global_step_since_resume: int, metrics: dict[str, Any] | None, learning: dict[str, Any] | None) -> bool:
     if not metrics:
         return False
@@ -252,6 +290,11 @@ def choose_stage_decision(
     context: dict[str, Any],
     stage_entry_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if curriculum_lite_enabled():
+        return {
+            "proposed_stage": curriculum_fixed_stage(current_stage),
+            "promotion_reason": "curriculum_lite_lock",
+        }
     if _current_train_phase() == "s1_survival":
         return {"proposed_stage": "warmup", "promotion_reason": "phase_lock"}
     global_step_since_resume = int(context.get("global_step_since_resume", 0))
@@ -383,6 +426,14 @@ def profile_plan_for_runtime(stage: str, state: dict[str, Any] | None = None) ->
     current_stage = str(stage or state.get("stage") or "warmup").strip().lower()
     if current_stage not in STAGE_INDEX:
         current_stage = "warmup"
+    if curriculum_lite_enabled():
+        fixed = curriculum_fixed_profile_weights()
+        return {
+            "weights": fixed,
+            "weight_map": _weights_to_dict(fixed),
+            "observation_phase_active": False,
+            "tightened": False,
+        }
     if _current_train_phase() == "s1_survival":
         return {
             "weights": S1_SURVIVAL_PROFILE_WEIGHTS,
@@ -514,7 +565,7 @@ def stagnation_status(
         battery_positive_reward_rate = _metric(metrics, "battery_positive_reward_rate", 0.0) or 0.0
         if avg_cps < 0.46:
             reasons.append("collapse")
-        if zero_charge_fail > 0.40:
+        if zero_charge_fail > 0.15:
             reasons.append("charge")
         if battery_positive_reward_rate > 0.20:
             reasons.append("reward")
@@ -556,7 +607,7 @@ def stagnation_status(
     )
     if stall_metric > target["stall"]:
         reasons.append("stall")
-    if _metric(metrics, "zero_charge_battery_fail_rate", 0.0) > 0.55:
+    if _metric(metrics, "zero_charge_battery_fail_rate", 0.0) > 0.18:
         reasons.append("charge")
     if _metric(metrics, "battery_positive_reward_rate", 0.0) > 0.20:
         reasons.append("reward")

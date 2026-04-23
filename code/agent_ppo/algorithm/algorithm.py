@@ -273,10 +273,12 @@ class Algorithm:
                     "route_anchor_teacher_loss": round(info["route_anchor_teacher_loss"], 4),
                     "target_teacher_loss": round(info["target_teacher_loss"], 4),
                     "return_action_teacher_loss": round(info["return_action_teacher_loss"], 4),
+                    "route_phase_policy_teacher_loss": round(info["route_phase_policy_teacher_loss"], 4),
                     "mode_teacher_active_rate": round(info["mode_teacher_active_rate"], 4),
                     "route_anchor_teacher_active_rate": round(info["route_anchor_teacher_active_rate"], 4),
                     "target_teacher_active_rate": round(info["target_teacher_active_rate"], 4),
                     "return_action_teacher_active_rate": round(info["return_action_teacher_active_rate"], 4),
+                    "route_phase_action_teacher_active_rate": round(info["route_phase_action_teacher_active_rate"], 4),
                     "aux_battery_loss": round(info["aux_battery_loss"], 4),
                     "aux_collision_loss": round(info["aux_collision_loss"], 4),
                     "battery_process_cost_mean": round(info["battery_process_cost_mean"], 4),
@@ -296,8 +298,10 @@ class Algorithm:
                     "policy_loss: %.4f, value_clean_loss: %.4f, value_survive_loss: %.4f, "
                     "entropy_loss: %.4f, mode_teacher_loss: %.4f, route_anchor_teacher_loss: %.4f, "
                     "target_teacher_loss: %.4f, return_action_teacher_loss: %.4f, "
+                    "route_phase_policy_teacher_loss: %.4f, "
                     "mode_teacher_active_rate: %.4f, route_anchor_teacher_active_rate: %.4f, "
                     "target_teacher_active_rate: %.4f, return_action_teacher_active_rate: %.4f, "
+                    "route_phase_action_teacher_active_rate: %.4f, "
                     "battery_process_cost_mean: %.4f, collision_process_cost_mean: %.4f, "
                     "lambda_battery: %.4f, lambda_collision: %.4f, "
                     "loss_invalid: %.0f, nan_batch_count: %.0f, nan_skip_rate: %.4f, last_finite_step: %.0f"
@@ -310,10 +314,12 @@ class Algorithm:
                         results["route_anchor_teacher_loss"],
                         results["target_teacher_loss"],
                         results["return_action_teacher_loss"],
+                        results["route_phase_policy_teacher_loss"],
                         results["mode_teacher_active_rate"],
                         results["route_anchor_teacher_active_rate"],
                         results["target_teacher_active_rate"],
                         results["return_action_teacher_active_rate"],
+                        results["route_phase_action_teacher_active_rate"],
                         results["battery_process_cost_mean"],
                         results["collision_process_cost_mean"],
                         results["lambda_battery"],
@@ -338,10 +344,12 @@ class Algorithm:
                     "route_anchor_teacher_loss": results["route_anchor_teacher_loss"],
                     "target_teacher_loss": results["target_teacher_loss"],
                     "return_action_teacher_loss": results["return_action_teacher_loss"],
+                    "route_phase_policy_teacher_loss": results["route_phase_policy_teacher_loss"],
                     "mode_teacher_active_rate": results["mode_teacher_active_rate"],
                     "route_anchor_teacher_active_rate": results["route_anchor_teacher_active_rate"],
                     "target_teacher_active_rate": results["target_teacher_active_rate"],
                     "return_action_teacher_active_rate": results["return_action_teacher_active_rate"],
+                    "route_phase_action_teacher_active_rate": results["route_phase_action_teacher_active_rate"],
                     "aux_battery_loss": results["aux_battery_loss"],
                     "aux_collision_loss": results["aux_collision_loss"],
                     "battery_process_cost_mean": results["battery_process_cost_mean"],
@@ -430,6 +438,12 @@ class Algorithm:
         return_action_teacher_mask = torch.stack(
             [torch.as_tensor(s.return_action_teacher_mask, dtype=torch.float32) for s in list_sample_data]
         ).to(**to_device)
+        route_phase_action_teacher = torch.stack(
+            [torch.as_tensor(s.route_phase_action_teacher, dtype=torch.long) for s in list_sample_data]
+        ).to(**to_device)
+        route_phase_action_teacher_mask = torch.stack(
+            [torch.as_tensor(s.route_phase_action_teacher_mask, dtype=torch.float32) for s in list_sample_data]
+        ).to(**to_device)
         battery_risk_label = torch.stack(
             [torch.as_tensor(s.battery_risk_label, dtype=torch.float32) for s in list_sample_data]
         ).to(**to_device)
@@ -467,6 +481,8 @@ class Algorithm:
                 "target_teacher_mask": target_teacher_mask,
                 "return_action_teacher": return_action_teacher,
                 "return_action_teacher_mask": return_action_teacher_mask,
+                "route_phase_action_teacher": route_phase_action_teacher,
+                "route_phase_action_teacher_mask": route_phase_action_teacher_mask,
                 "battery_risk_label": battery_risk_label,
                 "collision_risk_label": collision_risk_label,
                 "constraint_battery_process_cost": constraint_battery_process_cost,

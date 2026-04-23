@@ -221,7 +221,7 @@ def _resume_eligible(window_metrics: dict[str, Any], learning_metrics: dict[str,
         and _float_or(window_metrics.get("win_rate"), 0.0) >= 0.55
         and _float_or(window_metrics.get("battery_fail_rate"), 1.0) <= 0.25
         and _float_or(window_metrics.get("collision_fail_rate"), 1.0) <= 0.12
-        and _float_or(window_metrics.get("zero_charge_battery_fail_rate"), 1.0) <= 0.40
+        and _float_or(window_metrics.get("zero_charge_battery_fail_rate"), 1.0) <= 0.15
         and _float_or(
             window_metrics.get("reliable_planner_divergence_rate"),
             _float_or(window_metrics.get("route_phase_planner_divergence_rate"), 1.0),

@@ -41,6 +41,8 @@ from agent_ppo.workflow.curriculum_policy import (
     STAGE_INDEX,
     choose_stage,
     choose_stage_decision,
+    curriculum_fixed_stage,
+    curriculum_lite_enabled,
     profile_plan_for_runtime,
     previous_stage,
     stagnation_status,
@@ -57,17 +59,19 @@ except ImportError:  # pragma: no cover
 
 SIGNAL_TTL_SECONDS = 20 * 60
 STATE_VERSION = 1
-COMPARISON_SAMPLE_VERSION = 1
+COMPARISON_SAMPLE_VERSION = 2
 SAMPLE_WINDOW_EPISODES = (
     ("bootstrap_10", 10),
     ("bootstrap_20", 20),
     ("global_40", 40),
     ("global_80", 80),
     ("global_120", 120),
+    ("global_160", 160),
+    ("global_200", 200),
 )
 FAST_SKIP_GLOBAL_EPISODES = 20
 FULL_WINDOW_GLOBAL_EPISODES = 40
-RECENT_EPISODE_KEEP = FULL_WINDOW_GLOBAL_EPISODES * 3
+RECENT_EPISODE_KEEP = max(episode_count for _, episode_count in SAMPLE_WINDOW_EPISODES)
 ADVANCE_CONFIRM_WINDOWS = 2
 REGRESS_CONFIRM_WINDOWS = 2
 MIN_STAGE_DWELL_STEPS = {
@@ -85,6 +89,19 @@ RETURN_WINDOW_ALIAS_KEYS = (
     ("route_phase_planner_divergence_rate", "avg_route_phase_planner_divergence_rate"),
     ("reliable_planner_divergence_rate", "avg_reliable_planner_divergence_rate"),
 )
+COMPARISON_SAMPLE_LEARNING_KEYS = (
+    "mode_teacher_active_rate",
+    "route_anchor_teacher_active_rate",
+    "target_teacher_active_rate",
+    "return_action_teacher_active_rate",
+    "route_phase_action_teacher_active_rate",
+    "mode_teacher_loss",
+    "route_anchor_teacher_loss",
+    "target_teacher_loss",
+    "return_action_teacher_loss",
+    "route_phase_policy_teacher_loss",
+)
+LOCAL_WINDOW_POLICY_VERSION = 1
 
 _LEARNER_LOG_STATE_PATTERNS = {
     "global_step": re.compile(r"global step is\s+(-?\d+(?:\.\d+)?)"),
@@ -205,6 +222,12 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
             "streak",
             "explore",
             "frontier",
+            "risk_release_reward",
+            "risk_release_from_progress",
+            "risk_release_from_charge_event",
+            "risk_growth_while_clean_penalty",
+            "route_phase_risk_growth_penalty",
+            "charge_opportunity_cost_penalty",
             "charger_access_discovery_bonus",
             "charger_access_probe_bonus",
             "idle",
@@ -219,8 +242,11 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
             "skip_needed_charge_penalty",
             "high_need_return_stall_penalty",
             "cps_bonus",
+            "effective_coverage_bonus",
             "coverage_tangle_penalty",
+            "clean_floor_revisit_penalty",
             "edge_follow_bonus",
+            "charge_reward_shadow_only_active",
         )
     }
     payload = {
@@ -261,6 +287,9 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
         "narrow_unknown_commit_rate": avg("narrow_unknown_commit_rate"),
         "missed_charge_opportunity_rate": avg("missed_charge_opportunity_rate"),
         "charger_nearby_not_charged_rate": avg("charger_nearby_not_charged_rate"),
+        "clean_floor_revisit_rate": avg("clean_floor_revisit_rate"),
+        "clean_floor_revisit_penalty_mean": avg("clean_floor_revisit_penalty_mean"),
+        "effective_coverage_bonus_mean": avg("effective_coverage_bonus_mean"),
         "suboptimal_target_hold_rate": avg("suboptimal_target_hold_rate"),
         "planner_policy_divergence_rate": avg("planner_policy_divergence_rate"),
         "route_phase_planner_divergence_rate": avg("route_phase_planner_divergence_rate"),
@@ -280,7 +309,17 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
         "collision_process_cost_mean": avg("collision_process_cost_mean"),
         "high_need_return_stall_rate": avg("high_need_return_stall_rate"),
         "avg_charge_need_score": avg("avg_charge_need_score"),
+        "avg_route_phase_shadow_risk": avg("avg_route_phase_shadow_risk"),
+        "avg_route_phase_reward_ready_rate": avg("avg_route_phase_reward_ready_rate"),
+        "sampled_profile_anchor_count": avg("sampled_profile_anchor_count") * len(records),
+        "sampled_profile_mild_count": avg("sampled_profile_mild_count") * len(records),
+        "sampled_profile_broad_count": avg("sampled_profile_broad_count") * len(records),
+        "sampled_profile_anchor_rate": avg("sampled_profile_anchor_count"),
+        "sampled_profile_mild_rate": avg("sampled_profile_mild_count"),
+        "sampled_profile_broad_rate": avg("sampled_profile_broad_count"),
         "avg_slack_confidence": avg("avg_slack_confidence"),
+        "return_entry_count": 0.0,
+        "readiness_supported_return_entry_count": 0.0,
         "battery_fail_severity_mean": avg("battery_fail_severity"),
         "mode_usage_depart": avg("mode_usage_depart"),
         "mode_usage_expand": avg("mode_usage_expand"),
@@ -292,6 +331,10 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
         "battery_fail_rate": sum(1 for record in records if record.get("result") == "battery") / len(records),
         "collision_fail_rate": sum(1 for record in records if record.get("result") == "collision") / len(records),
         "zero_charge_battery_fail_rate": (
+            sum(1 for record in records if record.get("result") == "battery" and float(record.get("charge_count", 0.0) or 0.0) <= 0.0)
+            / len(records)
+        ),
+        "zero_charge_among_battery_fail_rate": (
             sum(1 for record in battery_fails if float(record.get("charge_count", 0.0) or 0.0) <= 0.0) / len(battery_fails)
         ) if battery_fails else 0.0,
         "battery_positive_reward_rate": (
@@ -315,6 +358,25 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
     payload.update(compute_reward_contribution_payload({
         key.replace("avg_reward_", ""): value for key, value in reward_component_means.items()
     }))
+    simplify_records = [record for record in records if float(record.get("control_stack_simplify_active", 0.0) or 0.0) > 0.0]
+    if simplify_records:
+        payload["pre_return_readiness_hit_rate"] = avg("pre_return_readiness_hit_rate")
+    else:
+        payload["pre_return_readiness_hit_rate"] = None
+    return_entry_total = sum(float(record.get("return_entry_count", 0.0) or 0.0) for record in simplify_records)
+    readiness_supported_total = sum(
+        float(record.get("readiness_supported_return_entry_count", 0.0) or 0.0) for record in simplify_records
+    )
+    payload["return_entry_count"] = float(return_entry_total)
+    payload["readiness_supported_return_entry_count"] = float(readiness_supported_total)
+    if return_entry_total > 0.0:
+        payload["readiness_to_return_transition_rate"] = float(readiness_supported_total / return_entry_total)
+        payload["direct_return_without_readiness_rate"] = float(
+            max(return_entry_total - readiness_supported_total, 0.0) / return_entry_total
+        )
+    else:
+        payload["readiness_to_return_transition_rate"] = None
+        payload["direct_return_without_readiness_rate"] = None
     for source_key, alias_key in RETURN_WINDOW_ALIAS_KEYS:
         payload[alias_key] = payload.get(source_key)
     return payload
@@ -330,35 +392,116 @@ def _compute_sample_window_metrics(records: list[dict[str, Any]]) -> dict[str, d
     return sample_metrics
 
 
+def _local_window_size(episode_threshold: int) -> int:
+    return 10 if episode_threshold <= 20 else 20
+
+
+def _local_window_bounds(episode_threshold: int) -> tuple[int, int]:
+    window_size = _local_window_size(episode_threshold)
+    end_index = int(episode_threshold)
+    start_index = max(0, end_index - window_size)
+    return start_index, end_index
+
+
+def _local_window_metrics(records: list[dict[str, Any]], episode_threshold: int) -> dict[str, Any] | None:
+    ordered_records = list(records or [])
+    start_index, end_index = _local_window_bounds(episode_threshold)
+    if len(ordered_records) < end_index:
+        return None
+    return _aggregate_episode_records(ordered_records[start_index:end_index], end_index - start_index)
+
+
+def _attach_local_metrics_to_existing_sample(sample: dict[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:
+    updated = deepcopy(sample)
+    if updated.get("local_metrics"):
+        return updated
+    episode_threshold = int(updated.get("episode_threshold") or 0)
+    local_metrics = _local_window_metrics(records, episode_threshold)
+    if local_metrics is None:
+        return updated
+    local_start_index, local_end_index = _local_window_bounds(episode_threshold)
+    updated["local_metrics"] = local_metrics
+    updated["local_window_size"] = int(local_end_index - local_start_index)
+    updated["local_episode_start"] = int(local_start_index + 1)
+    updated["local_episode_end"] = int(local_end_index)
+    return updated
+
+
+def _signals_total_episode_count(signals: list[dict[str, Any]]) -> int:
+    totals: dict[str, int] = {}
+    for signal in signals:
+        source_id = str(signal.get("source_id") or "")
+        if not source_id:
+            continue
+        episode_cnt_local = int(signal.get("episode_cnt_local") or 0)
+        if episode_cnt_local <= 0:
+            continue
+        totals[source_id] = max(totals.get(source_id, 0), episode_cnt_local)
+    return sum(totals.values())
+
+
 def _update_comparison_samples_payload(
     payload: dict[str, Any] | None,
     records: list[dict[str, Any]],
     *,
     run_session_id: str,
+    train_phase: str | None = None,
     training_start_mode: str,
+    window_origin: str = "scratch_local",
+    resumed_from_session_id: str | None = None,
     global_episode_count: int,
     global_step_since_resume: int,
     captured_at_ts: float,
+    learning_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     updated = deepcopy(payload or {})
-    updated["version"] = int(updated.get("version") or COMPARISON_SAMPLE_VERSION)
+    updated["version"] = COMPARISON_SAMPLE_VERSION
+    updated["window_policy_version"] = LOCAL_WINDOW_POLICY_VERSION
+    updated["primary_window_policy"] = "local"
     updated["run_session_id"] = str(run_session_id)
+    updated["train_phase"] = str(train_phase or "")
     updated["training_start_mode"] = str(training_start_mode or "")
+    updated["window_origin"] = str(window_origin or "scratch_local")
+    if resumed_from_session_id:
+        updated["resumed_from_session_id"] = str(resumed_from_session_id)
+    else:
+        updated.pop("resumed_from_session_id", None)
     sample_points = updated.setdefault("sample_points", {})
     ordered_records = list(records or [])
+    has_complete_prefix_history = int(global_episode_count) == len(ordered_records)
     for sample_key, episode_count in SAMPLE_WINDOW_EPISODES:
-        if sample_key in sample_points or global_episode_count < episode_count or len(ordered_records) < episode_count:
+        if global_episode_count < episode_count or len(ordered_records) < episode_count:
+            continue
+        existing_sample = sample_points.get(sample_key)
+        if existing_sample is not None:
+            if has_complete_prefix_history:
+                sample_points[sample_key] = _attach_local_metrics_to_existing_sample(existing_sample, ordered_records)
+            continue
+        if not has_complete_prefix_history:
             continue
         metrics = _aggregate_episode_records(ordered_records[:episode_count], episode_count)
-        if metrics is None:
+        local_metrics = _local_window_metrics(ordered_records, episode_count)
+        if metrics is None or local_metrics is None:
             continue
+        local_start_index, local_end_index = _local_window_bounds(episode_count)
         sample_points[sample_key] = {
             "sample_point": sample_key,
             "episode_threshold": int(episode_count),
             "actual_global_episode_count": int(global_episode_count),
             "global_step_since_resume": int(global_step_since_resume),
             "captured_at_ts": float(captured_at_ts),
+            "window_origin": str(updated["window_origin"]),
+            "train_phase": str(updated.get("train_phase") or ""),
             "metrics": metrics,
+            "local_metrics": local_metrics,
+            "local_window_size": int(local_end_index - local_start_index),
+            "local_episode_start": int(local_start_index + 1),
+            "local_episode_end": int(local_end_index),
+            "learning_metrics": {
+                key: learning_metrics.get(key)
+                for key in COMPARISON_SAMPLE_LEARNING_KEYS
+                if learning_metrics and learning_metrics.get(key) is not None
+            },
         }
     return updated
 
@@ -447,7 +590,18 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
         "collision_process_cost_mean",
         "high_need_return_stall_rate",
         "avg_charge_need_score",
+        "avg_route_phase_shadow_risk",
+        "avg_route_phase_reward_ready_rate",
+        "sampled_profile_anchor_rate",
+        "sampled_profile_mild_rate",
+        "sampled_profile_broad_rate",
         "avg_slack_confidence",
+        "clean_floor_revisit_rate",
+        "clean_floor_revisit_penalty_mean",
+        "effective_coverage_bonus_mean",
+        "expert_weight_nonzero_rate",
+        "pre_return_bias_active_rate",
+        "return_bias_active_rate",
         "battery_fail_severity_mean",
         "mode_usage_depart",
         "mode_usage_expand",
@@ -459,6 +613,13 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
         "avg_reward_streak",
         "avg_reward_explore",
         "avg_reward_frontier",
+        "avg_reward_risk_release_reward",
+        "avg_reward_risk_release_from_progress",
+        "avg_reward_risk_release_from_charge_event",
+        "avg_reward_risk_growth_while_clean_penalty",
+        "avg_reward_route_phase_risk_growth_penalty",
+        "avg_reward_charge_opportunity_cost_penalty",
+        "avg_reward_charge_reward_shadow_only_active",
         "avg_reward_charger_access_discovery_bonus",
         "avg_reward_charger_access_probe_bonus",
         "avg_reward_idle",
@@ -473,11 +634,14 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
         "avg_reward_skip_needed_charge_penalty",
         "avg_reward_high_need_return_stall_penalty",
         "avg_reward_cps_bonus",
+        "avg_reward_effective_coverage_bonus",
         "avg_reward_coverage_tangle_penalty",
+        "avg_reward_clean_floor_revisit_penalty",
         "avg_reward_edge_follow_bonus",
         "battery_fail_rate",
         "collision_fail_rate",
         "zero_charge_battery_fail_rate",
+        "zero_charge_among_battery_fail_rate",
         "battery_fail_count",
         "battery_positive_reward_count",
         "battery_positive_reward_rate",
@@ -495,14 +659,19 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
         "reward_positive_share_cleaning",
         "reward_positive_share_streak",
         "reward_positive_share_explore",
+        "reward_positive_share_risk_release_reward",
         "reward_positive_share_charge_route_progress_bonus",
         "reward_positive_share_return_progress_shaping_bonus",
         "reward_positive_share_necessary_charge_bonus",
         "reward_positive_share_frontier",
         "reward_positive_share_cps_bonus",
+        "reward_positive_share_effective_coverage_bonus",
         "reward_positive_share_edge_follow_bonus",
         "reward_positive_share_charger_access_discovery_bonus",
         "reward_positive_share_charger_access_probe_bonus",
+        "reward_negative_share_route_phase_risk_growth_penalty",
+        "reward_negative_share_risk_growth_while_clean_penalty",
+        "reward_negative_share_charge_opportunity_cost_penalty",
         "reward_negative_share_charge_detour_cost",
         "reward_negative_share_charge_interrupt_cost",
         "reward_negative_share_skip_needed_charge_penalty",
@@ -512,11 +681,16 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
         "reward_negative_share_idle",
         "reward_negative_share_npc",
         "reward_negative_share_coverage_tangle_penalty",
+        "reward_negative_share_clean_floor_revisit_penalty",
+        "reward_charging_positive_share_risk_release_reward",
         "reward_charging_positive_share_charge_route_progress_bonus",
         "reward_charging_positive_share_return_progress_shaping_bonus",
         "reward_charging_positive_share_necessary_charge_bonus",
         "reward_charging_positive_share_charger_access_discovery_bonus",
         "reward_charging_positive_share_charger_access_probe_bonus",
+        "reward_charging_negative_share_route_phase_risk_growth_penalty",
+        "reward_charging_negative_share_risk_growth_while_clean_penalty",
+        "reward_charging_negative_share_charge_opportunity_cost_penalty",
         "reward_charging_negative_share_high_need_return_stall_penalty",
         "reward_charging_negative_share_charge_detour_cost",
         "reward_charging_negative_share_charge_interrupt_cost",
@@ -710,7 +884,11 @@ def _default_state() -> dict[str, Any]:
         "recent_episodes": [],
         "source_session_id": None,
         "restored_from_session_id": None,
+        "restored_global_episode_count": 0,
+        "restored_global_step_since_resume": 0,
+        "window_origin": "scratch_local",
         "initial_stage": initial_stage,
+        "train_phase": str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower(),
         "training_start_mode": str(os.getenv("KAIWU_TRAINING_START_MODE", "preload") or "preload").strip().lower(),
         "preload_enabled": bool(preload_enabled),
         "observation_phase_active": False,
@@ -775,10 +953,14 @@ class SharedCurriculumStateStore:
             existing,
             state.get("recent_episodes") or [],
             run_session_id=session_id,
+            train_phase=str(state.get("train_phase") or ""),
             training_start_mode=str(state.get("training_start_mode") or ""),
+            window_origin=str(state.get("window_origin") or "scratch_local"),
+            resumed_from_session_id=str(state.get("restored_from_session_id") or "").strip() or None,
             global_episode_count=int(state.get("global_episode_count", 0) or 0),
             global_step_since_resume=int(state.get("global_step_since_resume", 0) or 0),
             captured_at_ts=float(state.get("updated_at_ts") or _now_ts()),
+            learning_metrics=state.get("last_learning_metrics") or {},
         )
         if updated != existing:
             _write_json(run_layout.comparison_samples_path, updated)
@@ -830,6 +1012,14 @@ class SharedCurriculumStateStore:
             resume_meta, resume_snapshot = _load_resume_bundle(self.code_dir)
             if resume_meta and resume_snapshot:
                 restored = deepcopy(_default_state())
+                restored_history_episode_count = int(resume_snapshot.get("global_episode_count") or 0)
+                restored_history_step_count = int(
+                    float(
+                        resume_meta.get("global_step_since_resume")
+                        or resume_snapshot.get("global_step_since_resume")
+                        or 0
+                    )
+                )
                 for key in (
                     "stage",
                     "stage_version",
@@ -841,19 +1031,9 @@ class SharedCurriculumStateStore:
                     "promotion_timeout_steps",
                     "promotion_eligibility_snapshot",
                     "stage_entry_metrics",
-                    "last_global_metrics",
-                    "last_bootstrap_metrics",
-                    "sample_window_metrics",
                     "last_learning_metrics",
-                    "global_episode_count",
-                    "global_step_since_resume",
                     "initial_stage",
                     "observation_phase_active",
-                    "curriculum_stagnation_level",
-                    "curriculum_stagnation_reason",
-                    "stagnation_windows",
-                    "invalid_for_promotion",
-                    "requires_reward_revision",
                     "in_transition_guard",
                     "transition_target_stage",
                     "transition_entered_global_step",
@@ -861,8 +1041,6 @@ class SharedCurriculumStateStore:
                     "curriculum_progress",
                     "curriculum_stage_idx",
                     "last_stage_transition_global_step",
-                    "degraded_mainline",
-                    "degraded_mainline_windows",
                 ):
                     if key in resume_snapshot:
                         restored[key] = deepcopy(resume_snapshot[key])
@@ -870,14 +1048,29 @@ class SharedCurriculumStateStore:
                     restored.get("last_learning_metrics"),
                     resume_meta.get("last_learning_metrics"),
                 )
-                if _is_finite_number(resume_meta.get("global_step_since_resume")):
-                    restored["global_step_since_resume"] = int(float(resume_meta.get("global_step_since_resume")))
                 restored["source_session_id"] = session_id
                 restored["restored_from_session_id"] = resume_meta.get("session_id") or resume_snapshot.get("source_session_id")
+                restored["restored_global_episode_count"] = restored_history_episode_count
+                restored["restored_global_step_since_resume"] = restored_history_step_count
                 restored["updated_at_ts"] = _now_ts()
                 restored["training_start_mode"] = training_start_mode
                 restored["preload_enabled"] = bool(preload_enabled)
+                restored["window_origin"] = "resumed_local"
+                restored["global_episode_count"] = 0
+                restored["global_step_since_resume"] = 0
                 restored["recent_episodes"] = []
+                restored["last_global_metrics"] = {}
+                restored["last_bootstrap_metrics"] = {}
+                restored["sample_window_metrics"] = {}
+                restored["consecutive_pass_windows"] = 0
+                restored["consecutive_fail_windows"] = 0
+                restored["curriculum_stagnation_level"] = 0
+                restored["curriculum_stagnation_reason"] = []
+                restored["stagnation_windows"] = 0
+                restored["invalid_for_promotion"] = False
+                restored["requires_reward_revision"] = False
+                restored["degraded_mainline"] = False
+                restored["degraded_mainline_windows"] = 0
                 if stage in STAGE_INDEX:
                     restored["initial_stage"] = str(resume_snapshot.get("initial_stage") or restored.get("initial_stage") or stage)
                 state = restored
@@ -891,6 +1084,7 @@ class SharedCurriculumStateStore:
         state["lite_benchmark_metrics"] = deepcopy(lite_benchmark_metrics or {})
         state["training_start_mode"] = training_start_mode
         state["preload_enabled"] = bool(preload_enabled)
+        state["window_origin"] = "scratch_local"
         state["curriculum_progress"] = 0.0
         state["curriculum_stage_idx"] = STAGE_INDEX.get(stage, 0)
         state["updated_at_ts"] = _now_ts()
@@ -961,8 +1155,13 @@ def _refresh_state_impl(self) -> dict[str, Any]:
         )
         learning_metrics = _merge_with_learner_log_metrics(learning_metrics, learner_log_metrics)
         global_step_since_resume = int(max(_metric(signal.get("runtime"), "global_step_since_resume", 0.0) for signal in signals))
-        global_episode_count = len(recent_episodes)
+        global_episode_count = max(
+            len(recent_episodes),
+            _signals_total_episode_count(signals),
+            int(state.get("global_episode_count", 0) or 0),
+        )
         resume_fast_track = bool(state.get("stage_version", 0) <= 1)
+        lite_mode = curriculum_lite_enabled()
 
         context = {
             "global_step_since_resume": global_step_since_resume,
@@ -976,6 +1175,15 @@ def _refresh_state_impl(self) -> dict[str, Any]:
         }
 
         current_stage = state.get("stage", "warmup")
+        if lite_mode:
+            current_stage = curriculum_fixed_stage(current_stage)
+            state["stage"] = current_stage
+            state["pending_stage"] = None
+            state["consecutive_pass_windows"] = 0
+            state["consecutive_fail_windows"] = 0
+            state["in_transition_guard"] = False
+            state["transition_target_stage"] = None
+            state["transition_entered_global_step"] = 0
         decision = choose_stage_decision(
             current_stage=current_stage,
             context=context,
@@ -1005,7 +1213,7 @@ def _refresh_state_impl(self) -> dict[str, Any]:
             and max(global_step_since_resume - last_transition_step, 0) < max(stage_transition_cooldown_steps, 0)
         )
 
-        if proposed_stage != current_stage and dwell_satisfied and not promotion_blocked and not stage_transition_in_cooldown:
+        if not lite_mode and proposed_stage != current_stage and dwell_satisfied and not promotion_blocked and not stage_transition_in_cooldown:
             pass_windows = int(state.get("consecutive_pass_windows", 0))
             if state.get("pending_stage") == proposed_stage:
                 pass_windows += 1
@@ -1046,13 +1254,13 @@ def _refresh_state_impl(self) -> dict[str, Any]:
             state["pending_stage"] = None
 
         guard_regression_blocked = bool(state.get("in_transition_guard"))
-        regress_now = should_regress_stage(
+        regress_now = False if lite_mode else should_regress_stage(
             current_stage=current_stage,
             stage_entry_metrics=state.get("stage_entry_metrics"),
             current_metrics=window_metrics,
             learning_metrics=learning_metrics,
         )
-        if regress_now and not guard_regression_blocked and not stage_transition_in_cooldown:
+        if not lite_mode and regress_now and not guard_regression_blocked and not stage_transition_in_cooldown:
             fail_windows = int(state.get("consecutive_fail_windows", 0)) + 1
             state["consecutive_fail_windows"] = fail_windows
             if fail_windows >= REGRESS_CONFIRM_WINDOWS and current_stage != "warmup":
@@ -1100,14 +1308,14 @@ def _refresh_state_impl(self) -> dict[str, Any]:
         train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
         if metrics_for_progress and train_phase == "s1_survival":
             degrade_flags = [
-                _metric(metrics_for_progress, "zero_charge_battery_fail_rate", 0.0) >= 0.40,
+                _metric(metrics_for_progress, "zero_charge_battery_fail_rate", 0.0) >= 0.15,
                 _metric(metrics_for_progress, "battery_positive_reward_rate", 0.0) >= 0.20,
                 _metric(metrics_for_progress, "avg_clean_per_step", 0.0) < 0.46,
             ]
         else:
             degrade_flags = [
                 _metric(metrics_for_progress, "battery_fail_rate", 0.0) >= 0.45,
-                _metric(metrics_for_progress, "zero_charge_battery_fail_rate", 0.0) >= 0.55,
+                _metric(metrics_for_progress, "zero_charge_battery_fail_rate", 0.0) >= 0.18,
                 _metric(
                     metrics_for_progress,
                     "reliable_planner_divergence_rate",
@@ -1131,7 +1339,7 @@ def _refresh_state_impl(self) -> dict[str, Any]:
         )
         if state["degraded_mainline"]:
             state["invalid_for_promotion"] = True
-        if state.get("in_transition_guard"):
+        if not lite_mode and state.get("in_transition_guard"):
             target_stage = str(state.get("transition_target_stage") or "").strip().lower()
             guard_steps = {
                 "blend": int(os.getenv("KAIWU_CURRICULUM_BLEND_GUARD_STEPS", "8000")),

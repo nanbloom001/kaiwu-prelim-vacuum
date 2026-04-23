@@ -72,6 +72,74 @@ def compute_charge_need_score(
     return max(0.8 * battery_term, 0.8 * recoverability_term)
 
 
+def compute_route_phase_shadow_risk(
+    *,
+    min_recoverability: float,
+    charger_slack: float,
+    charge_margin_now: float,
+    planner_topk_reachable_count: int,
+    unknown_target_ratio: float,
+    route_contract_pressure: float,
+    recoverability_warn: float = 0.35,
+    recoverability_span: float = 0.70,
+    prepare_return_slack_threshold: float = 6.0,
+    charge_margin_warn: float = 17.0,
+    unknown_ratio_threshold: float = 0.20,
+) -> float:
+    recoverability_warn_term = clip01((float(recoverability_warn) - float(min_recoverability)) / max(float(recoverability_span), 1e-6))
+    slack_warn_term = clip01(
+        (float(prepare_return_slack_threshold) - float(charger_slack))
+        / max(float(prepare_return_slack_threshold), 1.0)
+    )
+    margin_warn_term = clip01(
+        (float(charge_margin_warn) - float(charge_margin_now))
+        / max(float(charge_margin_warn), 1.0)
+    )
+    no_reachable_route_term = 1.0 if int(planner_topk_reachable_count) <= 0 else 0.0
+    unknown_ratio_threshold = float(unknown_ratio_threshold)
+    unknown_path_term = clip01(
+        (float(unknown_target_ratio) - unknown_ratio_threshold)
+        / max(1.0 - unknown_ratio_threshold, 1e-6)
+    )
+    unknown_route_term = max(no_reachable_route_term, unknown_path_term)
+    route_pressure_term = clip01(route_contract_pressure)
+    return max(
+        1.00 * recoverability_warn_term,
+        0.90 * slack_warn_term,
+        0.75 * margin_warn_term,
+        0.55 * unknown_route_term,
+        0.65 * route_pressure_term,
+    )
+
+
+def compute_route_phase_reward_ready(
+    *,
+    current_mode: int,
+    mode_contract: int,
+    mode_return: int,
+    route_phase_reliable_active: bool,
+    return_action_reliable: bool,
+    anchor_reliable: bool,
+    target_reliable: bool,
+    known_route_available: bool,
+    route_phase_shadow_risk: float,
+    route_phase_shadow_risk_threshold: float = 0.12,
+) -> bool:
+    route_phase_active = int(current_mode) in (int(mode_contract), int(mode_return))
+    route_context_available = bool(
+        route_phase_reliable_active
+        or return_action_reliable
+        or anchor_reliable
+        or target_reliable
+        or known_route_available
+    )
+    return bool(
+        route_phase_active
+        and route_context_available
+        and float(route_phase_shadow_risk) >= float(route_phase_shadow_risk_threshold)
+    )
+
+
 def classify_battery_state(charge_need_score: float, safe_threshold: float = 0.12, critical_threshold: float = 0.28) -> str:
     score = float(charge_need_score)
     if score < float(safe_threshold):

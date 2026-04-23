@@ -7,11 +7,12 @@
 Training workflow for Robot Vacuum.
 """
 
-import os
-import time
 import json
+import hashlib
+import os
 import re
 import shutil
+import time
 from collections import deque
 from copy import deepcopy
 from pathlib import Path
@@ -50,6 +51,10 @@ from agent_ppo.workflow.state_layout import (
 from agent_ppo.eval.lite_benchmark_bootstrap import maybe_run_lite_benchmark
 from agent_ppo.utils.constraint_utils import classify_battery_fail_severity
 from agent_ppo.utils.experiment_archive import ExperimentArchive, infer_fail_reason
+from agent_ppo.utils.return_readiness import (
+    control_stack_simplify_active,
+    evaluate_simplified_return_readiness,
+)
 from agent_ppo.utils.reward_metrics import compute_reward_contribution_payload
 from agent_ppo.utils.reward_schedule import get_reward_schedule
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
@@ -69,11 +74,41 @@ def _env_int(name, default):
     return int(value)
 
 
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None or value == "":
+        return bool(default)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int_list(name, default):
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return list(default)
+    values = []
+    for item in raw.split(","):
+        item = item.strip()
+        if item:
+            values.append(int(item))
+    return values or list(default)
+
+
+def _env_clamped_int(name, default, v_min, v_max):
+    value = _env_int(name, default)
+    return int(np.clip(value, v_min, v_max))
+
+
 REWARD_COMPONENT_KEYS = (
     "cleaning",
     "streak",
     "explore",
     "frontier",
+    "risk_release_reward",
+    "risk_release_from_progress",
+    "risk_release_from_charge_event",
+    "risk_growth_while_clean_penalty",
+    "route_phase_risk_growth_penalty",
+    "charge_opportunity_cost_penalty",
     "charger_access_discovery_bonus",
     "charger_access_probe_bonus",
     "npc",
@@ -92,9 +127,12 @@ REWARD_COMPONENT_KEYS = (
     "high_need_return_stall_penalty",
     "cleaning_context_scale",
     "cps_bonus",
+    "effective_coverage_bonus",
     "coverage_efficiency_bonus",
     "coverage_tangle_penalty",
+    "clean_floor_revisit_penalty",
     "edge_follow_bonus",
+    "charge_reward_shadow_only_active",
 )
 
 REWARD_COMPONENT_MONITOR_KEYS = (
@@ -102,6 +140,12 @@ REWARD_COMPONENT_MONITOR_KEYS = (
     "streak",
     "explore",
     "frontier",
+    "risk_release_reward",
+    "risk_release_from_progress",
+    "risk_release_from_charge_event",
+    "risk_growth_while_clean_penalty",
+    "route_phase_risk_growth_penalty",
+    "charge_opportunity_cost_penalty",
     "charger_access_discovery_bonus",
     "charger_access_probe_bonus",
     "idle",
@@ -116,14 +160,19 @@ REWARD_COMPONENT_MONITOR_KEYS = (
     "skip_needed_charge_penalty",
     "high_need_return_stall_penalty",
     "cps_bonus",
+    "effective_coverage_bonus",
     "coverage_tangle_penalty",
+    "clean_floor_revisit_penalty",
     "edge_follow_bonus",
+    "charge_reward_shadow_only_active",
 )
 
 CONSTRAINT_TRACE_KEYS = (
     "battery_process_cost",
     "collision_process_cost",
     "charge_need_score",
+    "route_phase_shadow_risk",
+    "route_phase_reward_ready",
     "slack_confidence",
     "has_known_route",
     "high_need_stall_indicator",
@@ -143,6 +192,18 @@ _LEARNER_LOG_FLOAT_PATTERNS = {
 WINDOW_COMPARISON_METRIC_KEYS = (
     "avg_clean_per_charge_when_charged",
     "zero_charge_battery_fail_rate",
+    "zero_charge_among_battery_fail_rate",
+    "expert_weight_nonzero_rate",
+    "pre_return_bias_active_rate",
+    "return_bias_active_rate",
+    "return_entry_count",
+    "readiness_supported_return_entry_count",
+    "pre_return_readiness_hit_rate",
+    "readiness_to_return_transition_rate",
+    "direct_return_without_readiness_rate",
+    "clean_floor_revisit_rate",
+    "clean_floor_revisit_penalty_mean",
+    "effective_coverage_bonus_mean",
     "avg_charge_count_completed",
     "avg_charge_count_battery_fail",
     "reward_positive_total",
@@ -154,6 +215,7 @@ WINDOW_COMPARISON_METRIC_KEYS = (
     "reward_positive_share_cleaning",
     "reward_positive_share_streak",
     "reward_positive_share_explore",
+    "reward_positive_share_risk_release_reward",
     "reward_positive_share_charge_route_progress_bonus",
     "reward_positive_share_necessary_charge_bonus",
     "reward_positive_share_frontier",
@@ -161,6 +223,9 @@ WINDOW_COMPARISON_METRIC_KEYS = (
     "reward_positive_share_edge_follow_bonus",
     "reward_positive_share_charger_access_discovery_bonus",
     "reward_positive_share_charger_access_probe_bonus",
+    "reward_negative_share_route_phase_risk_growth_penalty",
+    "reward_negative_share_risk_growth_while_clean_penalty",
+    "reward_negative_share_charge_opportunity_cost_penalty",
     "reward_negative_share_charge_detour_cost",
     "reward_negative_share_charge_interrupt_cost",
     "reward_negative_share_skip_needed_charge_penalty",
@@ -169,10 +234,14 @@ WINDOW_COMPARISON_METRIC_KEYS = (
     "reward_negative_share_idle",
     "reward_negative_share_npc",
     "reward_negative_share_coverage_tangle_penalty",
+    "reward_charging_positive_share_risk_release_reward",
     "reward_charging_positive_share_charge_route_progress_bonus",
     "reward_charging_positive_share_necessary_charge_bonus",
     "reward_charging_positive_share_charger_access_discovery_bonus",
     "reward_charging_positive_share_charger_access_probe_bonus",
+    "reward_charging_negative_share_route_phase_risk_growth_penalty",
+    "reward_charging_negative_share_risk_growth_while_clean_penalty",
+    "reward_charging_negative_share_charge_opportunity_cost_penalty",
     "reward_charging_negative_share_charge_detour_cost",
     "reward_charging_negative_share_charge_interrupt_cost",
     "reward_charging_negative_share_skip_needed_charge_penalty",
@@ -300,6 +369,8 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
 
 
 class EnvConfigSampler:
+    BASE_SEED = 20260409
+
     def __init__(self, usr_conf):
         self.base_usr_conf = deepcopy(usr_conf)
         if isinstance(self.base_usr_conf, dict) and isinstance(self.base_usr_conf.get("env_conf"), dict):
@@ -315,7 +386,56 @@ class EnvConfigSampler:
         self.base_charger_count = int(self.base_env_conf.get("charger_count", 4))
         self.base_max_step = int(self.base_env_conf.get("max_step", 1000))
         self.base_battery_max = int(self.base_env_conf.get("battery_max", 200))
-        self.rng = np.random.default_rng(seed=20260409)
+        self.fixed_difficulty = _env_bool("KAIWU_ENV_FIXED_DIFFICULTY", False)
+        if self.fixed_difficulty:
+            self.maps = _env_int_list("KAIWU_TRAIN_MAPS", self.maps)
+            self.base_map_random = _env_bool("KAIWU_TRAIN_MAP_RANDOM", self.base_map_random)
+            self.base_robot_count = _env_clamped_int("KAIWU_TRAIN_ROBOT_COUNT", self.base_robot_count, 1, 4)
+            self.base_charger_count = _env_clamped_int("KAIWU_TRAIN_CHARGER_COUNT", self.base_charger_count, 1, 4)
+            self.base_max_step = _env_clamped_int("KAIWU_TRAIN_MAX_STEP", self.base_max_step, 1, 2000)
+            self.base_battery_max = _env_clamped_int("KAIWU_TRAIN_BATTERY_MAX", self.base_battery_max, 100, 999)
+        self.current_seed = int(self.BASE_SEED)
+        self.seed_source = "base"
+        self.sampled_profile_total = 0
+        self.sampled_profile_counts = {
+            "anchor": 0,
+            "mild": 0,
+            "broad": 0,
+            "broad_eval": 0,
+        }
+        self.rng = np.random.default_rng(seed=self.current_seed)
+
+    @staticmethod
+    def _derive_sampler_seed(base_seed, run_session_id, source_id):
+        payload = f"{int(base_seed)}|{str(run_session_id)}|{str(source_id)}".encode("utf-8")
+        digest = hashlib.sha256(payload).digest()
+        return int.from_bytes(digest[:8], "big") % (2**32)
+
+    def configure_runtime_identity(self, run_session_id, source_id):
+        self.current_seed = int(self._derive_sampler_seed(self.BASE_SEED, run_session_id, source_id))
+        self.seed_source = f"{run_session_id}:{source_id}"
+        self.sampled_profile_total = 0
+        self.sampled_profile_counts = {
+            "anchor": 0,
+            "mild": 0,
+            "broad": 0,
+            "broad_eval": 0,
+        }
+        self.rng = np.random.default_rng(seed=self.current_seed)
+
+    def sampled_profile_metrics(self):
+        total = max(int(self.sampled_profile_total), 1)
+        return {
+            "sampled_profile_total": float(self.sampled_profile_total),
+            "sampled_profile_anchor_count": float(self.sampled_profile_counts.get("anchor", 0)),
+            "sampled_profile_mild_count": float(self.sampled_profile_counts.get("mild", 0)),
+            "sampled_profile_broad_count": float(self.sampled_profile_counts.get("broad", 0)),
+            "sampled_profile_broad_eval_count": float(self.sampled_profile_counts.get("broad_eval", 0)),
+            "sampled_profile_anchor_rate": float(self.sampled_profile_counts.get("anchor", 0)) / total,
+            "sampled_profile_mild_rate": float(self.sampled_profile_counts.get("mild", 0)) / total,
+            "sampled_profile_broad_rate": float(self.sampled_profile_counts.get("broad", 0)) / total,
+            "sampled_profile_broad_eval_rate": float(self.sampled_profile_counts.get("broad_eval", 0)) / total,
+        }
 
     def sample(self, curriculum_state):
         if isinstance(curriculum_state, dict):
@@ -325,9 +445,18 @@ class EnvConfigSampler:
             stage = str(curriculum_state or "warmup")
             profile_plan = profile_plan_for_runtime(stage, {})
         profile = self._pick_profile(profile_plan["weights"])
+        self.sampled_profile_total += 1
+        self.sampled_profile_counts[profile] = int(self.sampled_profile_counts.get(profile, 0)) + 1
         env_conf = deepcopy(self.base_env_conf)
 
-        if profile == "anchor":
+        if self.fixed_difficulty:
+            env_conf["map_random"] = self.base_map_random
+            env_conf["map"] = list(self.maps)
+            env_conf["robot_count"] = self.base_robot_count
+            env_conf["charger_count"] = self.base_charger_count
+            env_conf["max_step"] = self.base_max_step
+            env_conf["battery_max"] = self.base_battery_max
+        elif profile == "anchor":
             env_conf["map_random"] = self.base_map_random
             env_conf["map"] = list(self.maps)
         else:
@@ -346,6 +475,10 @@ class EnvConfigSampler:
             "profile_weights": deepcopy(profile_plan["weight_map"]),
             "observation_phase_active": bool(profile_plan["observation_phase_active"]),
             "profile_tightened": bool(profile_plan["tightened"]),
+            "profile_seed": int(self.current_seed),
+            "profile_sample_index": int(self.sampled_profile_total),
+            "fixed_difficulty": bool(self.fixed_difficulty),
+            **self.sampled_profile_metrics(),
         }
         return sampled_usr_conf, meta
 
@@ -471,10 +604,16 @@ class EpisodeRunner:
         self.state_layout = ensure_runtime_state_dirs(self.code_path, self.run_session_id)
         self.run_state = self.state_layout.for_run(self.run_session_id)
         self.session_id = self.helper_session_id
+        if hasattr(self.config_sampler, "configure_runtime_identity"):
+            self.config_sampler.configure_runtime_identity(
+                run_session_id=self.run_session_id,
+                source_id=self.signal_source_id,
+            )
         self._write_json_atomic(
             self.run_state.run_manifest_path,
             {
                 "run_session_id": self.run_session_id,
+                "train_phase": str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower(),
                 "helper_session_id": self.helper_session_id,
                 "source_id": self.signal_source_id,
                 "created_at": time.time(),
@@ -624,6 +763,7 @@ class EpisodeRunner:
         def _write_manifest(run_session_id, *, state_initialized):
             payload = {
                 "run_session_id": run_session_id,
+                "train_phase": str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower(),
                 "created_at": time.time(),
                 "created_by_helper_session_id": fallback_id,
                 "created_by_source_id": self.signal_source_id,
@@ -1043,6 +1183,9 @@ class EpisodeRunner:
             ) if charged else 0.0,
             "avg_clean_per_step": sum(ep["clean_per_step"] for ep in buf) / n,
             "avg_expert_weight": sum(ep["expert_weight"] for ep in buf) / n,
+            "expert_weight_nonzero_rate": sum(ep.get("expert_weight_nonzero_rate", 0.0) for ep in buf) / n,
+            "pre_return_bias_active_rate": sum(ep.get("pre_return_bias_active_rate", 0.0) for ep in buf) / n,
+            "return_bias_active_rate": sum(ep.get("return_bias_active_rate", 0.0) for ep in buf) / n,
             "late_return_rate": sum(ep.get("late_return_rate", 0.0) for ep in buf) / n,
             "late_contract_rate": sum(ep.get("late_contract_rate", 0.0) for ep in buf) / n,
             "anchor_switch_rate": sum(ep.get("anchor_switch_rate", 0.0) for ep in buf) / n,
@@ -1086,7 +1229,18 @@ class EpisodeRunner:
             "collision_process_cost_mean": sum(ep.get("collision_process_cost_mean", 0.0) for ep in buf) / n,
             "high_need_return_stall_rate": sum(ep.get("high_need_return_stall_rate", 0.0) for ep in buf) / n,
             "avg_charge_need_score": sum(ep.get("avg_charge_need_score", 0.0) for ep in buf) / n,
+            "avg_route_phase_shadow_risk": sum(ep.get("avg_route_phase_shadow_risk", 0.0) for ep in buf) / n,
+            "avg_route_phase_reward_ready_rate": sum(ep.get("avg_route_phase_reward_ready_rate", 0.0) for ep in buf) / n,
+            "sampled_profile_anchor_count": sum(ep.get("sampled_profile_anchor_count", 0.0) for ep in buf),
+            "sampled_profile_mild_count": sum(ep.get("sampled_profile_mild_count", 0.0) for ep in buf),
+            "sampled_profile_broad_count": sum(ep.get("sampled_profile_broad_count", 0.0) for ep in buf),
+            "sampled_profile_anchor_rate": sum(ep.get("sampled_profile_anchor_count", 0.0) for ep in buf) / n,
+            "sampled_profile_mild_rate": sum(ep.get("sampled_profile_mild_count", 0.0) for ep in buf) / n,
+            "sampled_profile_broad_rate": sum(ep.get("sampled_profile_broad_count", 0.0) for ep in buf) / n,
             "avg_slack_confidence": sum(ep.get("avg_slack_confidence", 0.0) for ep in buf) / n,
+            "clean_floor_revisit_rate": sum(ep.get("clean_floor_revisit_rate", 0.0) for ep in buf) / n,
+            "clean_floor_revisit_penalty_mean": sum(ep.get("clean_floor_revisit_penalty_mean", 0.0) for ep in buf) / n,
+            "effective_coverage_bonus_mean": sum(ep.get("effective_coverage_bonus_mean", 0.0) for ep in buf) / n,
             "battery_fail_severity_mean": sum(ep.get("battery_fail_severity", 0.0) for ep in buf) / n,
             "mode_usage_depart": sum(ep.get("mode_usage_depart", 0.0) for ep in buf) / n,
             "mode_usage_expand": sum(ep.get("mode_usage_expand", 0.0) for ep in buf) / n,
@@ -1097,7 +1251,26 @@ class EpisodeRunner:
             **reward_component_means,
             "battery_fail_rate": sum(1 for ep in buf if ep["result"] == "battery") / n,
             "collision_fail_rate": sum(1 for ep in buf if ep["result"] == "collision") / n,
+            "battery_positive_reward_count": sum(
+                1
+                for ep in battery_fails
+                if float(ep.get("total_reward", 0.0) or 0.0) > 0.0
+            ),
+            "battery_positive_reward_rate": (
+                sum(
+                    1
+                    for ep in battery_fails
+                    if float(ep.get("total_reward", 0.0) or 0.0) > 0.0
+                ) / len(battery_fails)
+            ) if battery_fails else 0.0,
             "zero_charge_battery_fail_rate": (
+                sum(
+                    1
+                    for ep in buf
+                    if ep["result"] == "battery" and float(ep.get("charge_count", 0.0) or 0.0) <= 0.0
+                ) / n
+            ),
+            "zero_charge_among_battery_fail_rate": (
                 sum(1 for ep in battery_fails if float(ep.get("charge_count", 0.0) or 0.0) <= 0.0) / len(battery_fails)
             ) if battery_fails else 0.0,
             "cps_win": (sum(ep["clean_per_step"] for ep in wins) / w) if w else 0.0,
@@ -1273,6 +1446,30 @@ class EpisodeRunner:
                 _extract_numeric_metric(training_metrics, "learner", "return_action_teacher_active_rate"),
                 "return_action_teacher_active_rate",
             ),
+            "route_phase_action_teacher_active_rate": _prefer_metric(
+                _extract_numeric_metric(training_metrics, "learner", "route_phase_action_teacher_active_rate"),
+                "route_phase_action_teacher_active_rate",
+            ),
+            "mode_teacher_loss": _prefer_metric(
+                _extract_numeric_metric(training_metrics, "learner", "mode_teacher_loss"),
+                "mode_teacher_loss",
+            ),
+            "route_anchor_teacher_loss": _prefer_metric(
+                _extract_numeric_metric(training_metrics, "learner", "route_anchor_teacher_loss"),
+                "route_anchor_teacher_loss",
+            ),
+            "target_teacher_loss": _prefer_metric(
+                _extract_numeric_metric(training_metrics, "learner", "target_teacher_loss"),
+                "target_teacher_loss",
+            ),
+            "return_action_teacher_loss": _prefer_metric(
+                _extract_numeric_metric(training_metrics, "learner", "return_action_teacher_loss"),
+                "return_action_teacher_loss",
+            ),
+            "route_phase_policy_teacher_loss": _prefer_metric(
+                _extract_numeric_metric(training_metrics, "learner", "route_phase_policy_teacher_loss"),
+                "route_phase_policy_teacher_loss",
+            ),
             "env_total_score": _prefer_metric(
                 _extract_numeric_metric(training_metrics, "env", "total_score"),
                 "env_total_score",
@@ -1402,7 +1599,10 @@ class EpisodeRunner:
                 f"Episode {self.episode_cnt} start "
                 f"stage={sampled_meta['stage']} global_progress={curriculum_state.get('curriculum_progress', 0.0):.2f} "
                 f"profile={sampled_meta['profile']} obs_phase={int(sampled_meta.get('observation_phase_active', False))} "
-                f"tightened={int(sampled_meta.get('profile_tightened', False))} env={sampled_env_conf}"
+                f"tightened={int(sampled_meta.get('profile_tightened', False))} "
+                f"profile_seed={int(sampled_meta.get('profile_seed', 0))} "
+                f"profile_sample_index={int(sampled_meta.get('profile_sample_index', 0))} "
+                f"env={sampled_env_conf}"
             )
 
             while not done:
@@ -1497,6 +1697,40 @@ class EpisodeRunner:
                 planner_best_target_edge_break_cost = float(guidance.get("planner_best_target_edge_break_cost", 0.0))
                 planner_best_target_region_fragment_cost = float(guidance.get("planner_best_target_region_fragment_cost", 0.0))
                 planner_multi_route_recoverability = float(guidance.get("planner_multi_route_recoverability", 0.0))
+                simplify_control_stack = control_stack_simplify_active()
+                readiness_flag = 0.0
+                return_now_flag = 0.0
+                if simplify_control_stack:
+                    readiness = evaluate_simplified_return_readiness(
+                        charger_slack=float(getattr(self.agent.preprocessor, "charger_slack", 0.0)),
+                        battery_ratio=float(battery_ratio),
+                        future_recoverability_score=float(getattr(self.agent.preprocessor, "future_recoverability_score", 0.0)),
+                        planner_multi_route_recoverability=float(
+                            guidance.get(
+                                "planner_multi_route_recoverability",
+                                getattr(self.agent.preprocessor, "future_recoverability_score", 0.0),
+                            )
+                        ),
+                        margin=float(guidance.get("margin", getattr(self.agent.preprocessor, "charger_slack", 0.0))),
+                        route_contract_pressure=float(getattr(self.agent.preprocessor, "route_contract_pressure", 0.0)),
+                        known_path_count=int(guidance.get("all_charger_known_path_count", 0)),
+                        total_charger=int(getattr(self.agent.preprocessor, "total_charger", 1)),
+                        planner_topk_reachable_count=int(guidance.get("planner_topk_reachable_count", 0)),
+                        unknown_ratio=float(guidance.get("unknown_path_ratio", 0.0)),
+                        return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
+                        return_battery_ratio=Config.RETURN_BATTERY_RATIO,
+                        return_recoverability_threshold=Config.RETURN_RECOVERABILITY_THRESHOLD,
+                        prepare_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
+                        contract_battery_ratio=Config.CONTRACT_BATTERY_RATIO,
+                        contract_recoverability_threshold=Config.CONTRACT_RECOVERABILITY_THRESHOLD,
+                        charge_margin_low=Config.CHARGE_MARGIN_LOW,
+                        charge_margin_warn=Config.CHARGE_MARGIN_WARN,
+                        contract_route_pressure_threshold=Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
+                        unknown_path_risk_battery_ratio=Config.UNKNOWN_PATH_RISK_BATTERY_RATIO,
+                        unknown_path_risk_threshold=Config.UNKNOWN_PATH_RISK_THRESHOLD,
+                    )
+                    readiness_flag = 1.0 if readiness["pre_return_ready"] else 0.0
+                    return_now_flag = 1.0 if readiness["return_now"] else 0.0
                 runtime_target = 0
                 if hasattr(self.agent.preprocessor, "_target_teacher_from_guidance"):
                     try:
@@ -1566,6 +1800,11 @@ class EpisodeRunner:
                         "collision_risk_label": float(reward_payload["collision_risk_label"]),
                         "fallback_mask": float(reward_payload["fallback_mask"]),
                         "expert_weight": float(getattr(self.agent, "_last_expert_weight", 0.0)),
+                        "expert_weight_nonzero": 1.0
+                        if float(getattr(self.agent, "_last_expert_weight", 0.0)) > 0.0
+                        else 0.0,
+                        "pre_return_bias_active": float(getattr(self.agent, "_last_pre_return_bias_active", 0.0)),
+                        "return_bias_active": float(getattr(self.agent, "_last_return_bias_active", 0.0)),
                         "route_anchor": runtime_route_anchor,
                         "predicted_mode": int(self._scalar_from_any(getattr(act_data, "mode", -1), default=-1)),
                         "predicted_target": int(self._scalar_from_any(getattr(act_data, "target", 0), default=0)),
@@ -1607,6 +1846,11 @@ class EpisodeRunner:
                         "planner_best_target_edge_break_cost": planner_best_target_edge_break_cost,
                         "planner_best_target_region_fragment_cost": planner_best_target_region_fragment_cost,
                         "planner_multi_route_recoverability": planner_multi_route_recoverability,
+                        "control_stack_simplify_active": 1.0 if simplify_control_stack else 0.0,
+                        "pre_return_readiness_flag": float(readiness_flag),
+                        "return_now_flag": float(return_now_flag),
+                        "current_cell_is_clean_floor": float(reward_payload.get("current_cell_is_clean_floor", 0.0)),
+                        "low_value_revisit_flag": float(reward_payload.get("low_value_revisit_flag", 0.0)),
                         "charge_margin_now": float(charge_margin_now),
                         "local_passage_width": float(local_passage_width),
                         "battery_fail_type": terminal_outcome["battery_fail_type"],
@@ -1730,7 +1974,18 @@ class EpisodeRunner:
                 1.0 + Config.EPISODE_FAIL_EARLY_SCALE * remaining_ratio
             )
         final_reward = task_terminal_bonus - battery_terminal_cost - collision_terminal_cost
-        effective_total_reward = float(total_reward) * task_reward_scale + final_reward
+        (
+            battery_terminal_cost,
+            final_reward,
+            effective_total_reward,
+            battery_positive_clamp_cost,
+        ) = self._finalize_terminal_outcome(
+            fail_reason=fail_reason,
+            total_reward=total_reward,
+            task_reward_scale=task_reward_scale,
+            battery_terminal_cost=battery_terminal_cost,
+            final_reward=final_reward,
+        )
         result_str = "WIN" if fail_reason == "completed" else "FAIL"
 
         # Death trajectory logging
@@ -1774,6 +2029,11 @@ class EpisodeRunner:
             "task_reward_scale": task_reward_scale,
             "expert_weight": getattr(self.agent, '_last_expert_weight', 0.0),
             "profile": sampled_meta['profile'],
+            "profile_seed": int(sampled_meta.get("profile_seed", 0)),
+            "sampled_profile_anchor_count": 1.0 if sampled_meta["profile"] == "anchor" else 0.0,
+            "sampled_profile_mild_count": 1.0 if sampled_meta["profile"] == "mild" else 0.0,
+            "sampled_profile_broad_count": 1.0 if sampled_meta["profile"] == "broad" else 0.0,
+            "sampled_profile_broad_eval_count": 1.0 if sampled_meta["profile"] == "broad_eval" else 0.0,
             "total_reward": effective_total_reward,
             "late_return_rate": diagnostics["late_return_rate"],
             "late_contract_rate": diagnostics["late_contract_rate"],
@@ -1812,7 +2072,15 @@ class EpisodeRunner:
             "collision_process_cost_mean": diagnostics["collision_process_cost_mean"],
             "high_need_return_stall_rate": diagnostics["high_need_return_stall_rate"],
             "avg_charge_need_score": diagnostics["avg_charge_need_score"],
+            "avg_route_phase_shadow_risk": diagnostics["avg_route_phase_shadow_risk"],
+            "avg_route_phase_reward_ready_rate": diagnostics["avg_route_phase_reward_ready_rate"],
             "avg_slack_confidence": diagnostics["avg_slack_confidence"],
+            "clean_floor_revisit_rate": diagnostics["clean_floor_revisit_rate"],
+            "clean_floor_revisit_penalty_mean": diagnostics["clean_floor_revisit_penalty_mean"],
+            "effective_coverage_bonus_mean": diagnostics["effective_coverage_bonus_mean"],
+            "expert_weight_nonzero_rate": diagnostics["expert_weight_nonzero_rate"],
+            "pre_return_bias_active_rate": diagnostics["pre_return_bias_active_rate"],
+            "return_bias_active_rate": diagnostics["return_bias_active_rate"],
             "battery_fail_type": battery_fail_type,
             "battery_fail_severity": float(battery_fail_severity),
             "scheduled_battery_fail_task_reward_scale": float(
@@ -2003,12 +2271,21 @@ class EpisodeRunner:
             "resume_eligible": checkpoint_scores["resume_eligible"],
             "mode": int(getattr(fm, "current_mode", -1)),
             "task_reward_scale": round(task_reward_scale, 4),
+            "profile_seed": int(sampled_meta.get("profile_seed", 0)),
             "sampled_env_conf": deepcopy(sampled_env_conf),
         }
         self.archive.log_episode_summary(episode_payload)
         self.archive.log_event("episode_end", episode_payload)
         if fail_reason == "battery":
             self.archive.log_event("battery_fail", episode_payload)
+            if battery_positive_clamp_cost > 0.0:
+                self.logger.warning(
+                    f"[BATTERY_POSITIVE_FAIL] ep:{self.episode_cnt} "
+                    f"total_reward_before_cap:{battery_positive_clamp_cost:.3f} "
+                    f"clean_score:{clean_score:.1f} steps:{finished_steps:.0f} "
+                    f"charge_count:{charge_count:.1f} scale:{task_reward_scale:.2f} "
+                    f"clamp:{battery_positive_clamp_cost:.3f}"
+                )
         elif fail_reason == "collision":
             self.archive.log_event("collision_fail", episode_payload)
 
@@ -2042,6 +2319,7 @@ class EpisodeRunner:
             "fail_reason": fail_reason,
             "battery_fail_type": battery_fail_type,
             "battery_fail_severity": float(battery_fail_severity),
+            "battery_positive_clamp_cost": float(battery_positive_clamp_cost),
         }
 
     @staticmethod
@@ -2060,6 +2338,29 @@ class EpisodeRunner:
             battery_terminal_cost += Config.ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST * max(severity, 0.5)
 
         return float(battery_terminal_cost), float(task_reward_scale), bool(zero_charge_battery_fail)
+
+    @staticmethod
+    def _finalize_terminal_outcome(
+        *,
+        fail_reason,
+        total_reward,
+        task_reward_scale,
+        battery_terminal_cost,
+        final_reward,
+    ):
+        effective_total_reward = float(total_reward) * float(task_reward_scale) + float(final_reward)
+        battery_positive_clamp_cost = 0.0
+        if str(fail_reason) == "battery" and effective_total_reward > 0.0:
+            battery_positive_clamp_cost = float(effective_total_reward)
+            battery_terminal_cost = float(battery_terminal_cost) + battery_positive_clamp_cost
+            final_reward = float(final_reward) - battery_positive_clamp_cost
+            effective_total_reward = 0.0
+        return (
+            float(battery_terminal_cost),
+            float(final_reward),
+            float(effective_total_reward),
+            float(battery_positive_clamp_cost),
+        )
 
     @staticmethod
     def _apply_terminal_outcome_to_step_records(step_records, terminal_outcome):
@@ -2116,6 +2417,8 @@ class EpisodeRunner:
                 "battery_risk_label": float(reward.get("battery_risk_label", 0.0)),
                 "collision_risk_label": float(reward.get("collision_risk_label", 0.0)),
                 "fallback_mask": float(reward.get("fallback_mask", 0.0)),
+                "current_cell_is_clean_floor": float(reward.get("current_cell_is_clean_floor", 0.0)),
+                "low_value_revisit_flag": float(reward.get("low_value_revisit_flag", 0.0)),
             }
             for key in REWARD_COMPONENT_KEYS:
                 payload[f"reward_{key}"] = float(reward.get(key, 0.0))
@@ -2189,7 +2492,20 @@ class EpisodeRunner:
                 "collision_process_cost_mean": 0.0,
                 "high_need_return_stall_rate": 0.0,
                 "avg_charge_need_score": 0.0,
+                "avg_route_phase_shadow_risk": 0.0,
+                "avg_route_phase_reward_ready_rate": 0.0,
                 "avg_slack_confidence": 0.0,
+                "return_entry_count": 0.0,
+                "readiness_supported_return_entry_count": 0.0,
+                "pre_return_readiness_hit_rate": 0.0,
+                "readiness_to_return_transition_rate": None,
+                "direct_return_without_readiness_rate": None,
+                "clean_floor_revisit_rate": 0.0,
+                "clean_floor_revisit_penalty_mean": 0.0,
+                "effective_coverage_bonus_mean": 0.0,
+                "expert_weight_nonzero_rate": 0.0,
+                "pre_return_bias_active_rate": 0.0,
+                "return_bias_active_rate": 0.0,
                 "mode_usage_depart": 0.0,
                 "mode_usage_expand": 0.0,
                 "mode_usage_harvest": 0.0,
@@ -2209,6 +2525,11 @@ class EpisodeRunner:
         planner_divergence_flags = [float(rec.get("planner_policy_divergence", 0.0)) for rec in step_records]
         route_phase_masks = [float(rec.get("route_phase_active", 0.0)) for rec in step_records]
         route_phase_reliable_masks = [float(rec.get("route_phase_reliable_active", 0.0)) for rec in step_records]
+        simplify_flags = [float(rec.get("control_stack_simplify_active", 0.0)) for rec in step_records]
+        readiness_flags = [float(rec.get("pre_return_readiness_flag", 0.0)) for rec in step_records]
+        expert_weight_nonzero_flags = [float(rec.get("expert_weight_nonzero", 0.0)) for rec in step_records]
+        pre_return_bias_flags = [float(rec.get("pre_return_bias_active", 0.0)) for rec in step_records]
+        return_bias_flags = [float(rec.get("return_bias_active", 0.0)) for rec in step_records]
         total = float(len(step_records))
 
         target_steps = [t for t in targets if t > 0]
@@ -2264,6 +2585,18 @@ class EpisodeRunner:
         charger_nearby_not_charged_rate = float(
             sum(float(rec.get("charger_nearby_not_charged", 0.0)) for rec in step_records) / total
         )
+        clean_floor_revisit_rate = float(
+            sum(float(rec.get("low_value_revisit_flag", 0.0)) for rec in step_records) / total
+        )
+        clean_floor_revisit_penalty_mean = float(
+            sum(float(rec.get("reward_clean_floor_revisit_penalty", 0.0)) for rec in step_records) / total
+        )
+        effective_coverage_bonus_mean = float(
+            sum(float(rec.get("reward_effective_coverage_bonus", 0.0)) for rec in step_records) / total
+        )
+        expert_weight_nonzero_rate = float(sum(expert_weight_nonzero_flags) / total)
+        pre_return_bias_active_rate = float(sum(pre_return_bias_flags) / total)
+        return_bias_active_rate = float(sum(return_bias_flags) / total)
         suboptimal_target_hold_rate = float(
             sum(float(rec.get("suboptimal_target_hold", 0.0)) for rec in step_records) / total
         )
@@ -2281,6 +2614,32 @@ class EpisodeRunner:
             / reliable_planner_den
         )
         route_phase_return_stall_rate = float(route_phase_stall_count / max(len(progress_deltas), 1))
+        return_entry_indices = [
+            idx
+            for idx in range(1, len(modes))
+            if modes[idx] == 4 and modes[idx - 1] != 4
+        ]
+        readiness_supported_entries = sum(
+            1 for idx in return_entry_indices
+            if readiness_flags[idx - 1] > 0.0 or modes[idx - 1] == 3
+        )
+        return_entry_count = int(len(return_entry_indices))
+        readiness_supported_return_entry_count = int(readiness_supported_entries)
+        simplify_active_episode = bool(sum(simplify_flags) > 0.0)
+        if simplify_active_episode:
+            pre_return_readiness_hit_rate = float(sum(readiness_flags) / total)
+        else:
+            pre_return_readiness_hit_rate = None
+        if simplify_active_episode and return_entry_count > 0:
+            readiness_to_return_transition_rate = float(
+                readiness_supported_return_entry_count / return_entry_count
+            )
+            direct_return_without_readiness_rate = float(
+                (return_entry_count - readiness_supported_return_entry_count) / return_entry_count
+            )
+        else:
+            readiness_to_return_transition_rate = None
+            direct_return_without_readiness_rate = None
 
         return {
             "late_return_rate": float(late_return_rate),
@@ -2301,6 +2660,12 @@ class EpisodeRunner:
             "narrow_unknown_commit_rate": narrow_unknown_commit_rate,
             "missed_charge_opportunity_rate": missed_charge_opportunity_rate,
             "charger_nearby_not_charged_rate": charger_nearby_not_charged_rate,
+            "clean_floor_revisit_rate": clean_floor_revisit_rate,
+            "clean_floor_revisit_penalty_mean": clean_floor_revisit_penalty_mean,
+            "effective_coverage_bonus_mean": effective_coverage_bonus_mean,
+            "expert_weight_nonzero_rate": expert_weight_nonzero_rate,
+            "pre_return_bias_active_rate": pre_return_bias_active_rate,
+            "return_bias_active_rate": return_bias_active_rate,
             "suboptimal_target_hold_rate": suboptimal_target_hold_rate,
             "planner_policy_divergence_rate": planner_policy_divergence_rate,
             "route_phase_planner_divergence_rate": route_phase_planner_divergence_rate,
@@ -2346,8 +2711,27 @@ class EpisodeRunner:
             "avg_charge_need_score": float(
                 sum(float(rec.get("constraint_charge_need_score", 0.0)) for rec in step_records) / total
             ),
+            "avg_route_phase_shadow_risk": float(
+                sum(float(rec.get("constraint_route_phase_shadow_risk", 0.0)) for rec in step_records) / total
+            ),
+            "avg_route_phase_reward_ready_rate": float(
+                sum(float(rec.get("constraint_route_phase_reward_ready", 0.0)) for rec in step_records) / total
+            ),
             "avg_slack_confidence": float(
                 sum(float(rec.get("constraint_slack_confidence", 0.0)) for rec in step_records) / total
+            ),
+            "return_entry_count": float(return_entry_count),
+            "readiness_supported_return_entry_count": float(readiness_supported_return_entry_count),
+            "pre_return_readiness_hit_rate": (
+                float(pre_return_readiness_hit_rate) if pre_return_readiness_hit_rate is not None else None
+            ),
+            "readiness_to_return_transition_rate": (
+                float(readiness_to_return_transition_rate)
+                if readiness_to_return_transition_rate is not None else None
+            ),
+            "direct_return_without_readiness_rate": (
+                float(direct_return_without_readiness_rate)
+                if direct_return_without_readiness_rate is not None else None
             ),
             "mode_usage_depart": sum(1 for mode in modes if mode == 0) / total,
             "mode_usage_expand": sum(1 for mode in modes if mode == 1) / total,
@@ -2381,6 +2765,7 @@ class EpisodeRunner:
             "battery_fail_rate": round(m["battery_fail_rate"], 4),
             "collision_fail_rate": round(m["collision_fail_rate"], 4),
             "zero_charge_battery_fail_rate": round(m["zero_charge_battery_fail_rate"], 4),
+            "zero_charge_among_battery_fail_rate": round(m["zero_charge_among_battery_fail_rate"], 4),
             "completed_rate": round(m["win_rate"], 4),
             "cps_win": round(m["cps_win"], 4),
             "avg_charge_count_win": round(m["avg_charge_count_win"], 2),
@@ -2388,6 +2773,9 @@ class EpisodeRunner:
             "avg_charge_count_completed": round(m["avg_charge_count_completed"], 2),
             "avg_charge_count_battery_fail": round(m["avg_charge_count_battery_fail"], 2),
             "avg_expert_weight": round(m["avg_expert_weight"], 2),
+            "expert_weight_nonzero_rate": round(m.get("expert_weight_nonzero_rate", 0.0), 4),
+            "pre_return_bias_active_rate": round(m.get("pre_return_bias_active_rate", 0.0), 4),
+            "return_bias_active_rate": round(m.get("return_bias_active_rate", 0.0), 4),
             "late_return_rate": round(m["late_return_rate"], 4),
             "late_contract_rate": round(m["late_contract_rate"], 4),
             "anchor_switch_rate": round(m["anchor_switch_rate"], 4),
@@ -2430,6 +2818,8 @@ class EpisodeRunner:
             "high_need_return_stall_rate": round(m["high_need_return_stall_rate"], 4),
             "avg_charge_need_score": round(m["avg_charge_need_score"], 4),
             "avg_slack_confidence": round(m["avg_slack_confidence"], 4),
+            "return_entry_count": round(m.get("return_entry_count", 0.0), 4),
+            "readiness_supported_return_entry_count": round(m.get("readiness_supported_return_entry_count", 0.0), 4),
             "battery_fail_severity_mean": round(m["battery_fail_severity_mean"], 4),
             "mode_usage_depart": round(m["mode_usage_depart"], 4),
             "mode_usage_expand": round(m["mode_usage_expand"], 4),
@@ -2442,8 +2832,9 @@ class EpisodeRunner:
                 for key in REWARD_COMPONENT_MONITOR_KEYS
             },
             **{
-                key: round(m[key], 4)
+                key: round(float(value), 4)
                 for key in WINDOW_COMPARISON_METRIC_KEYS
+                if (value := m.get(key)) is not None
             },
             "anchor_win_rate": round(m["anchor_win_rate"], 4) if m["anchor_win_rate"] >= 0 else -1,
             "mild_win_rate": round(m["mild_win_rate"], 4) if m["mild_win_rate"] >= 0 else -1,
@@ -2468,6 +2859,62 @@ class EpisodeRunner:
         payload["load_model_reloads"] = float(runtime_metrics.get("load_model_reloads", 0.0))
         payload["load_model_cache_hits"] = float(runtime_metrics.get("load_model_cache_hits", 0.0))
         payload["last_loaded_checkpoint_step"] = float(runtime_metrics.get("last_loaded_checkpoint_step", 0.0) or 0.0)
+        for key in (
+            "pre_return_readiness_hit_rate",
+            "readiness_to_return_transition_rate",
+            "direct_return_without_readiness_rate",
+        ):
+            value = m.get(key)
+            if value is not None:
+                payload[key] = round(float(value), 4)
+        for key in (
+            "clean_floor_revisit_rate",
+            "clean_floor_revisit_penalty_mean",
+            "effective_coverage_bonus_mean",
+        ):
+            payload[key] = round(float(m.get(key, 0.0) or 0.0), 4)
+        payload["avg_reward_route_risk_growth_pen"] = round(
+            float(m.get("avg_reward_route_phase_risk_growth_penalty", 0.0) or 0.0), 4
+        )
+        payload["avg_reward_clean_risk_shadow"] = round(
+            float(m.get("avg_reward_risk_growth_while_clean_penalty", 0.0) or 0.0), 4
+        )
+        payload["avg_route_phase_shadow_risk"] = round(
+            float(m.get("avg_route_phase_shadow_risk", 0.0) or 0.0), 4
+        )
+        payload["avg_route_phase_reward_ready_rate"] = round(
+            float(m.get("avg_route_phase_reward_ready_rate", 0.0) or 0.0), 4
+        )
+        payload["sampled_profile_anchor_rate"] = round(
+            float(m.get("sampled_profile_anchor_rate", 0.0) or 0.0), 4
+        )
+        payload["sampled_profile_mild_rate"] = round(
+            float(m.get("sampled_profile_mild_rate", 0.0) or 0.0), 4
+        )
+        payload["sampled_profile_broad_rate"] = round(
+            float(m.get("sampled_profile_broad_rate", 0.0) or 0.0), 4
+        )
+        payload["battery_positive_reward_rate"] = round(
+            float(m.get("battery_positive_reward_rate", 0.0) or 0.0), 4
+        )
+        payload["avg_reward_charge_opp_cost_pen"] = round(
+            float(m.get("avg_reward_charge_opportunity_cost_penalty", 0.0) or 0.0), 4
+        )
+        for key in (
+            "mode_teacher_active_rate",
+            "route_anchor_teacher_active_rate",
+            "target_teacher_active_rate",
+            "return_action_teacher_active_rate",
+            "route_phase_action_teacher_active_rate",
+            "mode_teacher_loss",
+            "route_anchor_teacher_loss",
+            "target_teacher_loss",
+            "return_action_teacher_loss",
+            "route_phase_policy_teacher_loss",
+        ):
+            value = self.latest_learning_metrics.get(key)
+            if value is not None:
+                payload[key] = round(float(value), 4)
         payload.update(self._curriculum_progress_payload())
         return payload
 

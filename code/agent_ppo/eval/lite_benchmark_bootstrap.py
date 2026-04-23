@@ -18,6 +18,7 @@ from typing import Any
 
 from agent_ppo.conf.conf import Config
 from agent_ppo.workflow.preload_checkpoint import resolve_training_preload
+from agent_ppo.workflow.state_layout import is_scratch_mode, training_start_mode
 from agent_ppo.workflow.state_layout import runtime_state_layout
 
 
@@ -61,8 +62,32 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _current_checkpoint(code_dir: Path) -> dict[str, Any]:
-    preload = resolve_training_preload(code_dir, os.environ)
+def _current_checkpoint(code_dir: Path, logger=None) -> dict[str, Any]:
+    env = dict(os.environ)
+    current_mode = training_start_mode(env)
+    if is_scratch_mode(env):
+        return {
+            "enabled": False,
+            "checkpoint_path": "",
+            "checkpoint_id": None,
+            "training_start_mode": current_mode,
+        }
+    try:
+        preload = resolve_training_preload(code_dir, env)
+    except FileNotFoundError as exc:
+        if logger is not None:
+            logger.warning(
+                "[LITE_BENCH] preload resolution failed in start_mode=%s; fallback to checkpoint-disabled payload: %s",
+                current_mode,
+                exc,
+            )
+        return {
+            "enabled": False,
+            "checkpoint_path": "",
+            "checkpoint_id": None,
+            "training_start_mode": current_mode,
+            "resolution_error": str(exc),
+        }
     if preload.get("enabled"):
         return preload
     checkpoint_path = str(getattr(Config, "RESUME_CHECKPOINT", "") or "").strip()
@@ -70,6 +95,7 @@ def _current_checkpoint(code_dir: Path) -> dict[str, Any]:
         "enabled": bool(checkpoint_path),
         "checkpoint_path": checkpoint_path,
         "checkpoint_id": None,
+        "training_start_mode": current_mode,
     }
 
 
@@ -154,7 +180,7 @@ def wait_for_lite_benchmark_result(code_dir: Path, checkpoint_path: str | None, 
 
 def maybe_run_lite_benchmark(env, agent, usr_conf, logger) -> dict[str, Any] | None:
     code_dir = Path("/workspace/code")
-    checkpoint_payload = _current_checkpoint(code_dir)
+    checkpoint_payload = _current_checkpoint(code_dir, logger=logger)
     checkpoint_path = str(checkpoint_payload.get("checkpoint_path") or "")
     if not _mode_enabled(Config.CURRICULUM_LITE_BENCH_MODE, checkpoint_payload):
         return None

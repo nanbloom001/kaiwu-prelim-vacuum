@@ -10,7 +10,7 @@ import sys
 import types
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -138,6 +138,45 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertAlmostEqual(payload["reward_negative_share_high_need_return_stall_penalty"], 3.0 / 7.0, places=5)
         self.assertAlmostEqual(payload["reward_charging_negative_share_high_need_return_stall_penalty"], 3.0 / 7.0, places=5)
 
+    def test_reward_contribution_payload_excludes_shadow_only_charging_terms_in_slice2a(self):
+        from agent_ppo.utils.reward_metrics import compute_reward_contribution_payload
+
+        payload = compute_reward_contribution_payload({
+            "risk_release_reward": 0.08,
+            "route_phase_risk_growth_penalty": -0.03,
+            "risk_growth_while_clean_penalty": -0.04,
+            "charge_opportunity_cost_penalty": -0.02,
+            "charge_reward_shadow_only_active": 1.0,
+            "charge_route_progress_bonus": 0.05,
+            "return_progress_shaping_bonus": 0.04,
+            "necessary_charge_bonus": 0.02,
+            "charge_detour_cost": -0.05,
+            "charge_interrupt_cost": -0.01,
+            "skip_needed_charge_penalty": -0.03,
+            "high_need_return_stall_penalty": -0.02,
+            "unnecessary_charge_penalty": -0.01,
+            "cleaning": 0.06,
+            "streak": 0.01,
+            "explore": 0.02,
+            "frontier": 0.0,
+            "cps_bonus": 0.0,
+            "edge_follow_bonus": 0.0,
+            "planner_alignment": -0.005,
+            "idle": -0.005,
+            "npc": 0.0,
+            "coverage_tangle_penalty": -0.01,
+        })
+
+        self.assertAlmostEqual(payload["reward_positive_total"], 0.17, places=5)
+        self.assertAlmostEqual(payload["reward_negative_total"], 0.07, places=5)
+        self.assertAlmostEqual(payload["reward_positive_share_risk_release_reward"], 8.0 / 17.0, places=5)
+        self.assertAlmostEqual(payload["reward_negative_share_route_phase_risk_growth_penalty"], 3.0 / 7.0, places=5)
+        self.assertAlmostEqual(payload["reward_negative_share_risk_growth_while_clean_penalty"], 0.0, places=5)
+        self.assertAlmostEqual(payload["reward_charging_positive_total"], 0.08, places=5)
+        self.assertAlmostEqual(payload["reward_charging_negative_total"], 0.05, places=5)
+        self.assertAlmostEqual(payload["reward_charging_positive_share_risk_release_reward"], 1.0, places=5)
+        self.assertAlmostEqual(payload["reward_charging_negative_share_charge_opportunity_cost_penalty"], 0.4, places=5)
+
     def test_recent_episode_metrics_use_charged_only_efficiency_and_zero_charge_fail_rate(self):
         from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
 
@@ -203,7 +242,8 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         metrics = _aggregate_episode_records(records, min_episode_count=1)
         self.assertAlmostEqual(metrics["avg_charge_efficiency"], (50.0 + 200.0 + 90.0) / 3.0, places=5)
         self.assertAlmostEqual(metrics["avg_clean_per_charge_when_charged"], 70.0, places=5)
-        self.assertAlmostEqual(metrics["zero_charge_battery_fail_rate"], 0.5, places=5)
+        self.assertAlmostEqual(metrics["zero_charge_battery_fail_rate"], 1.0 / 3.0, places=5)
+        self.assertAlmostEqual(metrics["zero_charge_among_battery_fail_rate"], 0.5, places=5)
         self.assertEqual(metrics["battery_fail_count"], 2)
         self.assertEqual(metrics["battery_positive_reward_count"], 1)
         self.assertAlmostEqual(metrics["battery_positive_reward_rate"], 0.5, places=5)
@@ -300,6 +340,87 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["avg_reward_high_need_return_stall_penalty"], -0.03, places=5)
         self.assertAlmostEqual(metrics["reward_positive_share_return_progress_shaping_bonus"], 0.5, places=5)
         self.assertAlmostEqual(metrics["reward_negative_share_high_need_return_stall_penalty"], 3.0 / 7.0, places=5)
+
+    def test_shared_aggregate_metrics_keeps_slice2a_reward_keys(self):
+        from agent_ppo.workflow.curriculum_state import _aggregate_metrics
+
+        signals = [
+            {
+                "window_metrics": {
+                    "_count": 40,
+                    "win_rate": 0.8,
+                    "avg_clean_per_step": 0.55,
+                    "avg_reward_risk_release_reward": 0.08,
+                    "avg_reward_risk_release_from_progress": 0.03,
+                    "avg_reward_risk_release_from_charge_event": 0.05,
+                    "avg_reward_route_phase_risk_growth_penalty": -0.02,
+                    "avg_reward_risk_growth_while_clean_penalty": -0.02,
+                    "avg_reward_charge_opportunity_cost_penalty": -0.01,
+                    "avg_reward_charge_reward_shadow_only_active": 1.0,
+                    "reward_positive_share_risk_release_reward": 0.2,
+                    "reward_negative_share_route_phase_risk_growth_penalty": 0.3,
+                    "reward_negative_share_risk_growth_while_clean_penalty": 0.3,
+                    "reward_negative_share_charge_opportunity_cost_penalty": 0.1,
+                    "reward_charging_positive_share_risk_release_reward": 0.7,
+                    "reward_charging_negative_share_route_phase_risk_growth_penalty": 0.4,
+                    "reward_charging_negative_share_risk_growth_while_clean_penalty": 0.4,
+                    "reward_charging_negative_share_charge_opportunity_cost_penalty": 0.2,
+                }
+            }
+        ]
+
+        metrics = _aggregate_metrics(signals, "window_metrics", 20)
+        self.assertIsNotNone(metrics)
+        self.assertAlmostEqual(metrics["avg_reward_risk_release_reward"], 0.08, places=6)
+        self.assertAlmostEqual(metrics["avg_reward_risk_release_from_progress"], 0.03, places=6)
+        self.assertAlmostEqual(metrics["avg_reward_risk_release_from_charge_event"], 0.05, places=6)
+        self.assertAlmostEqual(metrics["avg_reward_route_phase_risk_growth_penalty"], -0.02, places=6)
+        self.assertAlmostEqual(metrics["avg_reward_charge_reward_shadow_only_active"], 1.0, places=6)
+        self.assertAlmostEqual(metrics["reward_positive_share_risk_release_reward"], 0.2, places=6)
+        self.assertAlmostEqual(metrics["reward_charging_negative_share_charge_opportunity_cost_penalty"], 0.2, places=6)
+
+    def test_update_comparison_samples_payload_persists_train_phase(self):
+        from agent_ppo.workflow.curriculum_state import _update_comparison_samples_payload
+
+        records = []
+        for idx in range(40):
+            records.append(
+                {
+                    "result": "completed",
+                    "clean_score": 200.0 + idx,
+                    "finished_steps": 400.0,
+                    "charge_count": 2.0,
+                    "remaining_charge": 20.0,
+                    "invalid_move_rate": 0.0,
+                    "charge_efficiency": 50.0,
+                    "clean_per_charge_when_charged": 80.0,
+                    "clean_per_step": 0.5,
+                    "expert_weight": 0.0,
+                    "avg_reward_cleaning": 0.10,
+                    "avg_reward_risk_release_reward": 0.08,
+                    "avg_reward_route_phase_risk_growth_penalty": -0.02,
+                    "avg_reward_risk_growth_while_clean_penalty": -0.02,
+                    "avg_reward_charge_opportunity_cost_penalty": -0.01,
+                    "avg_reward_charge_reward_shadow_only_active": 1.0,
+                    "profile": "mild",
+                }
+            )
+
+        payload = _update_comparison_samples_payload(
+            {},
+            records,
+            run_session_id="run-a",
+            train_phase="s1_survival_strong_heuristic_slice2a_v1",
+            training_start_mode="scratch",
+            window_origin="scratch_local",
+            global_episode_count=40,
+            global_step_since_resume=1234,
+            captured_at_ts=10.0,
+            learning_metrics={},
+        )
+
+        self.assertEqual(payload["train_phase"], "s1_survival_strong_heuristic_slice2a_v1")
+        self.assertEqual(payload["sample_points"]["global_40"]["train_phase"], "s1_survival_strong_heuristic_slice2a_v1")
 
     def test_constraint_utils_compute_confidence_need_and_severity(self):
         from agent_ppo.utils.constraint_utils import (
@@ -754,7 +875,13 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             self.assertEqual(state["stage"], "blend")
             self.assertEqual(state["source_session_id"], "new-session")
             self.assertEqual(state["restored_from_session_id"], "old-session")
-            self.assertEqual(state["global_step_since_resume"], 191120)
+            self.assertEqual(state["window_origin"], "resumed_local")
+            self.assertEqual(state["restored_global_episode_count"], 0)
+            self.assertEqual(state["restored_global_step_since_resume"], 191120)
+            self.assertEqual(state["global_episode_count"], 0)
+            self.assertEqual(state["global_step_since_resume"], 0)
+            self.assertEqual(state["last_bootstrap_metrics"], {})
+            self.assertEqual(state["last_global_metrics"], {})
             self.assertAlmostEqual(state["last_learning_metrics"]["lambda_battery"], 0.7, places=5)
 
     def test_shared_curriculum_state_learning_metrics_ignore_null_overwrite(self):
@@ -1053,7 +1180,7 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertEqual(blocked["proposed_stage"], "warmup")
 
         context["window_metrics"]["planner_policy_divergence_rate"] = 0.70
-        context["window_metrics"]["zero_charge_battery_fail_rate"] = 0.45
+        context["window_metrics"]["zero_charge_battery_fail_rate"] = 0.10
         passed = choose_stage_decision("warmup", context, None)
         self.assertEqual(passed["proposed_stage"], "blend")
         self.assertEqual(passed["promotion_reason"], "strict_gate")
@@ -1373,6 +1500,7 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         from agent_ppo.eval.lite_benchmark_bootstrap import (
             _lite_cache_signature,
             _recommended_initial_stage,
+            _current_checkpoint,
             lite_benchmark_metadata_path,
             resolve_cached_lite_benchmark,
         )
@@ -1443,6 +1571,26 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             meta_path.write_text(json.dumps(payload), encoding="utf-8")
             resolved = resolve_cached_lite_benchmark(code_dir, str(checkpoint_path))
             self.assertEqual(resolved["recommended_initial_stage"], "blend")
+
+        with TemporaryDirectory() as tmp:
+            code_dir = Path(tmp)
+            with patch.dict(os.environ, {"KAIWU_TRAINING_START_MODE": "scratch"}, clear=False):
+                payload = _current_checkpoint(code_dir)
+            self.assertFalse(payload["enabled"])
+            self.assertEqual(payload["training_start_mode"], "scratch")
+
+    def test_lite_benchmark_current_checkpoint_tolerates_missing_resume_bundle(self):
+        from agent_ppo.eval.lite_benchmark_bootstrap import _current_checkpoint
+
+        with TemporaryDirectory() as tmp:
+            code_dir = Path(tmp)
+            logger = Mock()
+            with patch.dict(os.environ, {"KAIWU_TRAINING_START_MODE": "resume"}, clear=False):
+                payload = _current_checkpoint(code_dir, logger=logger)
+            self.assertFalse(payload["enabled"])
+            self.assertEqual(payload["training_start_mode"], "resume")
+            self.assertIn("resolution_error", payload)
+            logger.warning.assert_called_once()
 
     def test_seed_initial_state_uses_session_scoped_stage(self):
         from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
@@ -1626,6 +1774,8 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
                 "charge_interrupt_cost": -0.05,
                 "battery_process_cost": 0.21,
                 "charge_need_score": 0.67,
+                "current_cell_is_clean_floor": 1.0,
+                "low_value_revisit_flag": 1.0,
             }
         )
         self.assertAlmostEqual(payload["reward_cleaning"], 0.12, places=5)
@@ -1633,6 +1783,8 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertAlmostEqual(payload["reward_planner_alignment"], -0.15, places=5)
         self.assertAlmostEqual(payload["constraint_battery_process_cost"], 0.21, places=5)
         self.assertAlmostEqual(payload["constraint_charge_need_score"], 0.67, places=5)
+        self.assertAlmostEqual(payload["current_cell_is_clean_floor"], 1.0, places=5)
+        self.assertAlmostEqual(payload["low_value_revisit_flag"], 1.0, places=5)
 
         diagnostics = EpisodeRunner._episode_sequence_diagnostics(
             [
@@ -1661,6 +1813,72 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertAlmostEqual(diagnostics["avg_reward_cleaning"], 0.10, places=5)
         self.assertAlmostEqual(diagnostics["avg_reward_charge_detour_cost"], -0.15, places=5)
         self.assertAlmostEqual(diagnostics["avg_reward_planner_alignment"], -0.125, places=5)
+
+    def test_build_monitor_payload_tolerates_missing_readiness_window_keys(self):
+        try:
+            from agent_ppo.workflow.train_workflow import EpisodeRunner
+            from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"train_workflow import unavailable in local test env: {exc}")
+
+        metrics = _aggregate_episode_records(
+            [
+                {
+                    "result": "completed",
+                    "clean_score": 320.0,
+                    "finished_steps": 1000.0,
+                    "charge_count": 3.0,
+                    "remaining_charge": 40.0,
+                    "invalid_move_rate": 0.0,
+                    "charge_efficiency": 106.0,
+                    "clean_per_charge_when_charged": 106.0,
+                    "clean_per_step": 0.32,
+                    "expert_weight": 0.0,
+                    "profile": "anchor",
+                }
+            ],
+            min_episode_count=1,
+        )
+        for key in (
+            "return_entry_count",
+            "readiness_supported_return_entry_count",
+            "pre_return_readiness_hit_rate",
+            "readiness_to_return_transition_rate",
+            "direct_return_without_readiness_rate",
+        ):
+            metrics.pop(key, None)
+
+        runner = EpisodeRunner.__new__(EpisodeRunner)
+        runner.episode_cnt = 1
+        runner.latest_learning_metrics = {}
+        runner.last_checkpoint_scores = {
+            "resume_readiness_score": 0.0,
+            "submission_score": 0.0,
+            "checkpoint_preservation_score": 0.0,
+            "resume_score_safety": 0.0,
+            "resume_score_efficiency": 0.0,
+            "resume_score_behavior": 0.0,
+            "resume_score_learning": 0.0,
+            "submission_score_completion": 0.0,
+            "submission_score_efficiency": 0.0,
+            "submission_score_stability": 0.0,
+            "submission_score_behavior": 0.0,
+            "resume_eligible": False,
+        }
+        runner.agent = type("Agent", (), {"get_runtime_metrics": lambda self: {}})()
+        runner._window_metrics = lambda: metrics
+        runner._curriculum_progress_payload = lambda: {}
+
+        payload = EpisodeRunner._build_monitor_payload(runner, 1.25)
+
+        self.assertAlmostEqual(payload["return_entry_count"], 0.0, places=5)
+        self.assertAlmostEqual(payload["readiness_supported_return_entry_count"], 0.0, places=5)
+        self.assertNotIn("pre_return_readiness_hit_rate", payload)
+        self.assertNotIn("readiness_to_return_transition_rate", payload)
+        self.assertNotIn("direct_return_without_readiness_rate", payload)
+        self.assertIn("avg_reward_route_risk_growth_pen", payload)
+        self.assertIn("avg_reward_clean_risk_shadow", payload)
+        self.assertIn("avg_reward_charge_opp_cost_pen", payload)
 
     def test_retrain_reward_defaults_expose_new_charge_cost_and_terminal_knobs(self):
         import agent_ppo.conf.conf as conf_module
@@ -1977,6 +2195,45 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertEqual(decision["proposed_stage"], "warmup")
         self.assertEqual(decision["promotion_reason"], "phase_lock")
 
+    def test_choose_stage_decision_uses_fixed_stage_when_curriculum_lite_enabled(self):
+        from agent_ppo.workflow.curriculum_policy import choose_stage_decision
+
+        context = {
+            "global_step_since_resume": 40000,
+            "window_metrics": {
+                "_count": 40,
+                "win_rate": 0.95,
+                "battery_fail_rate": 0.01,
+                "collision_fail_rate": 0.01,
+                "avg_clean_per_step": 0.90,
+            },
+            "bootstrap_metrics": {
+                "_count": 20,
+                "win_rate": 0.95,
+                "battery_fail_rate": 0.01,
+                "collision_fail_rate": 0.01,
+                "avg_clean_per_step": 0.90,
+            },
+            "learning_metrics": {"entropy_loss": 0.60, "entropy_trend_ratio": 1.0},
+            "resume_fast_track": True,
+            "training_start_mode": "scratch",
+            "preload_enabled": False,
+            "entered_global_step": 0,
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "KAIWU_CURRICULUM_LITE": "1",
+                "KAIWU_CURRICULUM_FIXED_STAGE": "warmup",
+            },
+            clear=False,
+        ):
+            decision = choose_stage_decision("robust", context, None)
+
+        self.assertEqual(decision["proposed_stage"], "warmup")
+        self.assertEqual(decision["promotion_reason"], "curriculum_lite_lock")
+
     def test_curriculum_stagnation_status_s1_survival_only_uses_charge_reward_and_collapse(self):
         from agent_ppo.workflow.curriculum_policy import stagnation_status
 
@@ -2020,6 +2277,120 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertNotIn("planner", reasons2)
         self.assertNotIn("stall", reasons2)
 
+    def test_profile_plan_for_runtime_uses_fixed_profile_when_curriculum_lite_enabled(self):
+        from agent_ppo.workflow.curriculum_policy import profile_plan_for_runtime
+
+        state = {
+            "stage": "blend",
+            "global_step_since_resume": 20000,
+            "curriculum_stagnation_level": 3,
+            "degraded_mainline": True,
+            "in_transition_guard": True,
+            "transition_target_stage": "blend",
+            "transition_entered_global_step": 10000,
+            "last_global_metrics": {
+                "battery_fail_rate": 0.50,
+                "zero_charge_battery_fail_rate": 0.70,
+                "avg_clean_per_step": 0.20,
+                "planner_policy_divergence_rate": 0.95,
+            },
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "KAIWU_CURRICULUM_LITE": "1",
+                "KAIWU_CURRICULUM_PROFILE_ANCHOR": "0.62",
+                "KAIWU_CURRICULUM_PROFILE_MILD": "0.28",
+                "KAIWU_CURRICULUM_PROFILE_BROAD": "0.10",
+            },
+            clear=False,
+        ):
+            plan = profile_plan_for_runtime("blend", state)
+
+        self.assertAlmostEqual(plan["weight_map"]["anchor"], 0.62, places=4)
+        self.assertAlmostEqual(plan["weight_map"]["mild"], 0.28, places=4)
+        self.assertAlmostEqual(plan["weight_map"]["broad"], 0.10, places=4)
+        self.assertFalse(plan["observation_phase_active"])
+        self.assertFalse(plan["tightened"])
+
+    def test_curriculum_state_refresh_keeps_fixed_stage_under_curriculum_lite(self):
+        from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
+
+        with TemporaryDirectory() as tmp:
+            state_root = Path(tmp)
+            store = SharedCurriculumStateStore(state_root)
+            state = store.seed_initial_state("lite-run", "robust", lite_benchmark_used=False)
+            state["stage"] = "robust"
+            state["entered_global_step"] = 0
+            state["training_start_mode"] = "scratch"
+            store.state_path.write_text(json.dumps(state, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+
+            recent_episodes = []
+            for idx in range(1, 41):
+                recent_episodes.append(
+                    {
+                        "episode_id": idx,
+                        "result": "completed",
+                        "clean_score": 80.0,
+                        "finished_steps": 100.0,
+                        "charge_count": 1.0,
+                        "remaining_charge": 80.0,
+                        "invalid_move_rate": 0.0,
+                        "charge_efficiency": 20.0,
+                        "clean_per_charge_when_charged": 20.0,
+                        "clean_per_step": 0.90,
+                        "expert_weight": 0.0,
+                        "profile": "anchor",
+                        "zero_charge_battery_fail": False,
+                        "effective_total_reward": 5.0,
+                    }
+                )
+
+            signal_payload = {
+                "session_id": "lite-run",
+                "helper_session_id": "helper-1",
+                "runtime": {"global_step_since_resume": 50000},
+                "window_metrics": {
+                    "_count": 40,
+                    "win_rate": 0.95,
+                    "battery_fail_rate": 0.01,
+                    "collision_fail_rate": 0.01,
+                    "avg_clean_per_step": 0.90,
+                    "zero_charge_battery_fail_rate": 0.0,
+                },
+                "bootstrap_metrics": {
+                    "_count": 20,
+                    "win_rate": 0.95,
+                    "battery_fail_rate": 0.01,
+                    "collision_fail_rate": 0.01,
+                    "avg_clean_per_step": 0.90,
+                    "zero_charge_battery_fail_rate": 0.0,
+                },
+                "recent_episodes": recent_episodes,
+                "learning_metrics": {},
+            }
+            store.write_signal("helper-1", signal_payload)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "KAIWU_CURRICULUM_LITE": "1",
+                    "KAIWU_CURRICULUM_FIXED_STAGE": "warmup",
+                    "KAIWU_CURRICULUM_PROFILE_ANCHOR": "0.60",
+                    "KAIWU_CURRICULUM_PROFILE_MILD": "0.30",
+                    "KAIWU_CURRICULUM_PROFILE_BROAD": "0.10",
+                },
+                clear=False,
+            ):
+                refreshed = SharedCurriculumStateStore._refresh_state_impl(store)
+
+        self.assertEqual(refreshed["stage"], "warmup")
+        self.assertEqual(refreshed["pending_stage"], None)
+        self.assertEqual(refreshed["consecutive_pass_windows"], 0)
+        self.assertAlmostEqual(refreshed["curriculum_profile_weights"]["anchor"], 0.60, places=4)
+        self.assertAlmostEqual(refreshed["curriculum_profile_weights"]["mild"], 0.30, places=4)
+        self.assertAlmostEqual(refreshed["curriculum_profile_weights"]["broad"], 0.10, places=4)
+
     def test_apply_terminal_outcome_to_step_records_writes_collision_cost_into_last_sample(self):
         if importlib.util.find_spec("numpy") is None:
             self.skipTest("numpy is not available in the host test environment")
@@ -2044,6 +2415,57 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertAlmostEqual(step_records[1]["reward_clean"], 1.15, places=5)
         self.assertAlmostEqual(step_records[1]["reward_survive"], 1.3, places=5)
         self.assertAlmostEqual(step_records[1]["reward_total"], -0.05, places=5)
+
+    def test_finalize_terminal_outcome_caps_positive_battery_fail_return(self):
+        if importlib.util.find_spec("numpy") is None:
+            self.skipTest("numpy is not available in the host test environment")
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+
+        battery_terminal_cost, final_reward, effective_total_reward, clamp_cost = EpisodeRunner._finalize_terminal_outcome(
+            fail_reason="battery",
+            total_reward=120.0,
+            task_reward_scale=0.22,
+            battery_terminal_cost=18.0,
+            final_reward=-18.0,
+        )
+
+        self.assertAlmostEqual(clamp_cost, 8.4, places=5)
+        self.assertAlmostEqual(effective_total_reward, 0.0, places=5)
+        self.assertAlmostEqual(battery_terminal_cost, 26.4, places=5)
+        self.assertAlmostEqual(final_reward, -26.4, places=5)
+
+    def test_apply_terminal_outcome_to_step_records_preserves_battery_fail_cap_on_learner_path(self):
+        if importlib.util.find_spec("numpy") is None:
+            self.skipTest("numpy is not available in the host test environment")
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+
+        step_records = [
+            {"reward_clean": 50.0, "reward_survive": 0.0, "reward_total": 50.0},
+            {"reward_clean": 70.0, "reward_survive": 0.0, "reward_total": 70.0},
+        ]
+        battery_terminal_cost, final_reward, effective_total_reward, _ = EpisodeRunner._finalize_terminal_outcome(
+            fail_reason="battery",
+            total_reward=120.0,
+            task_reward_scale=0.22,
+            battery_terminal_cost=18.0,
+            final_reward=-18.0,
+        )
+        EpisodeRunner._apply_terminal_outcome_to_step_records(
+            step_records,
+            {
+                "task_reward_scale": 0.22,
+                "task_terminal_bonus": 0.0,
+                "battery_terminal_cost": battery_terminal_cost,
+                "collision_terminal_cost": 0.0,
+                "final_reward": final_reward,
+            },
+        )
+
+        total_clean = sum(float(rec["reward_clean"]) for rec in step_records)
+        total_survive = sum(float(rec["reward_survive"]) for rec in step_records)
+        learner_total = total_clean - total_survive
+        self.assertAlmostEqual(effective_total_reward, 0.0, places=5)
+        self.assertAlmostEqual(learner_total, 0.0, places=5)
 
     def test_battery_fail_outcome_adds_extra_cost_for_zero_charge_fail(self):
         if importlib.util.find_spec("numpy") is None:
@@ -2089,6 +2511,96 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         expected_zero_cost = expected_base_cost + conf_module.Config.ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST * 0.6
         self.assertAlmostEqual(zero_cost, expected_zero_cost, places=5)
         self.assertAlmostEqual(zero_scale, reward_schedule["scheduled_early_battery_fail_task_reward_scale"], places=5)
+
+    def test_env_config_sampler_seed_is_reproducible_per_source_and_diverges_across_sources(self):
+        if importlib.util.find_spec("numpy") is None:
+            self.skipTest("numpy is not available in the host test environment")
+        from agent_ppo.workflow.train_workflow import EnvConfigSampler
+
+        usr_conf = {
+            "map": [1, 2, 3, 4],
+            "map_random": True,
+            "robot_count": 1,
+            "charger_count": 4,
+            "max_step": 1000,
+            "battery_max": 200,
+        }
+        state = {"stage": "warmup"}
+
+        with patch.dict(
+            os.environ,
+            {
+                "KAIWU_CURRICULUM_LITE": "1",
+                "KAIWU_CURRICULUM_FIXED_STAGE": "warmup",
+                "KAIWU_CURRICULUM_PROFILE_ANCHOR": "0.20",
+                "KAIWU_CURRICULUM_PROFILE_MILD": "0.40",
+                "KAIWU_CURRICULUM_PROFILE_BROAD": "0.40",
+            },
+            clear=False,
+        ):
+            sampler_a = EnvConfigSampler(usr_conf)
+            sampler_a.configure_runtime_identity("run-1", "aisrv-1-pid-101")
+            seq_a = [sampler_a.sample(state)[1]["profile"] for _ in range(12)]
+
+            sampler_a_again = EnvConfigSampler(usr_conf)
+            sampler_a_again.configure_runtime_identity("run-1", "aisrv-1-pid-101")
+            seq_a_again = [sampler_a_again.sample(state)[1]["profile"] for _ in range(12)]
+
+            sampler_b = EnvConfigSampler(usr_conf)
+            sampler_b.configure_runtime_identity("run-1", "aisrv-2-pid-101")
+            seq_b = [sampler_b.sample(state)[1]["profile"] for _ in range(12)]
+
+        self.assertEqual(seq_a, seq_a_again)
+        self.assertNotEqual(sampler_a.current_seed, sampler_b.current_seed)
+        self.assertNotEqual(seq_a, seq_b)
+
+    def test_env_config_sampler_fixed_difficulty_overrides_all_profiles(self):
+        if importlib.util.find_spec("numpy") is None:
+            self.skipTest("numpy is not available in the host test environment")
+        from agent_ppo.workflow.train_workflow import EnvConfigSampler
+
+        usr_conf = {
+            "map": [1, 2, 3, 4],
+            "map_random": True,
+            "robot_count": 1,
+            "charger_count": 4,
+            "max_step": 1000,
+            "battery_max": 300,
+        }
+        state = {"stage": "warmup"}
+
+        with patch.dict(
+            os.environ,
+            {
+                "KAIWU_CURRICULUM_LITE": "1",
+                "KAIWU_CURRICULUM_FIXED_STAGE": "warmup",
+                "KAIWU_CURRICULUM_PROFILE_ANCHOR": "0.20",
+                "KAIWU_CURRICULUM_PROFILE_MILD": "0.40",
+                "KAIWU_CURRICULUM_PROFILE_BROAD": "0.40",
+                "KAIWU_ENV_FIXED_DIFFICULTY": "1",
+                "KAIWU_TRAIN_MAPS": "1,2,3,4,5,6,7,8",
+                "KAIWU_TRAIN_MAP_RANDOM": "1",
+                "KAIWU_TRAIN_ROBOT_COUNT": "4",
+                "KAIWU_TRAIN_CHARGER_COUNT": "3",
+                "KAIWU_TRAIN_MAX_STEP": "1000",
+                "KAIWU_TRAIN_BATTERY_MAX": "150",
+            },
+            clear=False,
+        ):
+            sampler = EnvConfigSampler(usr_conf)
+            sampler.configure_runtime_identity("fixed-run", "aisrv-1")
+            samples = [sampler.sample(state)[1] for _ in range(30)]
+
+        self.assertGreater(len({sample["profile"] for sample in samples}), 1)
+        for sample in samples:
+            env_conf = sample["env_conf"]
+            self.assertTrue(sample["fixed_difficulty"])
+            self.assertEqual(env_conf["map"], [1, 2, 3, 4, 5, 6, 7, 8])
+            self.assertTrue(env_conf["map_random"])
+            self.assertEqual(env_conf["robot_count"], 4)
+            self.assertEqual(env_conf["charger_count"], 3)
+            self.assertEqual(env_conf["max_step"], 1000)
+            self.assertEqual(env_conf["battery_max"], 150)
 
     def test_choose_stage_decision_resume_stabilization_holds_current_stage(self):
         from agent_ppo.workflow.curriculum_policy import choose_stage_decision
@@ -2458,11 +2970,33 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             self.assertEqual(merged["D"], "4")
             self.assertEqual(base_env.read_text(encoding="utf-8"), "A=1\nB=base\n")
 
+    def test_run_training_phase_builds_resume_mode_overrides(self):
+        script_path = Path(__file__).resolve().parents[2] / "train" / "run_training_phase.py"
+        spec = importlib.util.spec_from_file_location("run_training_phase", script_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        overrides = module.build_training_mode_overrides(
+            "resume",
+            "saved_models/resume-bundle-20260422-151541-step92149",
+        )
+
+        self.assertEqual(overrides["KAIWU_TRAINING_START_MODE"], "resume")
+        self.assertEqual(
+            overrides["KAIWU_RESUME_BUNDLE_DIR"],
+            "saved_models/resume-bundle-20260422-151541-step92149",
+        )
+        self.assertEqual(overrides["KAIWU_PRELOAD_MODEL"], "0")
+
+        with self.assertRaises(ValueError):
+            module.build_training_mode_overrides("resume", "")
+
     def test_sample_window_metrics_include_bootstrap_and_global_points(self):
         from agent_ppo.workflow.curriculum_state import _compute_sample_window_metrics
 
         records = []
-        for idx in range(1, 121):
+        for idx in range(1, 201):
             records.append(
                 {
                     "result": "completed",
@@ -2483,15 +3017,18 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
 
         self.assertEqual(
             set(sample_metrics.keys()),
-            {"bootstrap_10", "bootstrap_20", "global_40", "global_80", "global_120"},
+            {"bootstrap_10", "bootstrap_20", "global_40", "global_80", "global_120", "global_160", "global_200"},
         )
         self.assertEqual(sample_metrics["bootstrap_10"]["_count"], 10)
+        self.assertEqual(sample_metrics["global_200"]["_count"], 200)
+        self.assertAlmostEqual(sample_metrics["bootstrap_10"]["avg_clean_score"], 195.5, places=5)
+        self.assertAlmostEqual(sample_metrics["bootstrap_20"]["avg_clean_score"], 190.5, places=5)
+        self.assertAlmostEqual(sample_metrics["global_40"]["avg_clean_score"], 180.5, places=5)
+        self.assertAlmostEqual(sample_metrics["global_80"]["avg_clean_score"], 160.5, places=5)
         self.assertEqual(sample_metrics["global_120"]["_count"], 120)
-        self.assertAlmostEqual(sample_metrics["bootstrap_10"]["avg_clean_score"], 115.5, places=5)
-        self.assertAlmostEqual(sample_metrics["bootstrap_20"]["avg_clean_score"], 110.5, places=5)
-        self.assertAlmostEqual(sample_metrics["global_40"]["avg_clean_score"], 100.5, places=5)
-        self.assertAlmostEqual(sample_metrics["global_80"]["avg_clean_score"], 80.5, places=5)
-        self.assertAlmostEqual(sample_metrics["global_120"]["avg_clean_score"], 60.5, places=5)
+        self.assertAlmostEqual(sample_metrics["global_120"]["avg_clean_score"], 140.5, places=5)
+        self.assertAlmostEqual(sample_metrics["global_160"]["avg_clean_score"], 120.5, places=5)
+        self.assertAlmostEqual(sample_metrics["global_200"]["avg_clean_score"], 100.5, places=5)
 
     def test_comparison_samples_capture_first_crossing_only_once(self):
         from agent_ppo.workflow.curriculum_state import _update_comparison_samples_payload
@@ -2520,12 +3057,21 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             global_episode_count=12,
             global_step_since_resume=1200,
             captured_at_ts=1.0,
+            learning_metrics={"route_phase_action_teacher_active_rate": 0.12},
         )
         sample_points = payload["sample_points"]
         self.assertIn("bootstrap_10", sample_points)
         self.assertNotIn("bootstrap_20", sample_points)
         self.assertEqual(sample_points["bootstrap_10"]["actual_global_episode_count"], 12)
         self.assertAlmostEqual(sample_points["bootstrap_10"]["metrics"]["avg_clean_score"], 5.5, places=5)
+        self.assertAlmostEqual(sample_points["bootstrap_10"]["local_metrics"]["avg_clean_score"], 5.5, places=5)
+        self.assertEqual(sample_points["bootstrap_10"]["local_episode_start"], 1)
+        self.assertEqual(sample_points["bootstrap_10"]["local_episode_end"], 10)
+        self.assertAlmostEqual(
+            sample_points["bootstrap_10"]["learning_metrics"]["route_phase_action_teacher_active_rate"],
+            0.12,
+            places=5,
+        )
 
         second_records = [make_record(idx) for idx in range(1, 26)]
         payload2 = _update_comparison_samples_payload(
@@ -2536,12 +3082,126 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             global_episode_count=25,
             global_step_since_resume=2500,
             captured_at_ts=2.0,
+            learning_metrics={"route_phase_action_teacher_active_rate": 0.20},
         )
         sample_points2 = payload2["sample_points"]
         self.assertEqual(sample_points2["bootstrap_10"]["actual_global_episode_count"], 12)
         self.assertAlmostEqual(sample_points2["bootstrap_10"]["captured_at_ts"], 1.0, places=5)
         self.assertIn("bootstrap_20", sample_points2)
         self.assertAlmostEqual(sample_points2["bootstrap_20"]["metrics"]["avg_clean_score"], 10.5, places=5)
+        self.assertAlmostEqual(sample_points2["bootstrap_20"]["local_metrics"]["avg_clean_score"], 15.5, places=5)
+        self.assertEqual(sample_points2["bootstrap_20"]["local_episode_start"], 11)
+        self.assertEqual(sample_points2["bootstrap_20"]["local_episode_end"], 20)
+
+    def test_comparison_samples_backfills_local_metrics_for_existing_prefix_only_samples(self):
+        from agent_ppo.workflow.curriculum_state import _update_comparison_samples_payload
+
+        def make_record(idx: int) -> dict:
+            return {
+                "result": "completed",
+                "clean_score": float(idx),
+                "finished_steps": 100.0,
+                "charge_count": 1.0,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 10.0,
+                "clean_per_charge_when_charged": 10.0,
+                "clean_per_step": float(idx),
+                "expert_weight": 0.0,
+                "profile": "anchor",
+            }
+
+        existing = {
+            "version": 2,
+            "window_policy_version": 1,
+            "primary_window_policy": "local",
+            "run_session_id": "run-1",
+            "training_start_mode": "scratch",
+            "sample_points": {
+                "bootstrap_20": {
+                    "sample_point": "bootstrap_20",
+                    "episode_threshold": 20,
+                    "actual_global_episode_count": 20,
+                    "global_step_since_resume": 2000,
+                    "captured_at_ts": 1.0,
+                    "metrics": {
+                        "avg_clean_score": 10.5,
+                    },
+                }
+            },
+        }
+
+        payload = _update_comparison_samples_payload(
+            existing,
+            [make_record(idx) for idx in range(1, 26)],
+            run_session_id="run-1",
+            training_start_mode="scratch",
+            global_episode_count=25,
+            global_step_since_resume=2500,
+            captured_at_ts=2.0,
+            learning_metrics={},
+        )
+
+        bootstrap20 = payload["sample_points"]["bootstrap_20"]
+        self.assertAlmostEqual(bootstrap20["metrics"]["avg_clean_score"], 10.5, places=5)
+        self.assertAlmostEqual(bootstrap20["local_metrics"]["avg_clean_score"], 15.5, places=5)
+        self.assertEqual(bootstrap20["local_episode_start"], 11)
+        self.assertEqual(bootstrap20["local_episode_end"], 20)
+
+    def test_comparison_samples_do_not_backfill_or_create_local_points_from_truncated_recent_history(self):
+        from agent_ppo.workflow.curriculum_state import _update_comparison_samples_payload
+
+        def make_record(idx: int) -> dict:
+            return {
+                "result": "completed",
+                "clean_score": float(idx),
+                "finished_steps": 100.0,
+                "charge_count": 1.0,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 10.0,
+                "clean_per_charge_when_charged": 10.0,
+                "clean_per_step": float(idx),
+                "expert_weight": 0.0,
+                "profile": "anchor",
+            }
+
+        existing = {
+            "version": 2,
+            "window_policy_version": 1,
+            "primary_window_policy": "local",
+            "run_session_id": "run-1",
+            "training_start_mode": "scratch",
+            "sample_points": {
+                "bootstrap_20": {
+                    "sample_point": "bootstrap_20",
+                    "episode_threshold": 20,
+                    "actual_global_episode_count": 20,
+                    "global_step_since_resume": 2000,
+                    "captured_at_ts": 1.0,
+                    "metrics": {
+                        "avg_clean_score": 10.5,
+                    },
+                }
+            },
+        }
+
+        truncated_records = [make_record(idx) for idx in range(51, 251)]
+        payload = _update_comparison_samples_payload(
+            existing,
+            truncated_records,
+            run_session_id="run-1",
+            training_start_mode="scratch",
+            global_episode_count=250,
+            global_step_since_resume=25000,
+            captured_at_ts=2.0,
+            learning_metrics={},
+        )
+
+        bootstrap20 = payload["sample_points"]["bootstrap_20"]
+        self.assertNotIn("local_metrics", bootstrap20)
+        self.assertNotIn("global_160", payload["sample_points"])
+        self.assertNotIn("global_200", payload["sample_points"])
 
     def test_compare_training_runs_uses_saved_samples_and_legacy_snapshots(self):
         script_path = Path(__file__).resolve().parents[2] / "train" / "compare_training_runs.py"
@@ -2587,8 +3247,19 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
                                 "metrics": {
                                     "battery_positive_reward_rate": 0.0,
                                     "zero_charge_battery_fail_rate": 0.0,
+                                    "zero_charge_among_battery_fail_rate": 0.0,
                                     "battery_fail_rate": 0.0,
                                     "avg_clean_per_step": 5.5,
+                                },
+                                "local_metrics": {
+                                    "battery_positive_reward_rate": 0.0,
+                                    "zero_charge_battery_fail_rate": 0.0,
+                                    "zero_charge_among_battery_fail_rate": 0.0,
+                                    "battery_fail_rate": 0.0,
+                                    "avg_clean_per_step": 5.5,
+                                },
+                                "learning_metrics": {
+                                    "route_phase_action_teacher_active_rate": 0.14,
                                 },
                             }
                         },
@@ -2604,6 +3275,9 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
                 "global_episode_count": 25,
                 "global_step_since_resume": 2500,
                 "updated_at_ts": 2.0,
+                "last_learning_metrics": {
+                    "route_phase_action_teacher_active_rate": 0.18,
+                },
                 "recent_episodes": [make_record(idx) for idx in range(101, 126)],
             }
             (target_dir / "resume" / "snapshots" / "resume-time-1.curriculum.json").write_text(
@@ -2617,13 +3291,314 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertEqual(report["baseline_run"], "baseline-run")
         self.assertEqual(report["target_run"], "target-run")
         self.assertAlmostEqual(bootstrap10["target"]["metrics"]["avg_clean_score"], 105.5, places=5)
-        self.assertEqual(bootstrap10["target"]["derived_from"], "legacy_snapshot")
+        self.assertAlmostEqual(bootstrap10["target"]["local_metrics"]["avg_clean_score"], 105.5, places=5)
+        self.assertEqual(bootstrap10["target"]["derived_from"], "legacy_snapshot_recomputed")
         self.assertAlmostEqual(bootstrap10["delta_vs_baseline"]["avg_clean_per_step"], 100.0, places=5)
+        self.assertAlmostEqual(bootstrap10["delta_vs_baseline_prefix"]["avg_clean_per_step"], 100.0, places=5)
+        self.assertAlmostEqual(
+            bootstrap10["delta_vs_baseline"]["route_phase_action_teacher_active_rate"],
+            0.04,
+            places=5,
+        )
+
+    def test_compare_training_runs_recomputes_stale_saved_samples_with_old_zero_charge_definition(self):
+        script_path = Path(__file__).resolve().parents[2] / "train" / "compare_training_runs.py"
+        spec = importlib.util.spec_from_file_location("compare_training_runs", script_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        def make_record(idx: int, result: str, charge_count: float) -> dict:
+            return {
+                "result": result,
+                "clean_score": float(idx),
+                "finished_steps": 100.0,
+                "charge_count": charge_count,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 10.0,
+                "clean_per_charge_when_charged": 10.0,
+                "clean_per_step": float(idx) / 10.0,
+                "expert_weight": 0.0,
+                "profile": "anchor",
+                "effective_total_reward": 1.0,
+            }
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            run_dir = tmp_path / "stale-run"
+            (run_dir / "resume" / "snapshots").mkdir(parents=True, exist_ok=True)
+
+            (run_dir / "comparison_samples.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "run_session_id": "stale-run",
+                        "sample_points": {
+                            "bootstrap_20": {
+                                "sample_point": "bootstrap_20",
+                                "episode_threshold": 20,
+                                "actual_global_episode_count": 20,
+                                "global_step_since_resume": 1000,
+                                "captured_at_ts": 1.0,
+                                "metrics": {
+                                    "battery_positive_reward_rate": 0.0,
+                                    "zero_charge_battery_fail_rate": 0.75,
+                                    "battery_fail_rate": 0.25,
+                                    "avg_clean_per_step": 0.5,
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            recent = []
+            for idx in range(1, 21):
+                if idx <= 3:
+                    recent.append(make_record(idx, "battery", 0.0))
+                elif idx == 4:
+                    recent.append(make_record(idx, "battery", 1.0))
+                else:
+                    recent.append(make_record(idx, "completed", 1.0))
+
+            snapshot_payload = {
+                "global_episode_count": 20,
+                "global_step_since_resume": 2000,
+                "updated_at_ts": 2.0,
+                "recent_episodes": recent,
+            }
+            (run_dir / "resume" / "snapshots" / "resume-time-1.curriculum.json").write_text(
+                json.dumps(snapshot_payload, ensure_ascii=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            payload = module.load_run_samples(str(run_dir))
+
+        bootstrap20 = payload["sample_points"]["bootstrap_20"]
+        self.assertEqual(bootstrap20["derived_from"], "legacy_snapshot_recomputed")
+        self.assertAlmostEqual(bootstrap20["metrics"]["battery_fail_rate"], 0.20, places=5)
+        self.assertAlmostEqual(bootstrap20["metrics"]["zero_charge_battery_fail_rate"], 0.15, places=5)
+        self.assertAlmostEqual(bootstrap20["metrics"]["zero_charge_among_battery_fail_rate"], 0.75, places=5)
+        self.assertAlmostEqual(bootstrap20["local_metrics"]["battery_fail_rate"], 0.0, places=5)
+        self.assertAlmostEqual(bootstrap20["local_metrics"]["zero_charge_battery_fail_rate"], 0.0, places=5)
+        self.assertAlmostEqual(bootstrap20["local_metrics"]["zero_charge_among_battery_fail_rate"], 0.0, places=5)
+
+    def test_compare_training_runs_recomputes_stale_saved_samples_missing_cps_align_local_metrics(self):
+        script_path = Path(__file__).resolve().parents[2] / "train" / "compare_training_runs.py"
+        spec = importlib.util.spec_from_file_location("compare_training_runs", script_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        def make_record(idx: int) -> dict:
+            return {
+                "result": "completed",
+                "clean_score": float(idx),
+                "finished_steps": 100.0,
+                "charge_count": 1.0,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 10.0,
+                "clean_per_charge_when_charged": 10.0,
+                "clean_per_step": float(idx) / 10.0,
+                "expert_weight": 0.0,
+                "profile": "anchor",
+                "clean_floor_revisit_rate": 0.2,
+                "clean_floor_revisit_penalty_mean": -0.03,
+                "effective_coverage_bonus_mean": 0.05,
+            }
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            run_dir = tmp_path / "stale-cps-align-run"
+            (run_dir / "resume" / "snapshots").mkdir(parents=True, exist_ok=True)
+
+            (run_dir / "comparison_samples.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "run_session_id": "stale-cps-align-run",
+                        "sample_points": {
+                            "bootstrap_20": {
+                                "sample_point": "bootstrap_20",
+                                "episode_threshold": 20,
+                                "actual_global_episode_count": 20,
+                                "global_step_since_resume": 1000,
+                                "captured_at_ts": 1.0,
+                                "metrics": {
+                                    "battery_positive_reward_rate": 0.0,
+                                    "zero_charge_battery_fail_rate": 0.0,
+                                    "zero_charge_among_battery_fail_rate": 0.0,
+                                    "battery_fail_rate": 0.0,
+                                    "avg_clean_per_step": 0.5,
+                                },
+                                "local_metrics": {
+                                    "battery_positive_reward_rate": 0.0,
+                                    "zero_charge_battery_fail_rate": 0.0,
+                                    "zero_charge_among_battery_fail_rate": 0.0,
+                                    "battery_fail_rate": 0.0,
+                                    "avg_clean_per_step": 0.5,
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot_payload = {
+                "global_episode_count": 20,
+                "global_step_since_resume": 2000,
+                "updated_at_ts": 2.0,
+                "recent_episodes": [make_record(idx) for idx in range(1, 21)],
+            }
+            (run_dir / "resume" / "snapshots" / "resume-time-1.curriculum.json").write_text(
+                json.dumps(snapshot_payload, ensure_ascii=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            payload = module.load_run_samples(str(run_dir))
+
+        bootstrap20 = payload["sample_points"]["bootstrap_20"]
+        self.assertIn("clean_floor_revisit_rate", bootstrap20["local_metrics"])
+        self.assertIn("clean_floor_revisit_penalty_mean", bootstrap20["local_metrics"])
+        self.assertIn("effective_coverage_bonus_mean", bootstrap20["local_metrics"])
+        self.assertAlmostEqual(bootstrap20["local_metrics"]["clean_floor_revisit_rate"], 0.2, places=5)
+        self.assertAlmostEqual(bootstrap20["local_metrics"]["clean_floor_revisit_penalty_mean"], -0.03, places=5)
+        self.assertAlmostEqual(bootstrap20["local_metrics"]["effective_coverage_bonus_mean"], 0.05, places=5)
+
+    def test_compare_training_runs_reconstructs_resume_local_samples_from_truncated_resume_state(self):
+        script_path = Path(__file__).resolve().parents[2] / "train" / "compare_training_runs.py"
+        spec = importlib.util.spec_from_file_location("compare_training_runs", script_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        def make_record(idx: int) -> dict:
+            return {
+                "result": "completed",
+                "clean_score": float(idx + 100),
+                "finished_steps": 100.0,
+                "charge_count": 1.0,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 10.0,
+                "clean_per_charge_when_charged": 10.0,
+                "clean_per_step": float(idx + 100) / 100.0,
+                "expert_weight": 0.0,
+                "profile": "broad",
+                "clean_floor_revisit_rate": 0.12,
+                "clean_floor_revisit_penalty_mean": -0.02,
+                "effective_coverage_bonus_mean": 0.04,
+            }
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            run_dir = tmp_path / "resume-run"
+            (run_dir / "resume" / "snapshots").mkdir(parents=True, exist_ok=True)
+
+            (run_dir / "comparison_samples.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "run_session_id": "resume-run",
+                        "training_start_mode": "resume",
+                        "window_origin": "resumed_local",
+                        "resumed_from_session_id": "old-run",
+                        "sample_points": {},
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot_payload = {
+                "training_start_mode": "resume",
+                "window_origin": "resumed_local",
+                "restored_from_session_id": "old-run",
+                "global_episode_count": 839,
+                "global_step_since_resume": 120000,
+                "updated_at_ts": 2.0,
+                "recent_episodes": [make_record(idx) for idx in range(1, 41)],
+            }
+            (run_dir / "resume" / "snapshots" / "resume-time-1.curriculum.json").write_text(
+                json.dumps(snapshot_payload, ensure_ascii=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            payload = module.load_run_samples(str(run_dir))
+
+        self.assertEqual(payload["window_origin"], "resumed_local")
+        bootstrap20 = payload["sample_points"]["bootstrap_20"]
+        global40 = payload["sample_points"]["global_40"]
+        self.assertEqual(bootstrap20["derived_from"], "resume_local_snapshot_recomputed")
+        self.assertEqual(bootstrap20["window_origin"], "resumed_local")
+        self.assertEqual(bootstrap20["resumed_from_session_id"], "old-run")
+        self.assertEqual(bootstrap20["actual_global_episode_count"], 40)
+        self.assertAlmostEqual(bootstrap20["local_metrics"]["clean_floor_revisit_rate"], 0.12, places=5)
+        self.assertAlmostEqual(global40["local_metrics"]["effective_coverage_bonus_mean"], 0.04, places=5)
+
+    def test_compare_point_status_does_not_require_route_phase_teacher_for_main_pass(self):
+        script_path = Path(__file__).resolve().parents[2] / "train" / "compare_training_runs.py"
+        spec = importlib.util.spec_from_file_location("compare_training_runs", script_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        baseline = {
+            "battery_positive_reward_rate": 0.0,
+            "zero_charge_battery_fail_rate": 0.10,
+            "battery_fail_rate": 0.10,
+            "avg_clean_per_step": 0.80,
+            "mode_usage_contract": 0.05,
+            "route_phase_action_teacher_active_rate": 0.20,
+        }
+        target = {
+            "battery_positive_reward_rate": 0.0,
+            "zero_charge_battery_fail_rate": 0.10,
+            "battery_fail_rate": 0.10,
+            "avg_clean_per_step": 0.81,
+            "mode_usage_contract": 0.05,
+            "route_phase_action_teacher_active_rate": 0.0,
+        }
+
+        status = module._point_status("global_40", target, baseline)
+
+        self.assertEqual(status, "main_pass")
 
     def test_docker_compose_exposes_s1_survival_tuning_envs(self):
         compose_text = Path(__file__).resolve().parents[2].joinpath("train", ".docker-compose.yaml").read_text(encoding="utf-8")
         required = [
             "KAIWU_TRAIN_PHASE:",
+            "KAIWU_CURRICULUM_LITE:",
+            "KAIWU_CURRICULUM_FIXED_STAGE:",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR:",
+            "KAIWU_CURRICULUM_PROFILE_MILD:",
+            "KAIWU_CURRICULUM_PROFILE_BROAD:",
+            "KAIWU_ENV_FIXED_DIFFICULTY:",
+            "KAIWU_TRAIN_MAPS:",
+            "KAIWU_TRAIN_MAP_RANDOM:",
+            "KAIWU_TRAIN_ROBOT_COUNT:",
+            "KAIWU_TRAIN_CHARGER_COUNT:",
+            "KAIWU_TRAIN_MAX_STEP:",
+            "KAIWU_TRAIN_BATTERY_MAX:",
+            "KAIWU_BENCHMARK_MAPS:",
+            "KAIWU_BENCHMARK_ROUNDS_JSON:",
+            "KAIWU_RESUME_BUNDLE_DIR:",
+            "KAIWU_RESUME_RUN_ID:",
+            "KAIWU_PREPARE_RETURN_BATTERY_RATIO:",
+            "KAIWU_RETURN_SLACK_THRESHOLD:",
+            "KAIWU_RETURN_BATTERY_RATIO:",
             "KAIWU_CONTRACT_RECOVERABILITY_THRESHOLD:",
             "KAIWU_CHARGE_MARGIN_WARN:",
             "KAIWU_CONTRACT_ROUTE_PRESSURE_THRESHOLD:",
@@ -2636,26 +3611,220 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST:",
             "KAIWU_NECESSARY_CHARGE_BONUS_SCALE:",
             "KAIWU_SKIP_NEEDED_CHARGE_PENALTY:",
+            "KAIWU_MODE_TEACHER_WEIGHT:",
+            "KAIWU_ROUTE_ANCHOR_TEACHER_WEIGHT:",
+            "KAIWU_TARGET_TEACHER_WEIGHT:",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT:",
+            "KAIWU_EFFECTIVE_COVERAGE_BONUS_SCALE:",
+            "KAIWU_EFFECTIVE_COVERAGE_BONUS_BASELINE:",
+            "KAIWU_CLEAN_FLOOR_REVISIT_PENALTY_SCALE:",
+            "KAIWU_STRONG_HEURISTIC_EVADE_NPC_DISTANCE:",
+            "KAIWU_STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO:",
+            "KAIWU_STRONG_HEURISTIC_PRE_RETURN_RECOVERABILITY_THRESHOLD:",
+            "KAIWU_STRONG_HEURISTIC_PRE_RETURN_UNKNOWN_RATIO_THRESHOLD:",
+            "KAIWU_STRONG_HEURISTIC_PRE_RETURN_ROUTE_PRESSURE_THRESHOLD:",
+            "KAIWU_STRONG_HEURISTIC_PRE_RETURN_BIAS_SCALE:",
+            "KAIWU_STRONG_HEURISTIC_RETURN_BIAS_SCALE:",
         ]
         for needle in required:
             self.assertIn(needle, compose_text)
 
-    def test_s1_survival_phase_overlay_matches_minimal_closed_loop_targets(self):
+    def test_monitor_builder_exposes_control_stack_simplify_and_teacher_metrics(self):
+        monitor_text = Path(__file__).resolve().parents[1].joinpath(
+            "agent_ppo", "conf", "monitor_builder.py"
+        ).read_text(encoding="utf-8")
+        required = [
+            "return_entry_count",
+            "readiness_supported_return_entry_count",
+            "pre_return_readiness_hit_rate",
+            "readiness_to_return_transition_rate",
+            "direct_return_without_readiness_rate",
+            "clean_floor_revisit_rate",
+            "clean_floor_revisit_penalty_mean",
+            "effective_coverage_bonus_mean",
+            "expert_weight_nonzero_rate",
+            "pre_return_bias_active_rate",
+            "return_bias_active_rate",
+            "mode_teacher_active_rate",
+            "route_anchor_teacher_active_rate",
+            "target_teacher_active_rate",
+            "return_action_teacher_active_rate",
+            "route_phase_policy_teacher_loss",
+            "avg_reward_route_risk_growth_pen",
+            "avg_reward_clean_risk_shadow",
+            "avg_reward_charge_opp_cost_pen",
+            "sampled_profile_anchor_rate",
+            "sampled_profile_mild_rate",
+            "sampled_profile_broad_rate",
+            "battery_positive_reward_rate",
+        ]
+        for needle in required:
+            self.assertIn(needle, monitor_text)
+
+    def test_s1_survival_phase_overlay_matches_curriculum_lite_targets(self):
         phase_text = Path(__file__).resolve().parents[2].joinpath("train", "phases", "s1_survival.env").read_text(encoding="utf-8")
         expected_lines = [
-            "KAIWU_PREPARE_RETURN_SLACK_THRESHOLD=10.0",
-            "KAIWU_CONTRACT_BATTERY_RATIO=0.32",
-            "KAIWU_CONTRACT_RECOVERABILITY_THRESHOLD=0.18",
-            "KAIWU_CHARGE_MARGIN_WARN=22.0",
-            "KAIWU_CONTRACT_ROUTE_PRESSURE_THRESHOLD=0.45",
-            "KAIWU_BATTERY_TERMINAL_COST_SCALE=40.0",
-            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE=0.24",
-            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE=0.08",
-            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.16",
-            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.05",
+            "KAIWU_CURRICULUM_LITE=1",
+            "KAIWU_CURRICULUM_FIXED_STAGE=warmup",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR=0.20",
+            "KAIWU_CURRICULUM_PROFILE_MILD=0.40",
+            "KAIWU_CURRICULUM_PROFILE_BROAD=0.40",
+            "KAIWU_PREPARE_RETURN_SLACK_THRESHOLD=7.5",
+            "KAIWU_CONTRACT_BATTERY_RATIO=0.27",
+            "KAIWU_CONTRACT_RECOVERABILITY_THRESHOLD=0.12",
+            "KAIWU_CHARGE_MARGIN_WARN=17.0",
+            "KAIWU_CONTRACT_ROUTE_PRESSURE_THRESHOLD=0.52",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE=41.0",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE=0.22",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE=0.07",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.14",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.04",
             "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST=0.95",
             "KAIWU_EPISODE_BATTERY_FAIL_BONUS=-16.0",
-            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.55",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE=0.28",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY=0.20",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY=0.12",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE=1.00",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.50",
+        ]
+        for line in expected_lines:
+            self.assertIn(line, phase_text)
+
+    def test_s1_survival_control_simplify_v1_phase_overlay_matches_minimal_control_stack_targets(self):
+        phase_text = Path(__file__).resolve().parents[2].joinpath(
+            "train", "phases", "s1_survival_control_simplify_v1.env"
+        ).read_text(encoding="utf-8")
+        expected_lines = [
+            "KAIWU_CURRICULUM_LITE=1",
+            "KAIWU_CURRICULUM_FIXED_STAGE=warmup",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR=0.20",
+            "KAIWU_CURRICULUM_PROFILE_MILD=0.40",
+            "KAIWU_CURRICULUM_PROFILE_BROAD=0.40",
+            "KAIWU_PREPARE_RETURN_SLACK_THRESHOLD=7.5",
+            "KAIWU_CONTRACT_BATTERY_RATIO=0.27",
+            "KAIWU_CONTRACT_RECOVERABILITY_THRESHOLD=0.12",
+            "KAIWU_CHARGE_MARGIN_WARN=17.0",
+            "KAIWU_CONTRACT_ROUTE_PRESSURE_THRESHOLD=0.52",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE=41.0",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE=0.22",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE=0.07",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.14",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.04",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST=0.95",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS=-16.0",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE=0.28",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY=0.20",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY=0.12",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE=1.00",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.50",
+        ]
+        for line in expected_lines:
+            self.assertIn(line, phase_text)
+
+    def test_s1_survival_cps_align_v1_phase_overlay_matches_cps_alignment_targets(self):
+        phase_text = Path(__file__).resolve().parents[2].joinpath(
+            "train", "phases", "s1_survival_cps_align_v1.env"
+        ).read_text(encoding="utf-8")
+        expected_lines = [
+            "KAIWU_TRAIN_PHASE=s1_survival_cps_align_v1",
+            "KAIWU_CURRICULUM_LITE=1",
+            "KAIWU_CURRICULUM_FIXED_STAGE=warmup",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR=0.20",
+            "KAIWU_CURRICULUM_PROFILE_MILD=0.40",
+            "KAIWU_CURRICULUM_PROFILE_BROAD=0.40",
+            "KAIWU_PREPARE_RETURN_SLACK_THRESHOLD=7.5",
+            "KAIWU_CONTRACT_BATTERY_RATIO=0.27",
+            "KAIWU_CONTRACT_RECOVERABILITY_THRESHOLD=0.12",
+            "KAIWU_CHARGE_MARGIN_WARN=17.0",
+            "KAIWU_CONTRACT_ROUTE_PRESSURE_THRESHOLD=0.52",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE=41.0",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.50",
+            "KAIWU_EFFECTIVE_COVERAGE_BONUS_SCALE=0.18",
+            "KAIWU_EFFECTIVE_COVERAGE_BONUS_BASELINE=0.72",
+            "KAIWU_CLEAN_FLOOR_REVISIT_PENALTY_SCALE=0.08",
+        ]
+        for line in expected_lines:
+            self.assertIn(line, phase_text)
+
+    def test_s1_survival_strong_heuristic_v1_phase_overlay_matches_targets(self):
+        phase_text = Path(__file__).resolve().parents[2].joinpath(
+            "train", "phases", "s1_survival_strong_heuristic_v1.env"
+        ).read_text(encoding="utf-8")
+        expected_lines = [
+            "KAIWU_TRAIN_PHASE=s1_survival_strong_heuristic_v1",
+            "KAIWU_CURRICULUM_LITE=1",
+            "KAIWU_CURRICULUM_FIXED_STAGE=warmup",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR=0.20",
+            "KAIWU_CURRICULUM_PROFILE_MILD=0.40",
+            "KAIWU_CURRICULUM_PROFILE_BROAD=0.40",
+            "KAIWU_RETURN_SLACK_THRESHOLD=0.0",
+            "KAIWU_RETURN_BATTERY_RATIO=0.32",
+            "KAIWU_PREPARE_RETURN_SLACK_THRESHOLD=6.0",
+            "KAIWU_PREPARE_RETURN_BATTERY_RATIO=0.45",
+            "KAIWU_STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO=0.85",
+            "KAIWU_STRONG_HEURISTIC_PRE_RETURN_BIAS_SCALE=0.90",
+            "KAIWU_STRONG_HEURISTIC_RETURN_BIAS_SCALE=1.80",
+            "KAIWU_MODE_TEACHER_WEIGHT=0.03",
+            "KAIWU_ROUTE_ANCHOR_TEACHER_WEIGHT=0.0",
+            "KAIWU_TARGET_TEACHER_WEIGHT=0.0",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT=0.03",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.0",
+        ]
+        for line in expected_lines:
+            self.assertIn(line, phase_text)
+
+    def test_s1_survival_strong_heuristic_slice2a_v1_phase_overlay_matches_targets(self):
+        phase_text = Path(__file__).resolve().parents[2].joinpath(
+            "train", "phases", "s1_survival_strong_heuristic_slice2a_v1.env"
+        ).read_text(encoding="utf-8")
+        expected_lines = [
+            "KAIWU_TRAIN_PHASE=s1_survival_strong_heuristic_slice2a_v1",
+            "KAIWU_CURRICULUM_LITE=1",
+            "KAIWU_CURRICULUM_FIXED_STAGE=warmup",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR=0.20",
+            "KAIWU_CURRICULUM_PROFILE_MILD=0.40",
+            "KAIWU_CURRICULUM_PROFILE_BROAD=0.40",
+            "KAIWU_RETURN_SLACK_THRESHOLD=0.0",
+            "KAIWU_RETURN_BATTERY_RATIO=0.32",
+            "KAIWU_PREPARE_RETURN_SLACK_THRESHOLD=6.0",
+            "KAIWU_PREPARE_RETURN_BATTERY_RATIO=0.45",
+            "KAIWU_STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO=0.85",
+            "KAIWU_STRONG_HEURISTIC_PRE_RETURN_BIAS_SCALE=0.90",
+            "KAIWU_STRONG_HEURISTIC_RETURN_BIAS_SCALE=1.80",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT=0.03",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.10",
+            "KAIWU_SLICE2_RISK_RELEASE_SCALE=0.31",
+            "KAIWU_SLICE2_RISK_GROWTH_CLEAN_PENALTY_SCALE=0.22",
+            "KAIWU_SLICE2_ROUTE_PHASE_RISK_GROWTH_PENALTY_SCALE=0.42",
+            "KAIWU_SLICE2_ROUTE_PHASE_SHADOW_RISK_THRESHOLD=0.10",
+            "KAIWU_SLICE2_CHARGE_OPPORTUNITY_COST_PENALTY_SCALE=0.18",
+        ]
+        for line in expected_lines:
+            self.assertIn(line, phase_text)
+
+    def test_s1_survival_slice2a_fixed8_v1_phase_overlay_matches_fixed_difficulty_targets(self):
+        phase_text = Path(__file__).resolve().parents[2].joinpath(
+            "train", "phases", "s1_survival_strong_heuristic_slice2a_fixed8_v1.env"
+        ).read_text(encoding="utf-8")
+        expected_lines = [
+            "KAIWU_TRAIN_PHASE=s1_survival_strong_heuristic_slice2a_fixed8_v1",
+            "KAIWU_ENV_FIXED_DIFFICULTY=1",
+            "KAIWU_TRAIN_MAPS=1,2,3,4,5,6,7,8",
+            "KAIWU_TRAIN_MAP_RANDOM=1",
+            "KAIWU_TRAIN_ROBOT_COUNT=4",
+            "KAIWU_TRAIN_CHARGER_COUNT=3",
+            "KAIWU_TRAIN_MAX_STEP=1000",
+            "KAIWU_TRAIN_BATTERY_MAX=150",
+            "KAIWU_BENCHMARK_MAPS=9,10",
+            '"name":"fixed8_generalization"',
+            '"charger_count":3',
+            '"robot_count":4',
+            '"max_step":1000',
+            '"battery_max":150',
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT=0.03",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.10",
+            "KAIWU_SLICE2_RISK_RELEASE_SCALE=0.31",
+            "KAIWU_SLICE2_ROUTE_PHASE_RISK_GROWTH_PENALTY_SCALE=0.42",
         ]
         for line in expected_lines:
             self.assertIn(line, phase_text)
@@ -2685,6 +3854,51 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         agent.model = Mock()
         with self.assertRaises(FileNotFoundError):
             _load_benchmark_checkpoint(agent, "/missing/checkpoint.pkl", Mock())
+
+    def test_aggregate_episode_records_gates_readiness_rates_to_simplify_phase_and_sums_counts(self):
+        from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
+
+        records = [
+            {
+                "result": "completed",
+                "profile": "anchor",
+                "return_entry_count": 1.0,
+                "readiness_supported_return_entry_count": 1.0,
+                "pre_return_readiness_hit_rate": 0.4,
+                "readiness_to_return_transition_rate": 1.0,
+                "direct_return_without_readiness_rate": 0.0,
+                "control_stack_simplify_active": 1.0,
+            },
+            {
+                "result": "completed",
+                "profile": "anchor",
+                "return_entry_count": 1.0,
+                "readiness_supported_return_entry_count": 0.0,
+                "pre_return_readiness_hit_rate": 0.2,
+                "readiness_to_return_transition_rate": 0.0,
+                "direct_return_without_readiness_rate": 1.0,
+                "control_stack_simplify_active": 1.0,
+            },
+            {
+                "result": "completed",
+                "profile": "anchor",
+                "return_entry_count": 3.0,
+                "readiness_supported_return_entry_count": 0.0,
+                "pre_return_readiness_hit_rate": None,
+                "readiness_to_return_transition_rate": None,
+                "direct_return_without_readiness_rate": None,
+                "control_stack_simplify_active": 0.0,
+            },
+        ]
+
+        aggregated = _aggregate_episode_records(records, 3)
+
+        self.assertIsNotNone(aggregated)
+        self.assertAlmostEqual(aggregated["return_entry_count"], 2.0, places=6)
+        self.assertAlmostEqual(aggregated["readiness_supported_return_entry_count"], 1.0, places=6)
+        self.assertAlmostEqual(aggregated["pre_return_readiness_hit_rate"], 0.3, places=6)
+        self.assertAlmostEqual(aggregated["readiness_to_return_transition_rate"], 0.5, places=6)
+        self.assertAlmostEqual(aggregated["direct_return_without_readiness_rate"], 0.5, places=6)
 
     def test_lite_benchmark_cache_invalidates_when_checkpoint_mtime_changes(self):
         from agent_ppo.eval.lite_benchmark_bootstrap import (

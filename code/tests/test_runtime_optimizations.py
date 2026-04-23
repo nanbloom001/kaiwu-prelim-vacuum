@@ -22,8 +22,20 @@ def _install_runtime_stubs():
     config_control_mod = types.ModuleType("common_python.config.config_control")
     utils_mod = types.ModuleType("common_python.utils")
     common_func_mod = types.ModuleType("common_python.utils.common_func")
+    kaiwudrl_mod = types.ModuleType("kaiwudrl")
+    kaiwudrl_common_mod = types.ModuleType("kaiwudrl.common")
+    kaiwudrl_common_utils_mod = types.ModuleType("kaiwudrl.common.utils")
+    kaiwudrl_define_mod = types.ModuleType("kaiwudrl.common.utils.kaiwudrl_define")
+    kaiwudrl_interface_mod = types.ModuleType("kaiwudrl.interface")
+    kaiwudrl_interface_agent_mod = types.ModuleType("kaiwudrl.interface.agent")
 
     class _Config:
+        pass
+
+    class _KaiwuDRLDefine:
+        SERVER_LEARNER = "learner"
+
+    class _BaseAgent:
         pass
 
     def create_cls(name, **defaults):
@@ -42,12 +54,25 @@ def _install_runtime_stubs():
     utils_mod.common_func = common_func_mod
     common_python_mod.config = config_mod
     common_python_mod.utils = utils_mod
+    kaiwudrl_define_mod.KaiwuDRLDefine = _KaiwuDRLDefine
+    kaiwudrl_interface_agent_mod.BaseAgent = _BaseAgent
+    kaiwudrl_common_utils_mod.kaiwudrl_define = kaiwudrl_define_mod
+    kaiwudrl_common_mod.utils = kaiwudrl_common_utils_mod
+    kaiwudrl_interface_mod.agent = kaiwudrl_interface_agent_mod
+    kaiwudrl_mod.common = kaiwudrl_common_mod
+    kaiwudrl_mod.interface = kaiwudrl_interface_mod
 
     sys.modules["common_python"] = common_python_mod
     sys.modules["common_python.config"] = config_mod
     sys.modules["common_python.config.config_control"] = config_control_mod
     sys.modules["common_python.utils"] = utils_mod
     sys.modules["common_python.utils.common_func"] = common_func_mod
+    sys.modules["kaiwudrl"] = kaiwudrl_mod
+    sys.modules["kaiwudrl.common"] = kaiwudrl_common_mod
+    sys.modules["kaiwudrl.common.utils"] = kaiwudrl_common_utils_mod
+    sys.modules["kaiwudrl.common.utils.kaiwudrl_define"] = kaiwudrl_define_mod
+    sys.modules["kaiwudrl.interface"] = kaiwudrl_interface_mod
+    sys.modules["kaiwudrl.interface.agent"] = kaiwudrl_interface_agent_mod
 
 
 _install_runtime_stubs()
@@ -218,6 +243,8 @@ class AlgorithmBatchTensorTests(unittest.TestCase):
             "target_teacher_mask": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
             "return_action_teacher": torch.zeros((1, Config.SEQ_CHUNK_LEN), dtype=torch.long),
             "return_action_teacher_mask": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
+            "route_phase_action_teacher": torch.zeros((1, Config.SEQ_CHUNK_LEN), dtype=torch.long),
+            "route_phase_action_teacher_mask": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
             "battery_risk_label": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
             "collision_risk_label": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
             "constraint_battery_process_cost": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
@@ -255,6 +282,8 @@ class AlgorithmBatchTensorTests(unittest.TestCase):
             "target_teacher_mask": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
             "return_action_teacher": torch.zeros((1, Config.SEQ_CHUNK_LEN), dtype=torch.long),
             "return_action_teacher_mask": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
+            "route_phase_action_teacher": torch.zeros((1, Config.SEQ_CHUNK_LEN), dtype=torch.long),
+            "route_phase_action_teacher_mask": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
             "battery_risk_label": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
             "collision_risk_label": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
             "constraint_battery_process_cost": torch.zeros((1, Config.SEQ_CHUNK_LEN)),
@@ -266,6 +295,49 @@ class AlgorithmBatchTensorTests(unittest.TestCase):
 
         self.assertEqual(tuple(batch["expert_weight"].shape), (1, 1))
         self.assertTrue(torch.allclose(batch["expert_weight"], torch.tensor([[0.25]])))
+
+    def test_unpack_train_batch_list_sample_data_keeps_route_phase_teacher_fields(self):
+        from agent_ppo.feature.definition import SampleData
+
+        algo = Algorithm.__new__(Algorithm)
+        algo.device = torch.device("cpu")
+        algo.use_amp = False
+
+        sample = SampleData(
+            obs=torch.zeros((Config.SAMPLE_OBS_DIM,), dtype=torch.float32),
+            legal_action=torch.zeros((Config.SAMPLE_LEGAL_ACTION_DIM,), dtype=torch.float32),
+            act=torch.zeros((Config.SAMPLE_ACTION_DIM,), dtype=torch.int64),
+            reward_clean=torch.zeros((Config.SAMPLE_REWARD_DIM,), dtype=torch.float32),
+            reward_survive=torch.zeros((Config.SAMPLE_REWARD_DIM,), dtype=torch.float32),
+            done=torch.zeros((Config.SAMPLE_DONE_DIM,), dtype=torch.float32),
+            value_clean=torch.zeros((Config.SAMPLE_VALUE_DIM,), dtype=torch.float32),
+            value_survive=torch.zeros((Config.SAMPLE_VALUE_DIM,), dtype=torch.float32),
+            advantage_clean=torch.zeros((Config.SAMPLE_VALUE_DIM,), dtype=torch.float32),
+            advantage_survive=torch.zeros((Config.SAMPLE_VALUE_DIM,), dtype=torch.float32),
+            prob=torch.zeros((Config.SAMPLE_PROB_DIM,), dtype=torch.float32),
+            mode_teacher=torch.zeros((Config.SAMPLE_MODE_DIM,), dtype=torch.int64),
+            route_anchor_teacher=torch.zeros((Config.SAMPLE_ROUTE_ANCHOR_DIM,), dtype=torch.int64),
+            target_teacher=torch.zeros((Config.SAMPLE_TARGET_DIM,), dtype=torch.int64),
+            mode_teacher_mask=torch.zeros((Config.SAMPLE_MODE_TEACHER_MASK_DIM,), dtype=torch.float32),
+            route_anchor_teacher_mask=torch.zeros((Config.SAMPLE_ROUTE_ANCHOR_MASK_DIM,), dtype=torch.float32),
+            target_teacher_mask=torch.zeros((Config.SAMPLE_TARGET_TEACHER_MASK_DIM,), dtype=torch.float32),
+            return_action_teacher=torch.zeros((Config.SAMPLE_RETURN_ACTION_DIM,), dtype=torch.int64),
+            return_action_teacher_mask=torch.zeros((Config.SAMPLE_RETURN_ACTION_MASK_DIM,), dtype=torch.float32),
+            route_phase_action_teacher=torch.full((Config.SAMPLE_ROUTE_PHASE_ACTION_DIM,), 3, dtype=torch.int64),
+            route_phase_action_teacher_mask=torch.full((Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM,), 0.5, dtype=torch.float32),
+            battery_risk_label=torch.zeros((Config.SAMPLE_AUX_LABEL_DIM,), dtype=torch.float32),
+            collision_risk_label=torch.zeros((Config.SAMPLE_AUX_LABEL_DIM,), dtype=torch.float32),
+            constraint_battery_process_cost=torch.zeros((Config.SAMPLE_CONSTRAINT_COST_DIM,), dtype=torch.float32),
+            fallback_mask=torch.zeros((Config.FALLBACK_MASK_DIM,), dtype=torch.float32),
+            expert_weight=torch.tensor([0.25], dtype=torch.float32),
+        )
+
+        batch = Algorithm._unpack_train_batch(algo, [sample])
+
+        self.assertIn("route_phase_action_teacher", batch)
+        self.assertIn("route_phase_action_teacher_mask", batch)
+        self.assertTrue(torch.all(batch["route_phase_action_teacher"] == 3))
+        self.assertTrue(torch.allclose(batch["route_phase_action_teacher_mask"], torch.full((1, Config.SEQ_CHUNK_LEN), 0.5)))
 
     def test_battery_process_cost_mean_uses_constraint_cost_not_reward_survive(self):
         batch = {

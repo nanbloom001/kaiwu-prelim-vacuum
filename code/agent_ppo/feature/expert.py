@@ -19,9 +19,19 @@ currently active", so existing runtime code can still suppress anti-stuck logic.
 from __future__ import annotations
 
 import heapq
+import os
 import numpy as np
 
 from agent_ppo.conf.conf import Config
+from agent_ppo.utils.return_readiness import (
+    control_stack_simplify_active,
+    evaluate_simplified_return_readiness,
+)
+from agent_ppo.utils.strong_heuristic import (
+    evaluate_strong_heuristic_mode,
+    logical_mode_to_teacher_name,
+    strong_heuristic_active,
+)
 
 
 class ExpertPolicy:
@@ -64,6 +74,8 @@ class ExpertPolicy:
         self.blocked_cells = {}
         self._prev_pos = None
         self._last_emergency_reason = None
+        self._last_bias_mode = None
+        self._last_bias_weight = 0.0
 
     def reset(self):
         """Reset per-episode state."""
@@ -75,6 +87,8 @@ class ExpertPolicy:
         self.blocked_cells = {}
         self._prev_pos = None
         self._last_emergency_reason = None
+        self._last_bias_mode = None
+        self._last_bias_weight = 0.0
 
     # ------------------------------------------------------------------
     # Charger tracking
@@ -372,9 +386,94 @@ class ExpertPolicy:
         recoverability = float(getattr(prep, "future_recoverability_score", 0.0))
         contract_pressure = float(getattr(prep, "route_contract_pressure", 0.0))
         depart_steps = int(getattr(prep, "steps_since_charge", 999))
+        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
+
+        if strong_heuristic_active(train_phase):
+            logical = evaluate_strong_heuristic_mode(
+                current_mode=int(getattr(prep, "current_mode", 0)),
+                mode_return=int(getattr(prep, "MODE_RETURN", 4)),
+                nearest_npc_dist=float(signal["min_npc_dist"]),
+                on_charger=bool(on_charger),
+                battery=float(getattr(prep, "battery", 0.0)),
+                battery_ratio=float(battery_ratio),
+                charger_dist=float(signal.get("charger_dist", getattr(prep, "nearest_charger_dist", 0.0))),
+                charger_slack=float(slack),
+                margin=float(margin),
+                future_recoverability_score=float(recoverability),
+                planner_multi_route_recoverability=float(
+                    signal.get("planner_multi_route_recoverability", recoverability)
+                ),
+                known_path_count=int(known_path_count),
+                total_charger=int(getattr(prep, "total_charger", 1)),
+                unknown_ratio=float(unknown_ratio),
+                route_contract_pressure=float(contract_pressure),
+                return_battery_ratio=float(Config.RETURN_BATTERY_RATIO),
+                return_slack_threshold=float(Config.RETURN_SLACK_THRESHOLD),
+                return_exit_battery_ratio=float(Config.STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO),
+                pre_return_battery_ratio=float(Config.PREPARE_RETURN_BATTERY_RATIO),
+                pre_return_slack_threshold=float(Config.PREPARE_RETURN_SLACK_THRESHOLD),
+                pre_return_recoverability_threshold=float(Config.STRONG_HEURISTIC_PRE_RETURN_RECOVERABILITY_THRESHOLD),
+                pre_return_unknown_ratio_threshold=float(Config.STRONG_HEURISTIC_PRE_RETURN_UNKNOWN_RATIO_THRESHOLD),
+                pre_return_route_pressure_threshold=float(Config.STRONG_HEURISTIC_PRE_RETURN_ROUTE_PRESSURE_THRESHOLD),
+                charge_margin_warn=float(Config.CHARGE_MARGIN_WARN),
+                evade_npc_distance=float(Config.STRONG_HEURISTIC_EVADE_NPC_DISTANCE),
+            )
+            mode = logical_mode_to_teacher_name(str(logical["logical_mode"]))
+            return_action_teacher_mask = 0.0
+            if mode == "return" and signal["return_action_reliable"]:
+                return_action_teacher_mask = 1.0
+            return {
+                "mode": mode,
+                "route_mode": mode,
+                "route_anchor": signal["charger_target"],
+                "target": signal["charger_target"],
+                "action": signal["suggested_action"],
+                "return_action": signal["suggested_action"],
+                "mode_teacher_mask": float(signal["mode_reliable"]),
+                "target_teacher_mask": 0.0,
+                "route_anchor_teacher_mask": 0.0,
+                "return_action_teacher_mask": float(return_action_teacher_mask),
+                "signal": signal,
+            }
 
         if signal["min_npc_dist"] <= 2:
             mode = "evade"
+        elif control_stack_simplify_active(train_phase):
+            readiness = evaluate_simplified_return_readiness(
+                charger_slack=slack,
+                battery_ratio=battery_ratio,
+                future_recoverability_score=recoverability,
+                planner_multi_route_recoverability=float(
+                    signal.get("planner_multi_route_recoverability", recoverability)
+                ),
+                margin=margin,
+                route_contract_pressure=contract_pressure,
+                known_path_count=known_path_count,
+                total_charger=int(getattr(prep, "total_charger", 1)),
+                planner_topk_reachable_count=int(signal.get("planner_topk_reachable_count", known_path_count)),
+                unknown_ratio=unknown_ratio,
+                return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
+                return_battery_ratio=Config.RETURN_BATTERY_RATIO,
+                return_recoverability_threshold=Config.RETURN_RECOVERABILITY_THRESHOLD,
+                prepare_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
+                contract_battery_ratio=Config.CONTRACT_BATTERY_RATIO,
+                contract_recoverability_threshold=Config.CONTRACT_RECOVERABILITY_THRESHOLD,
+                charge_margin_low=Config.CHARGE_MARGIN_LOW,
+                charge_margin_warn=Config.CHARGE_MARGIN_WARN,
+                contract_route_pressure_threshold=Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
+                unknown_path_risk_battery_ratio=Config.UNKNOWN_PATH_RISK_BATTERY_RATIO,
+                unknown_path_risk_threshold=Config.UNKNOWN_PATH_RISK_THRESHOLD,
+            )
+            if readiness["return_now"]:
+                mode = "return"
+            elif readiness["pre_return_ready"]:
+                mode = "contract"
+            elif depart_steps <= Config.DEPART_STEPS:
+                mode = "depart"
+            elif local_dirt_density >= Config.HARVEST_DIRT_DENSITY:
+                mode = "harvest"
+            else:
+                mode = "expand"
         elif (
             battery_ratio <= Config.RETURN_BATTERY_RATIO
             or slack <= Config.RETURN_SLACK_THRESHOLD
@@ -496,12 +595,11 @@ class ExpertPolicy:
         return False, None
 
     def get_logit_bias(self, prep, legal_action, last_action=-1):
-        """Return only NPC avoidance bias; no regular charging / return bias."""
-        # Keep compatibility flag aligned with emergency state only.
-        _ = self.get_emergency_fallback(prep, legal_action, last_action)
-
+        """Return NPC avoidance plus phase-gated charger bias without mutating fallback state."""
         bias = np.zeros(8, dtype=np.float32)
         hx, hz = prep.cur_pos
+        self._last_bias_mode = None
+        self._last_bias_weight = 0.0
 
         for npc in prep._npcs:
             pos = npc.get("pos") or {}
@@ -518,6 +616,23 @@ class ExpertPolicy:
                 if dot > 0:
                     close = (6.0 - npc_dist) / 6.0
                     bias[idx] -= 2.0 * dot * close
+
+        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
+        if strong_heuristic_active(train_phase):
+            signal = self.get_charger_signal(prep, legal_action, last_action, refresh_state=False)
+            suggested_action = signal.get("suggested_action")
+            if suggested_action is not None and 0 <= int(suggested_action) < len(legal_action) and legal_action[int(suggested_action)]:
+                if int(getattr(prep, "current_mode", 0)) == int(getattr(prep, "MODE_RETURN", 4)):
+                    scale = float(Config.STRONG_HEURISTIC_RETURN_BIAS_SCALE)
+                    self._last_bias_mode = "return"
+                elif int(getattr(prep, "current_mode", 0)) == int(getattr(prep, "MODE_CONTRACT", 3)):
+                    scale = float(Config.STRONG_HEURISTIC_PRE_RETURN_BIAS_SCALE)
+                    self._last_bias_mode = "pre_return"
+                else:
+                    scale = 0.0
+                if scale > 0.0:
+                    bias[int(suggested_action)] += scale
+                    self._last_bias_weight = scale
 
         return bias
 
