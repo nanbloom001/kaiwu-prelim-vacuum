@@ -1,744 +1,501 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 ###########################################################################
-# Copyright (c) 1998 - 2026 Tencent. All Rights Reserved.
+# Copyright 漏 1998 - 2026 Tencent. All Rights Reserved.
 ###########################################################################
 """
+Author: Tencent AI Arena Authors
+
 Feature preprocessor for Robot Vacuum.
 """
 
-from __future__ import annotations
+from typing import Any, List, Sequence, Set, Tuple
 
 import numpy as np
 
-from agent_ppo.conf.conf import Config
-from agent_ppo.feature.expert import ExpertPolicy
+Position = Tuple[int, int]
 
 
-def _norm(value, v_max, v_min=0.0):
-    value = float(np.clip(value, v_min, v_max))
-    if v_max == v_min:
+def _norm(v, v_max, v_min=0.0):
+    """Linear normalize to [0, 1] with clipping."""
+    v = float(np.clip(v, v_min, v_max))
+    if v_max <= v_min:
         return 0.0
-    return (value - v_min) / (v_max - v_min)
-
-
-def _clip_signed(value, scale):
-    if scale <= 0:
-        return 0.0
-    return float(np.clip(value / scale, -1.0, 1.0))
+    return (v - v_min) / (v_max - v_min)
 
 
 class Preprocessor:
+    """
+    输出 84D 特征：
+      local_view   : 49D = centered 7x7 local map
+      global_state : 27D = hand-crafted global statistics + episode config
+      legal_action :  8D = env legal action mask
+    """
+
     GRID_SIZE = 128
-    VIEW_SIZE = Config.LOCAL_VIEW_SIZE
-    VIEW_HALF = VIEW_SIZE // 2
-    COARSE_SIZE = Config.GLOBAL_MEMORY_SIZE
-    COARSE_BLOCK = GRID_SIZE // COARSE_SIZE
-    ACTION_DIM = Config.ACTION_NUM
-    LAST_ACTION_DIM = ACTION_DIM + 1
-    ACTION_DELTAS = (
-        (1, 0),
-        (1, -1),
-        (0, -1),
-        (-1, -1),
-        (-1, 0),
-        (-1, 1),
-        (0, 1),
-        (1, 1),
-    )
-    MODE_CLEAN = 0
-    MODE_CHARGE = 1
-    MODE_EVADE = 2
+    VIEW_HALF = 10
+    LOCAL_HALF = 3
+    MAX_DIST = 181.0
 
     def __init__(self):
-        self.expert = ExpertPolicy()
         self.reset()
 
     def reset(self):
         self.step_no = 0
-        self.max_step = 1000
+        self.episode_max_step = 1000
+        self.episode_charger_count = 4
+        self.episode_battery_max = 200
         self.battery = 200
         self.battery_max = 200
-        self.total_charger = 4
-        self.npc_count = 4
-        self.map_random = 0
+        self.prev_battery = 200
         self.cur_pos = (0, 0)
-        self.last_pos = None
-
-        self.score = 0
-        self.last_score = 0
         self.dirt_cleaned = 0
         self.last_dirt_cleaned = 0
         self.total_dirt = 1
 
-        self.charge_count = 0
-        self.last_charge_count = 0
-        self.just_charged = 0.0
-        self.pre_charge_battery = 200
+        self._view_map = np.zeros((21, 21), dtype=np.float32)
+        self._legal_act = [1] * 8
 
-        self.cleaned_this_step = 0
-        self.new_explored_cells = 0
-        self.stuck_steps = 0
-        self.consecutive_clean_steps = 0
-        self.no_progress_steps = 0
-        self.invalid_move_count = 0
-        self.last_move_invalid = 0.0
-        self.invalid_move_ema = 0.0
+        # Only observed passable cells are set to 1.
+        self.passable_map = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.int8)
+        self.observed_map = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.uint8)
 
-        self.cur_visit_count = 0
+        self.visited = set()
+        self.visit_count = {}
+        self.charger_positions = []
+        self.npc_positions = []
 
-        self.nearest_dirt_dist = 200.0
-        self.last_nearest_dirt_dist = 200.0
-        self.nearest_charger_dist = 200.0
-        self.last_nearest_charger_dist = 200.0
-        self.nearest_charger_dx = 0.0
-        self.nearest_charger_dz = 0.0
-        self.charger_slack = 0.0
-        self.last_charger_slack = 0.0
-        self.nearest_npc_dist = 200.0
-        self.nearest_npc_dx = 0.0
-        self.nearest_npc_dz = 0.0
+        self._nearest_dirt_dist = 200.0
+        self._last_nearest_dirt_dist = 200.0
+        self._nearest_unarrived_charger_dist = self.MAX_DIST
+        self._last_nearest_unarrived_charger_dist = self.MAX_DIST
+        self.new_observed_cells = 0
+        self.cur_revisit_count = 0
+        self.charger_regions: List[Set[Position]] = []
+        self.rewarded_arrived_charger_regions = set()
+        self.new_charger_arrival_reward = 0.0
+        self.charger_arrival_steps = {}
 
-        self.all_npc_info = []
-        self.all_charger_info = []
-        self.directional_dirty = np.zeros(self.ACTION_DIM, dtype=np.float32)
+    def set_episode_config(self, max_step=None, robot_count=None, charger_count=None, battery_max=None):
+        if max_step is not None:
+            self.episode_max_step = max(1, int(max_step))
+        if charger_count is not None:
+            self.episode_charger_count = int(np.clip(charger_count, 1, 4))
+        if battery_max is not None:
+            self.episode_battery_max = int(np.clip(battery_max, 100, 999))
 
-        self.local_dirt_density = 0.0
-        self.local_obstacle_density = 0.0
-        self.local_frontier_density = 0.0
-        self.explored_ratio = 0.0
-        self.dirty_memory_ratio = 0.0
-        self.actual_legal_ratio = 1.0
+    def pb2struct(self, env_obs: dict, last_action: int):
+        """Parse env observation and cache required state."""
+        del last_action
 
-        self.current_mode = self.MODE_CLEAN
-        self.wall_adjacent = 0
-        self.dirty_adjacent = 0
+        observation = env_obs["observation"]
+        frame_state = observation["frame_state"]
+        env_info = observation["env_info"]
+        hero = frame_state["heroes"]
 
-        self._view_map = np.ones((self.VIEW_SIZE, self.VIEW_SIZE), dtype=np.int8)
-        self._legal_act = [1] * self.ACTION_DIM
-        self._actual_legal_act = [1] * self.ACTION_DIM
-        self._organs = []
-        self._npcs = []
+        self.step_no = int(observation["step_no"])
+        self.cur_pos = (int(hero["pos"]["x"]), int(hero["pos"]["z"]))
 
-        self.explored_map = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
-        self.passable_map = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
-        self.dirty_memory = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
-        self.visit_count = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
-        self.npc_cleaned = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.float32)
-
-        self._cps_ema = 0.5
-        self._last_action = -1
-
-    def pb2struct(self, env_obs, last_action):
-        observation = env_obs.get("observation") or {}
-        frame_state = observation.get("frame_state") or {}
-        env_info = observation.get("env_info") or {}
-        hero = frame_state.get("heroes") or {}
-
-        self.step_no = int(observation.get("step_no", env_info.get("step_no", self.step_no)))
-        self.max_step = max(int(env_info.get("max_step", self.max_step)), 1)
-        self.total_charger = max(int(env_info.get("total_charger", self.total_charger)), 1)
-        self.npc_count = max(int(env_info.get("npc_count", len(frame_state.get("npcs") or []))), 1)
-        self.map_random = int(env_info.get("map_random", self.map_random))
-
-        self.last_pos = self.cur_pos
-        self.cur_pos = (
-            int((hero.get("pos") or {}).get("x", 0)),
-            int((hero.get("pos") or {}).get("z", 0)),
-        )
-
-        self.pre_charge_battery = self.battery
-        self.battery = int(hero.get("battery", env_info.get("remaining_charge", self.battery)))
-        self.battery_max = max(int(hero.get("battery_max", env_info.get("battery_max", self.battery_max))), 1)
-
-        self.last_score = self.score
-        self.score = int(hero.get("score", env_info.get("clean_score", self.score)))
+        self.prev_battery = self.battery
+        self.battery = int(hero["battery"])
+        self.battery_max = max(int(hero["battery_max"]), 1)
 
         self.last_dirt_cleaned = self.dirt_cleaned
-        self.dirt_cleaned = int(hero.get("dirt_cleaned", self.dirt_cleaned))
-        self.total_dirt = max(int(env_info.get("total_dirt", self.total_dirt)), 1)
+        self.dirt_cleaned = int(hero["dirt_cleaned"])
+        self.total_dirt = max(int(env_info["total_dirt"]), 1)
 
-        self.last_charge_count = self.charge_count
-        self.charge_count = int(env_info.get("charge_count", self.charge_count))
-        self.just_charged = 1.0 if self.charge_count > self.last_charge_count else 0.0
-
-        legal_action = observation.get("legal_action")
-        if legal_action is None:
-            legal_action = observation.get("legal_act")
-        self._legal_act = [int(x) for x in (legal_action or [1] * self.ACTION_DIM)]
+        self._legal_act = [int(x) for x in (observation.get("legal_action") or [1] * 8)]
 
         map_info = observation.get("map_info")
         if map_info is not None:
-            self._view_map = np.array(map_info, dtype=np.int8)
-            self.new_explored_cells = self._update_memory(*self.cur_pos)
+            self._view_map = np.asarray(map_info, dtype=np.float32)
+            self.new_observed_cells = self._update_passable(*self.cur_pos)
         else:
-            self.new_explored_cells = 0
+            self.new_observed_cells = 0
 
-        self._organs = list(frame_state.get("organs") or [])
-        self._npcs = list(frame_state.get("npcs") or [])
+        self.cur_revisit_count = self.visit_count.get(self.cur_pos, 0)
+        self.visit_count[self.cur_pos] = self.cur_revisit_count + 1
+        self.visited.add(self.cur_pos)
 
-        step_cleaned_cells = env_info.get("step_cleaned_cells") or []
-        score_gain = max(0, self.score - self.last_score)
-        dirt_gain = max(0, self.dirt_cleaned - self.last_dirt_cleaned)
-        self.cleaned_this_step = max(len(step_cleaned_cells), score_gain, dirt_gain)
+        self.charger_regions = self._parse_charger_regions(frame_state.get("organs", []))
+        self.new_charger_arrival_reward = 0.0
+        self._last_nearest_unarrived_charger_dist = self._nearest_unarrived_charger_dist
+        for region in self.charger_regions:
+            center = self._charger_region_center(region)
+            if center not in self.charger_positions:
+                self.charger_positions.append(center)
+            region_key = self._charger_region_key(region)
+            if self.cur_pos in region and region_key not in self.rewarded_arrived_charger_regions:
+                arrival_order = len(self.rewarded_arrived_charger_regions)
+                self.rewarded_arrived_charger_regions.add(region_key)
+                self.charger_arrival_steps[region_key] = self.step_no
+                if arrival_order == 0:
+                    self.new_charger_arrival_reward += 0.18
+                elif arrival_order == 1:
+                    self.new_charger_arrival_reward += 0.24
+                else:
+                    self.new_charger_arrival_reward += 0.22
+        self._nearest_unarrived_charger_dist = self._nearest_unarrived_charger_distance()
 
-        if self.cleaned_this_step > 0:
-            self.no_progress_steps = 0
-            self.consecutive_clean_steps += 1
-        else:
-            self.no_progress_steps += 1
-            self.consecutive_clean_steps = 0
+        self.npc_positions = [
+            (int(n["pos"]["x"]), int(n["pos"]["z"]))
+            for n in frame_state.get("npcs", [])
+        ]
 
-        self.last_move_invalid = 0.0
-        if last_action is not None and last_action >= 0:
-            if self.last_pos == self.cur_pos:
-                self.invalid_move_count += 1
-                self.last_move_invalid = 1.0
-                self.invalid_move_ema = 0.8 * self.invalid_move_ema + 0.2
-            else:
-                self.invalid_move_ema *= 0.8
-
-        if self.last_pos == self.cur_pos:
-            self.stuck_steps += 1
-        else:
-            self.stuck_steps = 0
-
-        hx, hz = self.cur_pos
-        if 0 <= hx < self.GRID_SIZE and 0 <= hz < self.GRID_SIZE:
-            self.visit_count[hx, hz] += 1.0
-            self.cur_visit_count = int(self.visit_count[hx, hz])
-        else:
-            self.cur_visit_count = 0
-
-        self.last_nearest_dirt_dist = self.nearest_dirt_dist
-        self.nearest_dirt_dist = self._calc_nearest_dirt_dist()
-
-        self.last_nearest_charger_dist = self.nearest_charger_dist
-        (
-            self.nearest_charger_dist,
-            self.nearest_charger_dx,
-            self.nearest_charger_dz,
-        ) = self._nearest_charger_metrics()
-
-        self.last_charger_slack = self.charger_slack
-        reserve = max(8.0, 0.04 * self.battery_max)
-        self.charger_slack = float(self.battery - self.nearest_charger_dist - reserve)
-
-        (
-            self.nearest_npc_dist,
-            self.nearest_npc_dx,
-            self.nearest_npc_dz,
-        ) = self._nearest_npc_metrics()
-
-        # All NPC info: (dist, dx, dz) sorted by distance
-        hx, hz = self.cur_pos
-        self.all_npc_info = []
-        for npc in self._npcs:
-            pos = npc.get("pos") or {}
-            nx, nz = int(pos.get("x", 0)), int(pos.get("z", 0))
-            dx, dz = nx - hx, nz - hz
-            dist = float(max(abs(dx), abs(dz)))
-            self.all_npc_info.append((dist, float(dx), float(dz)))
-        self.all_npc_info.sort(key=lambda x: x[0])
-
-        # All charger info: (dist, dx, dz) sorted by distance
-        self.all_charger_info = []
-        for organ in self._organs:
-            if int(organ.get("sub_type", 1)) != 1:
-                continue
-            pos = organ.get("pos") or {}
-            cx, cz = int(pos.get("x", 0)), int(pos.get("z", 0))
-            half_w = max(int(organ.get("w", 3)) // 2, 0)
-            half_h = max(int(organ.get("h", 3)) // 2, 0)
-            dist_x = max(abs(hx - cx) - half_w, 0)
-            dist_z = max(abs(hz - cz) - half_h, 0)
-            dist = float(max(dist_x, dist_z))
-            self.all_charger_info.append((dist, float(cx - hx), float(cz - hz)))
-        self.all_charger_info.sort(key=lambda x: x[0])
-
-        self.directional_dirty = self._compute_directional_dirty()
-
-        self.local_dirt_density = float(np.mean(self._view_map == 2))
-        self.local_obstacle_density = float(np.mean(self._view_map == 0))
-        self.local_frontier_density = self._calc_local_frontier_density()
-        self.explored_ratio = float(np.mean(self.explored_map))
-        self.dirty_memory_ratio = float(np.mean(self.dirty_memory))
-        self._actual_legal_act = self._compute_actual_legal_actions()
-        self.actual_legal_ratio = float(np.mean(self._actual_legal_act))
-        self.wall_adjacent, self.dirty_adjacent = self._calc_adjacency()
-        self.current_mode = self._infer_mode()
-
-        # Coordinate validation: agent's position must be passable in global map
-        hx, hz = self.cur_pos
-        if 0 <= hx < self.GRID_SIZE and 0 <= hz < self.GRID_SIZE:
-            assert self.passable_map[hx, hz] >= 0.5, (
-                f"Coordinate bug! Agent at ({hx},{hz}) not passable in global map. "
-                f"passable_map[{hx},{hz}]={self.passable_map[hx, hz]}"
-            )
-
-    def _update_memory(self, hx, hz):
-        new_cells = 0
-        half = self.VIEW_HALF
-        for row in range(self.VIEW_SIZE):
-            for col in range(self.VIEW_SIZE):
+    def _update_passable(self, hx: int, hz: int) -> int:
+        """Merge current 21x21 observation into observed/passable maps."""
+        view = self._view_map
+        half = view.shape[0] // 2
+        new_observed = 0
+        for row in range(view.shape[0]):
+            for col in range(view.shape[1]):
                 gx = hx - half + col
                 gz = hz - half + row
-                if not (0 <= gx < self.GRID_SIZE and 0 <= gz < self.GRID_SIZE):
-                    continue
-                if self.explored_map[gx, gz] == 0:
-                    new_cells += 1
-                self.explored_map[gx, gz] = 1.0
-                cell = int(self._view_map[row, col])
-                prev_dirty = self.dirty_memory[gx, gz]
-                self.passable_map[gx, gz] = 1.0 if cell != 0 else 0.0
-                if cell == 2:
-                    self.dirty_memory[gx, gz] = 1.0
-                elif cell == 1:
-                    self.dirty_memory[gx, gz] = 0.0
-                    # NPC cleaned: was dirty, now clean, hero was NOT at this position
-                    if prev_dirty > 0.5 and not (gx == hx and gz == hz):
-                        self.npc_cleaned[gx, gz] = 1.0
-        return new_cells
+                if 0 <= gx < self.GRID_SIZE and 0 <= gz < self.GRID_SIZE:
+                    if self.observed_map[gz, gx] == 0:
+                        new_observed += 1
+                    self.observed_map[gz, gx] = 1
+                    self.passable_map[gz, gx] = 0 if int(view[row, col]) == 0 else 1
+        return new_observed
 
-    def _calc_nearest_dirt_dist(self):
-        dirt_coords = np.argwhere(self._view_map == 2)
-        if len(dirt_coords) == 0:
+    def _get_local_view_feature(self) -> np.ndarray:
+        """Centered 7x7 local crop normalized to [0, 1]."""
+        c = self.VIEW_HALF
+        h = self.LOCAL_HALF
+        crop = self._view_map[c - h: c + h + 1, c - h: c + h + 1]
+        return (crop / 2.0).flatten().astype(np.float32)
+
+    def _get_charger_feature(self) -> np.ndarray:
+        """Top-2 nearest chargers: [dist_norm, dir_x, dir_z] * 2."""
+        hx, hz = self.cur_pos
+        feats = []
+
+        sorted_c = sorted(
+            self.charger_positions,
+            key=lambda c: (c[0] - hx) ** 2 + (c[1] - hz) ** 2,
+        )
+
+        for idx in range(2):
+            if idx < len(sorted_c):
+                cx, cz = sorted_c[idx]
+                dist = float(np.sqrt((cx - hx) ** 2 + (cz - hz) ** 2))
+                dist_norm = _norm(dist, self.MAX_DIST)
+                if dist > 1e-5:
+                    dx_n = (cx - hx) / dist
+                    dz_n = (cz - hz) / dist
+                else:
+                    dx_n = 0.0
+                    dz_n = 0.0
+            else:
+                dist_norm = 1.0
+                dx_n = 0.0
+                dz_n = 0.0
+            feats.extend([dist_norm, dx_n, dz_n])
+
+        return np.asarray(feats, dtype=np.float32)
+
+    def _get_npc_feature(self) -> np.ndarray:
+        """Nearest NPC: [dist_norm, dir_x, dir_z]."""
+        hx, hz = self.cur_pos
+        if not self.npc_positions:
+            return np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
+
+        nx, nz = min(
+            self.npc_positions,
+            key=lambda n: (n[0] - hx) ** 2 + (n[1] - hz) ** 2,
+        )
+        dist = float(np.sqrt((nx - hx) ** 2 + (nz - hz) ** 2))
+        dist_norm = _norm(dist, self.MAX_DIST)
+        if dist > 1e-5:
+            dx_n = (nx - hx) / dist
+            dz_n = (nz - hz) / dist
+        else:
+            dx_n = 0.0
+            dz_n = 0.0
+        return np.asarray([dist_norm, dx_n, dz_n], dtype=np.float32)
+
+    def _get_unvisited_ratio(self) -> float:
+        """Ratio of local passable cells that have not been visited yet."""
+        hx, hz = self.cur_pos
+        c = self.VIEW_HALF
+        h = self.LOCAL_HALF
+        crop = self._view_map[c - h: c + h + 1, c - h: c + h + 1]
+
+        passable_cnt = 0
+        unvisited_cnt = 0
+        for row in range(7):
+            for col in range(7):
+                if int(crop[row, col]) == 0:
+                    continue
+                passable_cnt += 1
+                gx = hx - h + col
+                gz = hz - h + row
+                if (gx, gz) not in self.visited:
+                    unvisited_cnt += 1
+
+        return unvisited_cnt / max(passable_cnt, 1)
+
+    def _calc_nearest_dirt_dist(self) -> float:
+        coords = np.argwhere(self._view_map == 2)
+        if len(coords) == 0:
             return 200.0
         center = self.VIEW_HALF
-        chebyshev = np.max(np.abs(dirt_coords - center), axis=1)
-        return float(np.min(chebyshev))
+        dists = np.sqrt((coords[:, 0] - center) ** 2 + (coords[:, 1] - center) ** 2)
+        return float(np.min(dists))
 
-    def _nearest_charger_metrics(self):
-        hx, hz = self.cur_pos
-        best_dist = 200.0
-        best_dx = 0.0
-        best_dz = 0.0
-        for organ in self._organs:
-            if int(organ.get("sub_type", 1)) != 1:
+    def _in_bounds(self, pos: Position) -> bool:
+        return 0 <= pos[0] < self.GRID_SIZE and 0 <= pos[1] < self.GRID_SIZE
+
+    def _charger_region_key(self, region: Set[Position]) -> Position:
+        return min(region)
+
+    def _charger_region_center(self, region: Set[Position]) -> Position:
+        xs = sorted(cell[0] for cell in region)
+        zs = sorted(cell[1] for cell in region)
+        return (xs[len(xs) // 2], zs[len(zs) // 2])
+
+    def _get_dict(self, obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _parse_position(self, obj: Any) -> Position:
+        x = int(self._safe_float(self._get_dict(obj, "x", 0), 0.0))
+        z = int(self._safe_float(self._get_dict(obj, "z", 0), 0.0))
+        return (x, z)
+
+    def _parse_charger_regions(self, organs: Sequence[Any]) -> List[Set[Position]]:
+        regions: List[Set[Position]] = []
+        for organ in organs:
+            if int(self._safe_float(self._get_dict(organ, "sub_type", 0), 0.0)) != 1:
                 continue
-            pos = organ.get("pos") or {}
-            cx = int(pos.get("x", 0))
-            cz = int(pos.get("z", 0))
-            half_w = max(int(organ.get("w", 3)) // 2, 0)
-            half_h = max(int(organ.get("h", 3)) // 2, 0)
-            dist_x = max(abs(hx - cx) - half_w, 0)
-            dist_z = max(abs(hz - cz) - half_h, 0)
-            dist = float(max(dist_x, dist_z))
-            if dist < best_dist:
-                best_dist = dist
-                best_dx = float(cx - hx)
-                best_dz = float(cz - hz)
-        return best_dist, best_dx, best_dz
+            pos = self._parse_position(self._get_dict(organ, "pos", {}))
+            w = max(1, int(self._safe_float(self._get_dict(organ, "w", 3), 3.0)))
+            h = max(1, int(self._safe_float(self._get_dict(organ, "h", 3), 3.0)))
+            half_w = w // 2
+            half_h = h // 2
 
-    def _nearest_npc_metrics(self):
+            region: Set[Position] = set()
+            for dx in range(w):
+                for dz in range(h):
+                    region.add((pos[0] + dx, pos[1] + dz))
+            for dx in range(-half_w, half_w + 1):
+                for dz in range(-half_h, half_h + 1):
+                    region.add((pos[0] + dx, pos[1] + dz))
+
+            region = {cell for cell in region if self._in_bounds(cell)}
+            if region:
+                regions.append(region)
+        return regions
+
+    def _nearest_charger_distance(self) -> float:
         hx, hz = self.cur_pos
-        best_dist = 200.0
-        best_dx = 0.0
-        best_dz = 0.0
-        for npc in self._npcs:
-            pos = npc.get("pos") or {}
-            nx = int(pos.get("x", 0))
-            nz = int(pos.get("z", 0))
-            dx = nx - hx
-            dz = nz - hz
-            dist = float(max(abs(dx), abs(dz)))
-            if dist < best_dist:
-                best_dist = dist
-                best_dx = float(dx)
-                best_dz = float(dz)
-        return best_dist, best_dx, best_dz
+        if not self.charger_positions:
+            return self.MAX_DIST
+        return float(min(
+            np.sqrt((cx - hx) ** 2 + (cz - hz) ** 2)
+            for cx, cz in self.charger_positions
+        ))
 
-    def _cell_passable_local(self, dx, dz):
-        row = self.VIEW_HALF + dz
-        col = self.VIEW_HALF + dx
-        if not (0 <= row < self.VIEW_SIZE and 0 <= col < self.VIEW_SIZE):
-            return False
-        return int(self._view_map[row, col]) != 0
-
-    def _compute_actual_legal_actions(self):
-        actual = []
-        for dx, dz in self.ACTION_DELTAS:
-            legal = self._cell_passable_local(dx, dz)
-            if legal and dx != 0 and dz != 0:
-                legal = self._cell_passable_local(dx, 0) or self._cell_passable_local(0, dz)
-            actual.append(int(legal))
-        if sum(actual) == 0:
-            return [1] * self.ACTION_DIM
-        return actual
-
-    def _calc_adjacency(self):
-        """Count wall and dirty neighbors in 4 cardinal directions around agent."""
-        c = self.VIEW_HALF
-        wall = 0
-        dirty = 0
-        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            r, col = c + dr, c + dc
-            if 0 <= r < self.VIEW_SIZE and 0 <= col < self.VIEW_SIZE:
-                cell = int(self._view_map[r, col])
-                if cell == 0:
-                    wall += 1
-                elif cell == 2:
-                    dirty += 1
-        return wall, dirty
-
-    def _calc_local_frontier_density(self):
+    def _nearest_unarrived_charger_distance(self) -> float:
         hx, hz = self.cur_pos
-        passable = 0
-        frontier = 0
-        for row in range(self.VIEW_SIZE):
-            for col in range(self.VIEW_SIZE):
-                gx = hx - self.VIEW_HALF + col
-                gz = hz - self.VIEW_HALF + row
-                if not (0 <= gx < self.GRID_SIZE and 0 <= gz < self.GRID_SIZE):
-                    continue
-                if int(self._view_map[row, col]) == 0:
-                    continue
-                passable += 1
-                for ndx, ndz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                    nx = gx + ndx
-                    nz = gz + ndz
-                    if not (0 <= nx < self.GRID_SIZE and 0 <= nz < self.GRID_SIZE):
-                        frontier += 1
-                        break
-                    if self.explored_map[nx, nz] == 0:
-                        frontier += 1
-                        break
-        if passable == 0:
-            return 0.0
-        return float(frontier / passable)
+        unarrived_centers = []
+        for region in self.charger_regions:
+            region_key = self._charger_region_key(region)
+            if region_key in self.rewarded_arrived_charger_regions:
+                continue
+            unarrived_centers.append(self._charger_region_center(region))
 
-    def _get_local_map_feature(self):
-        obstacle = (self._view_map == 0).astype(np.float32)
-        cleaned = (self._view_map == 1).astype(np.float32)
-        dirt = (self._view_map == 2).astype(np.float32)
-        return np.stack([obstacle, cleaned, dirt], axis=0).reshape(-1)
+        if not unarrived_centers:
+            return self.MAX_DIST
 
-    def _get_global_memory_feature(self):
-        explored = self._pool_global_map(self.explored_map)
-        dirt = self._pool_global_map(self.dirty_memory)
-        visit_heat = self._pool_global_map(np.clip(self.visit_count / max(self.step_no + 1, 1), 0.0, 1.0))
-        return np.stack([explored, dirt, visit_heat], axis=0).reshape(-1)
+        return float(min(
+            np.sqrt((cx - hx) ** 2 + (cz - hz) ** 2)
+            for cx, cz in unarrived_centers
+        ))
 
-    def _pool_global_map(self, grid):
-        reshaped = grid.reshape(self.COARSE_SIZE, self.COARSE_BLOCK, self.COARSE_SIZE, self.COARSE_BLOCK)
-        return reshaped.mean(axis=(1, 3)).astype(np.float32)
+    def _get_global_state_feature(self) -> np.ndarray:
+        """Construct the 27D global handcrafted feature vector."""
+        hx, hz = self.cur_pos
 
-    def _last_action_one_hot(self, last_action):
-        encoded = np.zeros(self.LAST_ACTION_DIM, dtype=np.float32)
-        if last_action is None or last_action < 0 or last_action >= self.ACTION_DIM:
-            encoded[-1] = 1.0
-        else:
-            encoded[int(last_action)] = 1.0
-        return encoded
-
-    def _infer_mode(self):
-        battery_ratio = self.battery / max(self.battery_max, 1)
-        if self.nearest_npc_dist <= 4.0:
-            return self.MODE_EVADE
-        if self.charger_slack <= 4.0 or battery_ratio <= 0.16:
-            return self.MODE_CHARGE
-        return self.MODE_CLEAN
-
-    def _mode_flags(self):
-        return (
-            1.0 if self.current_mode == self.MODE_CLEAN else 0.0,
-            1.0 if self.current_mode == self.MODE_CHARGE else 0.0,
-            1.0 if self.current_mode == self.MODE_EVADE else 0.0,
-        )
-
-    def _get_scalar_feature(self, last_action):
-        dirt_delta = 1.0 if self.nearest_dirt_dist < self.last_nearest_dirt_dist else 0.0
+        step_norm = _norm(self.step_no, 2000)
         battery_ratio = _norm(self.battery, self.battery_max)
-        step_ratio = _norm(self.step_no, self.max_step)
-        low_battery_flag = 1.0 if (battery_ratio <= 0.18 or self.charger_slack <= 4.0) else 0.0
-        charge_pressure = float(np.clip((8.0 - self.charger_slack) / 8.0, 0.0, 1.0))
-        npc_risk_flag = float(np.clip((8.0 - self.nearest_npc_dist) / 8.0, 0.0, 1.0))
-        revisit_ratio = float(np.clip((self.cur_visit_count - 1) / 6.0, 0.0, 1.0))
-        mode_clean, mode_charge, mode_evade = self._mode_flags()
+        cleaning_progress = _norm(self.dirt_cleaned, self.total_dirt)
+        remaining_dirt = 1.0 - cleaning_progress
+        pos_x_norm = _norm(hx, self.GRID_SIZE)
+        pos_z_norm = _norm(hz, self.GRID_SIZE)
+        max_step_norm = _norm(self.episode_max_step, 2000, 1)
+        step_ratio = _norm(self.step_no, self.episode_max_step, 0)
+        time_left_ratio = max(0.0, 1.0 - step_ratio)
+        charger_count_norm = _norm(self.episode_charger_count, 4, 1)
+        observed_charger_ratio = min(len(self.charger_positions) / max(self.episode_charger_count, 1), 1.0)
+        battery_capacity_norm = _norm(self.battery_max, 999, 100)
+        nearest_charger_dist = self._nearest_charger_distance()
+        return_pressure = np.clip(nearest_charger_dist / max(float(self.battery), 1.0), 0.0, 1.5) / 1.5
 
-        scalar = np.array(
-            [
-                _norm(self.step_no, 2000),
-                step_ratio,
-                battery_ratio,
-                _norm(self.battery_max, 999.0, 100.0),
-                _norm(self.dirt_cleaned, self.total_dirt),
-                1.0 - _norm(self.dirt_cleaned, self.total_dirt),
-                _norm(self.cur_pos[0], self.GRID_SIZE - 1),
-                _norm(self.cur_pos[1], self.GRID_SIZE - 1),
-                _norm(self.nearest_dirt_dist, self.VIEW_HALF),
-                dirt_delta,
-                self.local_dirt_density,
-                self.local_obstacle_density,
-                self.local_frontier_density,
-                revisit_ratio,
-                _norm(self.stuck_steps, 20),
-                _norm(self.no_progress_steps, 80),
-                self.invalid_move_ema,
-                self.actual_legal_ratio,
-                _norm(self.charge_count, 50),
-                self.just_charged,
-                _norm(self.nearest_charger_dist, self.GRID_SIZE),
-                _clip_signed(self.nearest_charger_dx, self.GRID_SIZE),
-                _clip_signed(self.nearest_charger_dz, self.GRID_SIZE),
-                _clip_signed(self.charger_slack, max(self.battery_max, 1)),
-                low_battery_flag,
-                charge_pressure,
-                _norm(self.nearest_npc_dist, self.GRID_SIZE),
-                _clip_signed(self.nearest_npc_dx, self.GRID_SIZE),
-                _clip_signed(self.nearest_npc_dz, self.GRID_SIZE),
-                npc_risk_flag,
-                _norm(self.total_charger, 4, 1),
-                _norm(self.npc_count, 4, 1),
-                _norm(self.max_step, 2000),
-                self.explored_ratio,
-                self.dirty_memory_ratio,
-                _norm(self.cleaned_this_step, 12),
-                mode_clean,
-                mode_charge,
-                mode_evade,
-            ],
-            dtype=np.float32,
+        charger_feats = self._get_charger_feature()
+        npc_feats = self._get_npc_feature()
+
+        self._last_nearest_dirt_dist = self._nearest_dirt_dist
+        self._nearest_dirt_dist = self._calc_nearest_dirt_dist()
+        nearest_dirt_norm = _norm(self._nearest_dirt_dist, 180)
+        dirt_approaching = 1.0 if self._nearest_dirt_dist < self._last_nearest_dirt_dist else 0.0
+
+        unvisited_ratio = self._get_unvisited_ratio()
+        is_low_battery = 1.0 if self.battery <= 50 else 0.0
+
+        total_passable = max(int(np.count_nonzero(self.passable_map)), len(self.visited), 1)
+        exploration_progress = min(len(self.visited) / total_passable, 1.0)
+
+        feature = np.concatenate([
+            np.asarray(
+                [
+                    step_norm,
+                    battery_ratio,
+                    cleaning_progress,
+                    remaining_dirt,
+                    pos_x_norm,
+                    pos_z_norm,
+                ],
+                dtype=np.float32,
+            ),
+            charger_feats,
+            npc_feats,
+            np.asarray(
+                [
+                    nearest_dirt_norm,
+                    dirt_approaching,
+                    unvisited_ratio,
+                    is_low_battery,
+                    exploration_progress,
+                    max_step_norm,
+                    step_ratio,
+                    time_left_ratio,
+                    charger_count_norm,
+                    observed_charger_ratio,
+                    battery_capacity_norm,
+                    return_pressure,
+                ],
+                dtype=np.float32,
+            ),
+        ])
+        return feature.astype(np.float32)
+
+    def reward_process(self) -> float:
+        """
+        Reward shaping keeps the original cleaning incentive,
+        and adds late-stage efficiency pressure.
+        """
+        cleaned_this_step = max(0, self.dirt_cleaned - self.last_dirt_cleaned)
+        cleaning_progress = self.dirt_cleaned / max(self.total_dirt, 1)
+        prev_battery_ratio = _norm(self.prev_battery, self.battery_max)
+        cur_battery_ratio = _norm(self.battery, self.battery_max)
+        charge_gain_ratio = max(0.0, cur_battery_ratio - prev_battery_ratio)
+        nearest_charger_dist = self._nearest_charger_distance()
+        charger_known = nearest_charger_dist < self.MAX_DIST
+        is_on_charger = any(self.cur_pos in region for region in self.charger_regions)
+        is_starving = (
+            charger_known
+            and not is_on_charger
+            and float(self.battery) <= nearest_charger_dist + 20.0
+        )
+        cleaning_reward = 0.22 * cleaned_this_step
+        explore_reward = 0.003 * min(self.new_observed_cells, 12) * max(0.0, 1.0 - cleaning_progress)
+        approach_reward = 0.01 if cleaned_this_step == 0 and self._nearest_dirt_dist < self._last_nearest_dirt_dist else 0.0
+        fresh_path_reward = 0.0
+        if self.cur_revisit_count == 0:
+            fresh_path_reward = 0.012
+        elif self.cur_revisit_count == 1:
+            fresh_path_reward = 0.006
+        fresh_path_reward *= max(0.4, 1.0 - 0.5 * cleaning_progress)
+        unarrived_charger_progress_reward = 0.0
+        if is_starving:
+            cleaning_reward = 0.0
+            explore_reward = 0.0
+            approach_reward = 0.0
+        # Shift charging preference earlier and punish staying in the dangerous low-battery zone.
+        charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
+        low_capacity_factor = np.clip((260.0 - float(self.battery_max)) / 160.0, 0.0, 1.0)
+        target_low = np.clip(0.32 + 0.05 * charger_scarcity + 0.03 * low_capacity_factor, 0.30, 0.42)
+        target_high = np.clip(0.58 + 0.04 * charger_scarcity + 0.03 * low_capacity_factor, 0.54, 0.68)
+        if prev_battery_ratio < target_low:
+            charge_timing_factor = prev_battery_ratio / max(target_low, 1e-6)
+        elif prev_battery_ratio <= target_high:
+            charge_timing_factor = 1.0
+        else:
+            charge_timing_factor = max(
+                0.0,
+                1.0 - (prev_battery_ratio - target_high) / max(1.0 - target_high, 1e-6),
+            )
+        charge_efficiency_reward = 1.20 * charge_gain_ratio * charge_timing_factor
+        charge_event_reward = 0.0
+        if charge_gain_ratio > 0.015:
+            # Charging too late means the robot entered a dangerous state first.
+            if prev_battery_ratio < 0.18:
+                charge_event_reward -= 0.18 + 0.22 * (0.18 - prev_battery_ratio) / 0.18
+            # Sweet zone: charge before risk becomes critical, while still using battery effectively.
+            elif prev_battery_ratio <= 0.45:
+                if prev_battery_ratio < 0.28:
+                    charge_event_reward += 0.22 + 0.10 * (prev_battery_ratio - 0.18) / 0.10
+                else:
+                    charge_event_reward += 0.32
+            # Charging too early wastes exploration time and battery utilization.
+            elif prev_battery_ratio <= 0.60:
+                charge_event_reward -= 0.08 * (prev_battery_ratio - 0.45) / 0.15
+            else:
+                charge_event_reward -= 0.16 + 0.24 * (prev_battery_ratio - 0.60) / 0.40
+        low_battery_penalty = -0.035 * max(0.0, target_low - cur_battery_ratio) / max(target_low, 1e-6)
+        critical_battery_penalty = -0.090 * max(0.0, 0.22 - cur_battery_ratio) / 0.22
+        unarrived_progress = (
+            self._last_nearest_unarrived_charger_dist - self._nearest_unarrived_charger_dist
+        )
+        if (
+            charger_known
+            and not is_starving
+            and not is_on_charger
+            and self._nearest_unarrived_charger_dist < self.MAX_DIST
+            and cur_battery_ratio >= target_low + 0.05
+            and unarrived_progress > 0.0
+        ):
+            unarrived_charger_progress_reward = 0.012 * np.clip(unarrived_progress / 2.0, 0.0, 1.5)
+        revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
+        step_penalty = -(0.001 + 0.002 * cleaning_progress)
+        if is_starving:
+            step_penalty *= 2.5
+        charger_arrival_reward = self.new_charger_arrival_reward * max(0.60, 1.0 - 0.35 * cleaning_progress)
+
+        return (
+            cleaning_reward
+            + explore_reward
+            + approach_reward
+            + fresh_path_reward
+            + unarrived_charger_progress_reward
+            + charge_efficiency_reward
+            + charge_event_reward
+            + charger_arrival_reward
+            + low_battery_penalty
+            + critical_battery_penalty
+            + revisit_penalty
+            + step_penalty
         )
 
-        # All 4 NPC slots (padding missing with far-away sentinel)
-        PAD = (200.0, 0.0, 0.0)
-        npc1 = self.all_npc_info[0] if len(self.all_npc_info) > 0 else PAD
-        npc2 = self.all_npc_info[1] if len(self.all_npc_info) > 1 else PAD
-        npc3 = self.all_npc_info[2] if len(self.all_npc_info) > 2 else PAD
-        npc4 = self.all_npc_info[3] if len(self.all_npc_info) > 3 else PAD
-        # All 4 charger slots
-        ch1 = self.all_charger_info[0] if len(self.all_charger_info) > 0 else PAD
-        ch2 = self.all_charger_info[1] if len(self.all_charger_info) > 1 else PAD
-        ch3 = self.all_charger_info[2] if len(self.all_charger_info) > 2 else PAD
-        ch4 = self.all_charger_info[3] if len(self.all_charger_info) > 3 else PAD
+    def get_legal_action(self) -> list:
+        return list(self._legal_act)
 
-        extra = np.array(
-            [
-                _norm(npc2[0], self.GRID_SIZE),
-                _clip_signed(npc2[1], self.GRID_SIZE),
-                _clip_signed(npc2[2], self.GRID_SIZE),
-                _norm(npc3[0], self.GRID_SIZE),
-                _clip_signed(npc3[1], self.GRID_SIZE),
-                _clip_signed(npc3[2], self.GRID_SIZE),
-                _norm(npc4[0], self.GRID_SIZE),
-                _clip_signed(npc4[1], self.GRID_SIZE),
-                _clip_signed(npc4[2], self.GRID_SIZE),
-                _norm(ch2[0], self.GRID_SIZE),
-                _clip_signed(ch2[1], self.GRID_SIZE),
-                _clip_signed(ch2[2], self.GRID_SIZE),
-                _norm(ch3[0], self.GRID_SIZE),
-                _clip_signed(ch3[1], self.GRID_SIZE),
-                _clip_signed(ch3[2], self.GRID_SIZE),
-                _norm(ch4[0], self.GRID_SIZE),
-                _clip_signed(ch4[1], self.GRID_SIZE),
-                _clip_signed(ch4[2], self.GRID_SIZE),
-                *self.directional_dirty,
-            ],
-            dtype=np.float32,
-        )
-
-        return np.concatenate([scalar, extra, self._last_action_one_hot(last_action)], axis=0)
-
-    def get_legal_action(self):
-        merged = [int(a and b) for a, b in zip(self._legal_act, self._actual_legal_act)]
-        if sum(merged) == 0:
-            return list(self._actual_legal_act)
-        return merged
-
-    def _compute_directional_dirty(self):
-        """Compute directional dirty density for each of 8 action directions."""
-        hx, hz = self.cur_pos
-        result = np.zeros(self.ACTION_DIM, dtype=np.float32)
-        for i, (ddx, ddz) in enumerate(self.ACTION_DELTAS):
-            total = 0.0
-            count = 0
-            for r in range(1, 6):
-                gx = hx + ddx * r
-                gz = hz + ddz * r
-                if 0 <= gx < self.GRID_SIZE and 0 <= gz < self.GRID_SIZE:
-                    total += float(self.dirty_memory[gx, gz])
-                    count += 1
-            result[i] = total / max(count, 1)
-        return result
-
-    def feature_process(self, env_obs, last_action):
-        self._last_action = last_action
+    def feature_process(self, env_obs: dict, last_action: int):
         self.pb2struct(env_obs, last_action)
 
-        local_map = self._get_local_map_feature()
-        global_memory = self._get_global_memory_feature()
-        scalar_state = self._get_scalar_feature(last_action)
+        local_view = self._get_local_view_feature()
+        global_state = self._get_global_state_feature()
         legal_action = self.get_legal_action()
-        legal_arr = np.array(legal_action, dtype=np.float32)
+        legal_arr = np.asarray(legal_action, dtype=np.float32)
 
-        feature = np.concatenate([local_map, global_memory, scalar_state, legal_arr], axis=0).astype(np.float32)
-        reward, reward_components = self.reward_process()
-        return feature, legal_action, reward, reward_components
-
-    def reward_process(self):
-        # Primary cleaning reward
-        cleaning_reward = 1.5 * float(self.cleaned_this_step)
-
-        # Cleaning streak bonus
-        streak_bonus = 0.15 * min(float(self.cleaned_this_step > 0), 1.0) * min(self.consecutive_clean_steps, 5)
-
-        # Edge-following bonus: reward walking near dirty boundaries
-        edge_bonus = 0.06 * min(self.dirty_adjacent / 2.0, 1.0)
-
-        # Exploration reward
-        explore_reward = 0.05 * float(min(self.new_explored_cells, 6))
-
-        # Frontier reward: scales with cleaning progress
-        clean_ratio = _norm(self.dirt_cleaned, self.total_dirt)
-        frontier_reward = 0.15 * self.local_frontier_density * (0.5 + 0.5 * clean_ratio)
-
-        # Charger approach reward
-        charge_pressure = float(np.clip((8.0 - self.charger_slack) / 8.0, 0.0, 1.0))
-        delta_charger_slack = np.clip(
-            (self.charger_slack - self.last_charger_slack) / max(self.battery_max, 1),
-            -1.0,
-            1.0,
-        )
-        charger_reward = 0.40 * charge_pressure * float(delta_charger_slack)
-
-        # Charger path exploration: reward exploring toward known charger
-        # Encourages lighting up the path to charger when area is unexplored
-        charger_path_explore = 0.0
-        if self.nearest_charger_dist < 200.0 and self.new_explored_cells > 0:
-            # delta_dist < 0 means we moved closer to charger
-            delta_dist = self.nearest_charger_dist - self.last_nearest_charger_dist
-            if delta_dist < 0:
-                # Reward proportional to how much closer we got + explored new cells
-                charger_path_explore = 0.12 * min(self.new_explored_cells, 4) * min(float(-delta_dist), 3.0) / 3.0
-
-        # Charging reward: efficiency-based — actual charge received / battery capacity
-        if self.just_charged:
-            charge_received = max(0.0, float(self.battery - self.pre_charge_battery + 1))
-            efficiency = charge_received / max(self.battery_max, 1)
-            charge_reward = 3.0 * efficiency  # [0, 3.0], scales with actual charge
-        else:
-            charge_reward = 0.0
-
-        # NPC avoidance: range 10, coeff 3.0, power 1.5 + direction penalty
-        npc_risk = float(np.clip((10.0 - self.nearest_npc_dist) / 10.0, 0.0, 1.0))
-        npc_penalty = -3.0 * npc_risk ** 1.5
-
-        # Direction penalty: moving toward NPC is penalized (Chebyshev normalization)
-        if self._last_action >= 0 and self._last_action < 8:
-            _adx, _adz = self.ACTION_DELTAS[self._last_action]
-            for _npc_dist, _ndx, _ndz in self.all_npc_info:
-                if _npc_dist > 8.0:
-                    break
-                if _npc_dist < 1.0:
-                    continue
-                _nlen = max(max(abs(_ndx), abs(_ndz)), 1.0)
-                _dot = (_adx * _ndx + _adz * _ndz) / _nlen
-                if _dot > 0:
-                    _closeness = (8.0 - _npc_dist) / 8.0
-                    npc_penalty -= 0.5 * _dot * _closeness
-
-        # NPC-cleaned cell penalty: discourage wasting time on NPC-cleaned areas
-        hx, hz = self.cur_pos
-        npc_cleaned_here = float(self.npc_cleaned[hx, hz]) if (
-            0 <= hx < self.GRID_SIZE and 0 <= hz < self.GRID_SIZE
-        ) else 0.0
-        npc_cleaned_penalty = -0.3 * npc_cleaned_here
-
-        # Revisit penalty: three-component system
-        _in_bounds = 0 <= hx < self.GRID_SIZE and 0 <= hz < self.GRID_SIZE
-
-        # Component A: penalize stepping on already-cleaned cells
-        _cell_is_clean = (
-            _in_bounds
-            and self.explored_map[hx, hz] > 0
-            and self.dirty_memory[hx, hz] < 0.5
-            and self.cleaned_this_step == 0
-        )
-        if _cell_is_clean:
-            revisit_penalty = -0.12 * float(np.clip(self.cur_visit_count - 1, 0.0, 3.0))
-        else:
-            revisit_penalty = 0.0
-
-        # Component B: large-area cleaned zone penalty
-        if _in_bounds and self._view_map is not None:
-            _local_clean = float(np.mean(self._view_map == 1))
-            _local_dirty = float(np.mean(self._view_map == 2))
-            if _local_clean > 0.50 and _local_dirty < 0.03:
-                revisit_penalty -= 0.10 * (_local_clean - 0.50)
-
-        # Component C: mode suppression for evade/charge
-        if self.current_mode == self.MODE_EVADE:
-            revisit_penalty = 0.0
-        elif self.current_mode == self.MODE_CHARGE:
-            revisit_penalty *= 0.2
-
-        # Stuck penalty: escalating with duration
-        stuck_penalty = -0.5 * self.last_move_invalid - 0.25 * _norm(self.stuck_steps, 10)
-
-        # Idle penalty
-        idle_penalty = -0.1 * float(np.clip(self.no_progress_steps / 15.0, 0.0, 1.0))
-
-        # Directional dirty approach reward: guide toward dirty-dense directions
-        dirty_approach_reward = 0.0
-        if (self._last_action >= 0 and self._last_action < 8
-                and self.local_dirt_density > 0.02
-                and np.max(self.directional_dirty) > 0.03):
-            dirty_approach_reward = 0.08 * self.directional_dirty[self._last_action]
-
-        # CPS EMA efficiency reward: per-step CPS signal
-        if self.cleaned_this_step > 0:
-            self._cps_ema = 0.95 * self._cps_ema + 0.05 * 1.0
-        else:
-            self._cps_ema = 0.95 * self._cps_ema + 0.05 * 0.0
-        efficiency_reward = 0.3 * max(self._cps_ema - 0.75, 0)
-
-        # Urgency penalty: 3-tier local signal when battery can't reach charger
-        urgency_penalty = 0.0
-        if not self.just_charged:
-            if self.charger_slack < -8:
-                # Nearly certain death - emergency signal
-                urgency_penalty = -1.2
-            elif self.charger_slack < 0:
-                # Past point of no return - clear return signal
-                urgency_penalty = -0.6 * min(float(-self.charger_slack) / 8.0, 1.0)
-            elif self.charger_slack < 5 and (self.battery / max(self.battery_max, 1)) < 0.20:
-                # Low battery and tight margin - gentle warning
-                urgency_penalty = -0.3
-
-        reward = (
-            cleaning_reward
-            + streak_bonus
-            + edge_bonus
-            + explore_reward
-            + frontier_reward
-            + charger_reward
-            + charger_path_explore
-            + charge_reward
-            + npc_penalty
-            + npc_cleaned_penalty
-            + revisit_penalty
-            + stuck_penalty
-            + idle_penalty
-            + dirty_approach_reward
-            + efficiency_reward
-            + urgency_penalty
-        )
-        components = {
-            "cleaning": cleaning_reward,
-            "streak": streak_bonus,
-            "edge": edge_bonus,
-            "explore": explore_reward,
-            "frontier": frontier_reward,
-            "charger_approach": charger_reward,
-            "charge": charge_reward,
-            "npc": npc_penalty,
-            "npc_cleaned": npc_cleaned_penalty,
-            "revisit": revisit_penalty,
-            "stuck": stuck_penalty,
-            "idle": idle_penalty,
-            "dirty_approach": dirty_approach_reward,
-            "efficiency": efficiency_reward,
-            "urgency": urgency_penalty,
-        }
-        return float(np.clip(reward, -5.0, 5.0)), components
+        feature = np.concatenate([local_view, global_state, legal_arr]).astype(np.float32)
+        reward = self.reward_process()
+        return feature, legal_action, reward

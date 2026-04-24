@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from agent_ppo.algorithm.algorithm import CoveragePlanner
 from agent_ppo.conf.conf import Config
 from agent_ppo.feature.definition import SampleData, sample_process
 from agent_ppo.utils.experiment_archive import ExperimentArchive, infer_fail_reason
@@ -40,8 +41,8 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
             "algorithm": os.getenv("KAIWU_ALGORITHM") or "ppo",
             "usr_conf": usr_conf,
             "training_strategy": {
-                "policy_blending": "model_logits_plus_heuristic_bias",
-                "curriculum": "anchor_mild_broad_randomization",
+                "policy_blending": "coverage_planner_residual_policy",
+                "curriculum": "win_env_sampler_with_yjy_defaults",
                 "selection_target": "clean_score_with_robustness",
             },
         }
@@ -70,6 +71,63 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
             g_data.clear()
 
 
+class ResidualScheduler:
+    """Adaptive scheduler that gradually lets PPO take more control."""
+
+    def __init__(self):
+        self.alpha = Config.RESIDUAL_ALPHA_START
+        self.ema_score = None
+        self.best_ema = float("-inf")
+        self.stale_episodes = 0
+        self.episode_cnt = 0
+
+    def action_alpha(self, target_mode):
+        alpha = self.alpha
+        if target_mode == "charge":
+            alpha = min(alpha, Config.RESIDUAL_ALPHA_CHARGE_CAP)
+        elif target_mode == "fallback":
+            alpha = min(alpha, Config.RESIDUAL_ALPHA_FALLBACK_CAP)
+        return float(np.clip(alpha, 0.0, Config.RESIDUAL_ALPHA_MAX))
+
+    def update(self, episode_score, cleaning_ratio):
+        self.episode_cnt += 1
+
+        decay = Config.RESIDUAL_SCORE_EMA_DECAY
+        if self.ema_score is None:
+            self.ema_score = float(episode_score)
+        else:
+            self.ema_score = decay * self.ema_score + (1.0 - decay) * float(episode_score)
+
+        warmup_t = min(1.0, self.episode_cnt / max(Config.RESIDUAL_WARMUP_EPISODES, 1))
+        warmup_alpha = (
+            Config.RESIDUAL_ALPHA_START
+            + (Config.RESIDUAL_ALPHA_WARMUP_TARGET - Config.RESIDUAL_ALPHA_START) * warmup_t
+        )
+        self.alpha = max(self.alpha, warmup_alpha)
+
+        if self.ema_score > self.best_ema + Config.RESIDUAL_SCORE_IMPROVE:
+            self.best_ema = self.ema_score
+            self.stale_episodes = 0
+        else:
+            self.stale_episodes += 1
+
+        if (
+            self.stale_episodes >= Config.RESIDUAL_PLATEAU_PATIENCE
+            and self.ema_score >= Config.RESIDUAL_PLATEAU_SCORE
+        ):
+            bonus = Config.RESIDUAL_ALPHA_STEP * (1.0 + 0.5 * max(0.0, cleaning_ratio - 0.85))
+            self.alpha = min(Config.RESIDUAL_ALPHA_MAX, self.alpha + bonus)
+            self.stale_episodes = 0
+        elif self.best_ema - self.ema_score >= Config.RESIDUAL_SCORE_DROP:
+            self.alpha = max(
+                Config.RESIDUAL_ALPHA_START,
+                self.alpha - 0.5 * Config.RESIDUAL_ALPHA_STEP,
+            )
+            self.stale_episodes = 0
+
+        return self.alpha
+
+
 class EnvConfigSampler:
     def __init__(self, usr_conf):
         self.base_usr_conf = deepcopy(usr_conf)
@@ -90,19 +148,14 @@ class EnvConfigSampler:
 
     def sample(self, episode_idx):
         stage = self._stage_name(episode_idx)
-        profile = self._pick_profile(stage)
+        profile = "fixed"
         env_conf = deepcopy(self.base_env_conf)
-
-        if profile == "anchor":
-            env_conf["map_random"] = self.base_map_random
-            env_conf["map"] = list(self.maps)
-        else:
-            env_conf["map_random"] = True
-            env_conf["map"] = self._sample_maps(profile)
-            env_conf["robot_count"] = self._sample_robot_count(profile)
-            env_conf["charger_count"] = self._sample_charger_count(profile)
-            env_conf["max_step"] = self._sample_max_step(profile)
-            env_conf["battery_max"] = self._sample_battery_max(profile)
+        env_conf["map_random"] = True
+        env_conf["map"] = list(self.maps)
+        env_conf["robot_count"] = self.base_robot_count
+        env_conf["charger_count"] = self.base_charger_count
+        env_conf["max_step"] = self.base_max_step
+        env_conf["battery_max"] = self.base_battery_max
 
         sampled_usr_conf = self._wrap_env_conf(env_conf)
         meta = {
@@ -209,9 +262,18 @@ class EpisodeRunner:
         self.logger = logger
         self.monitor = monitor
         self.archive = archive
+        self.planner = CoveragePlanner()
+        self.scheduler = ResidualScheduler()
         self.episode_cnt = 0
         self.last_report_monitor_time = 0
         self.last_get_training_metrics_time = 0
+        self.current_mix_alpha = Config.RESIDUAL_ALPHA_START
+        self.current_target_mode = "explore"
+        self.current_episode_invalid_moves = 0
+        self.last_charger_arrived_count = 0
+        self.last_charger_first_arrival_step = -1
+        self.last_charger_second_arrival_step = -1
+        self.last_charger_third_arrival_step = -1
 
         self.failure_counts = {
             "battery": 0,
@@ -443,6 +505,23 @@ class EpisodeRunner:
                 continue
 
             self.agent.reset(env_obs)
+            self.planner.reset()
+            episode_max_step = int(sampled_env_conf.get("max_step", 1000))
+            episode_robot_count = int(sampled_env_conf.get("robot_count", 4))
+            episode_charger_count = int(sampled_env_conf.get("charger_count", 4))
+            episode_battery_max = int(sampled_env_conf.get("battery_max", 200))
+            self.agent.set_episode_config(
+                max_step=episode_max_step,
+                robot_count=episode_robot_count,
+                charger_count=episode_charger_count,
+                battery_max=episode_battery_max,
+            )
+            self.planner.set_episode_config(
+                max_step=episode_max_step,
+                robot_count=episode_robot_count,
+                charger_count=episode_charger_count,
+                battery_max=episode_battery_max,
+            )
             self.agent.load_model(id="latest")
 
             obs_data, _ = self.agent.observation_process(env_obs)
@@ -452,14 +531,32 @@ class EpisodeRunner:
             done = False
             step = 0
             total_reward = 0.0
+            last_alpha = self.scheduler.action_alpha(self.current_target_mode)
+            self.current_episode_invalid_moves = 0
 
             self.logger.info(
                 f"Episode {self.episode_cnt} start "
-                f"stage={sampled_meta['stage']} profile={sampled_meta['profile']} env={sampled_env_conf}"
+                f"stage={sampled_meta['stage']} profile={sampled_meta['profile']} "
+                f"alpha={last_alpha:.3f} max_step={episode_max_step} "
+                f"robot_count={episode_robot_count} charger_count={episode_charger_count} "
+                f"battery_max={episode_battery_max} env={sampled_env_conf}"
             )
 
             while not done:
-                act_data = self.agent.predict([obs_data])[0]
+                pre_step_obs = env_obs.get("observation") or {}
+                pre_frame_state = pre_step_obs.get("frame_state") or {}
+                pre_hero = pre_frame_state.get("heroes") or {}
+                pre_pos = pre_hero.get("pos") or {}
+                prev_pos = (int(pre_pos.get("x", 0)), int(pre_pos.get("z", 0)))
+
+                policy_info = self.planner.update(env_obs, self.agent.last_action)
+                self.current_target_mode = policy_info.target_mode
+                last_alpha = self.scheduler.action_alpha(self.current_target_mode)
+                act_data = self.agent.guided_predict(
+                    [obs_data],
+                    policy_info=policy_info,
+                    residual_alpha=last_alpha,
+                )[0]
                 act = self.agent.action_process(act_data)
 
                 env_reward, env_obs = self.env.step(act)
@@ -482,12 +579,24 @@ class EpisodeRunner:
                 step += 1
                 done = terminated or truncated
 
+                post_step_obs = env_obs.get("observation") or {}
+                post_frame_state = post_step_obs.get("frame_state") or {}
+                post_hero = post_frame_state.get("heroes") or {}
+                post_pos = post_hero.get("pos") or {}
+                next_pos = (int(post_pos.get("x", 0)), int(post_pos.get("z", 0)))
+                if next_pos == prev_pos:
+                    self.current_episode_invalid_moves += 1
+
                 # Record death trajectory snapshot
                 fm = self.agent.preprocessor
                 self.death_trajectory_buffer.append({
-                    "step": step, "battery": fm.battery, "battery_max": fm.battery_max,
-                    "charger_slack": fm.charger_slack, "nearest_npc_dist": fm.nearest_npc_dist,
-                    "mode": fm.current_mode, "action": self.agent.last_action,
+                    "step": step,
+                    "battery": getattr(fm, "battery", 0),
+                    "battery_max": getattr(fm, "battery_max", 0),
+                    "charger_slack": float(getattr(policy_info, "charger_slack", 0.0)),
+                    "nearest_npc_dist": float(getattr(policy_info, "nearest_npc_distance", 999.0)),
+                    "mode": self.current_target_mode,
+                    "action": self.agent.last_action,
                 })
                 if len(self.death_trajectory_buffer) > self.DEATH_TRAJ_LENGTH:
                     self.death_trajectory_buffer.pop(0)
@@ -516,7 +625,7 @@ class EpisodeRunner:
                 collector.append(
                     SampleData(
                         obs=np.array(obs_data.feature, dtype=np.float32),
-                        legal_action=np.array(obs_data.legal_action, dtype=np.float32),
+                        legal_action=np.array(act_data.action_mask, dtype=np.float32),
                         act=np.array(act_data.action),
                         reward=reward_arr,
                         done=np.array([float(done)]),
@@ -525,11 +634,20 @@ class EpisodeRunner:
                         next_value=np.zeros(Config.VALUE_NUM, dtype=np.float32),
                         advantage=np.zeros(Config.VALUE_NUM, dtype=np.float32),
                         prob=np.array(act_data.prob, dtype=np.float32),
+                        planner_prob=np.array(act_data.planner_prob, dtype=np.float32),
+                        mix_alpha=np.array(act_data.mix_alpha, dtype=np.float32),
                     )
                 )
 
                 if done:
                     collector[-1].reward = collector[-1].reward + np.array([final_reward], dtype=np.float32)
+                    cleaning_ratio = self.agent.preprocessor.dirt_cleaned / max(self.agent.preprocessor.total_dirt, 1)
+                    self.current_mix_alpha = self.scheduler.update(self.last_clean_score, cleaning_ratio)
+                    self.logger.info(
+                        f"[RESIDUAL] ep={self.episode_cnt} mode={self.current_target_mode} "
+                        f"alpha={last_alpha:.3f}->{self.current_mix_alpha:.3f} "
+                        f"score={self.last_clean_score:.1f} clean_ratio={cleaning_ratio:.3f}"
+                    )
 
                     if self.is_new_best:
                         self._save_best_model(self.last_clean_score)
@@ -571,6 +689,15 @@ class EpisodeRunner:
         clean_score = float(env_info.get("clean_score", total_score))
         battery = hero.get("battery")
         extra_info = env_obs.get("extra_info") or observation.get("extra_info") or {}
+        arrival_steps = sorted(int(step_no) for step_no in getattr(fm, "charger_arrival_steps", {}).values())
+        charger_arrived_count = len(arrival_steps)
+        first_arrival_step = arrival_steps[0] if charger_arrived_count >= 1 else -1
+        second_arrival_step = arrival_steps[1] if charger_arrived_count >= 2 else -1
+        third_arrival_step = arrival_steps[2] if charger_arrived_count >= 3 else -1
+        self.last_charger_arrived_count = charger_arrived_count
+        self.last_charger_first_arrival_step = first_arrival_step
+        self.last_charger_second_arrival_step = second_arrival_step
+        self.last_charger_third_arrival_step = third_arrival_step
 
         fail_reason = infer_fail_reason(
             terminated=terminated,
@@ -615,7 +742,7 @@ class EpisodeRunner:
             self.death_trajectory_buffer.clear()
         elif fail_reason == "completed":
             self.death_trajectory_buffer.clear()
-        invalid_move_rate = fm.invalid_move_count / max(step, 1)
+        invalid_move_rate = self.current_episode_invalid_moves / max(step, 1)
         charge_count = float(env_info.get("charge_count", 0))
         finished_steps = float(env_info.get("finished_steps", step))
         remaining_charge = float(env_info.get("remaining_charge", battery or 0))
@@ -642,6 +769,8 @@ class EpisodeRunner:
             f"total_reward:{total_reward:.3f} clean_score:{clean_score:.1f} "
             f"dirt_cleaned:{fm.dirt_cleaned}/{fm.total_dirt} "
             f"invalid_move_rate:{invalid_move_rate:.3f} "
+            f"charger_arrivals:{charger_arrived_count} "
+            f"arrival_steps:[{first_arrival_step},{second_arrival_step},{third_arrival_step}] "
             f"profile:{sampled_meta['profile']} "
             f"map:{map_id} chargers:{actual_charger_count} robots:{actual_robot_count}"
         )
@@ -714,7 +843,11 @@ class EpisodeRunner:
             "invalid_move_rate": round(invalid_move_rate, 4),
             "charge_efficiency": round(charge_efficiency, 4),
             "clean_per_step": round(clean_per_step, 4),
-            "mode": int(getattr(fm, "current_mode", -1)),
+            "charger_arrived_count": charger_arrived_count,
+            "charger_first_arrival_step": first_arrival_step,
+            "charger_second_arrival_step": second_arrival_step,
+            "charger_third_arrival_step": third_arrival_step,
+            "mode": self.current_target_mode,
             "sampled_env_conf": deepcopy(sampled_env_conf),
         }
         self.archive.log_episode_summary(episode_payload)
@@ -781,6 +914,11 @@ class EpisodeRunner:
             "battery_fail_rate": round(battery_fail_rate, 4),
             "collision_fail_rate": round(collision_fail_rate, 4),
             "completed_rate": round(completed_rate, 4),
+            "mix_alpha": round(self.current_mix_alpha, 4),
+            "charger_arrived_count": self.last_charger_arrived_count,
+            "charger_first_arrival_step": self.last_charger_first_arrival_step,
+            "charger_second_arrival_step": self.last_charger_second_arrival_step,
+            "charger_third_arrival_step": self.last_charger_third_arrival_step,
         }
 
 
