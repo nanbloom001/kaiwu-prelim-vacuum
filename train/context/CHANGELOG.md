@@ -10,6 +10,8 @@
 2026-04-25 07:15 | T1: Baseline capture anchored at HEAD a34e9aa with origin/win_YJY; validate resume_best latest alignment and mutation-guard inventory.
 2026-04-25 08:05 | T4: Guarded best checkpoint promotion so only completed episodes can update robust best state; failure telemetry remains intact.
 2026-04-25 08:30 | T5: Added coverage-target-only return buffer in algorithm.py to tighten battery gating without changing global return margins or charge-mode A*.
+2026-04-25 08:45 | T6: Added safe closed-loop dry-run/decision runner for Train→Benchmark→Analyze→Accept/Rollback gating without starting Docker.
+2026-04-25 09:00 | T6-fix: Corrected closed-loop accept gating so >900 score still requires completed-rate and clean_per_step stability checks.
 
 ## 2026-04-15
 
