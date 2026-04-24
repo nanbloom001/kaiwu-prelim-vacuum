@@ -6,6 +6,9 @@
 2026-04-25 05:58 | Enhanced holdout analyzer with failure classification, missing replay fallback, and single next_step NEED_MORE_DATA/actionable diagnostics.
 2026-04-25 06:07 | Fixed holdout analyzer reason predicates so battery_fail/out_of_battery/battery_death and collision_fail aliases count/classify correctly.
 
+2026-04-25 07:04 | T0: Adapt LTSPPO charge constraint benchmark design; local holdout benchmark scaffolding prepared (inference-only evaluation, per-episode env config injection, and metric artifacts).
+2026-04-25 07:15 | T1: Baseline capture anchored at HEAD a34e9aa with origin/win_YJY; validate resume_best latest alignment and mutation-guard inventory.
+
 ## 2026-04-15
 
 ~14:00 | 训练全周期瓶颈分析报告完成。覆盖 v4→v5.4 全部 7 个瓶颈：entropy 塨缩（已解决）、Expert-RL 梯度对抗（核心结构性问题）、碰撞死亡（v5.4 修复 89%）、电池死亡（当前主瓶颈，bias 3-8 太弱）、GAE 长周期 credit 衰减（γλ^50=4.7%）、Reward 失衡（清扫:充电=60:1）、Peak-Then-Decline 训练曲线。含 18 例碰撞 + 14 例电池死亡完整日志。评估 4 个网络框架改动方向：LSTM 时序层、n-step return、势函数 reward shaping、分层策略。详见 BOTTLENECK_ANALYSIS_FULL_20260415.md。
