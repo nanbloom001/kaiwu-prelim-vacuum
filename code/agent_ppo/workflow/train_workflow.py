@@ -813,7 +813,7 @@ class EpisodeRunner:
             )
             if rolling_avg > self.best_avg_score:
                 self.best_avg_score = rolling_avg
-            if robust_score > self.best_robust_score:
+            if fail_reason == "completed" and robust_score > self.best_robust_score:
                 self.best_robust_score = robust_score
                 self.is_new_best = True
 
