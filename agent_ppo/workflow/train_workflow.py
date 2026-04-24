@@ -138,6 +138,20 @@ class EpisodeRunner:
 
             self.agent.reset(env_obs)
             self.planner.reset()
+            env_conf = self.usr_conf.get("env_conf", self.usr_conf) if isinstance(self.usr_conf, dict) else {}
+            episode_max_step = int(env_conf.get("max_step", 1000))
+            episode_charger_count = int(env_conf.get("charger_count", 4))
+            episode_battery_max = int(env_conf.get("battery_max", 200))
+            self.agent.set_episode_config(
+                max_step=episode_max_step,
+                charger_count=episode_charger_count,
+                battery_max=episode_battery_max,
+            )
+            self.planner.set_episode_config(
+                max_step=episode_max_step,
+                charger_count=episode_charger_count,
+                battery_max=episode_battery_max,
+            )
             self.agent.load_model(id="latest")
 
             self.episode_cnt += 1
@@ -150,7 +164,10 @@ class EpisodeRunner:
 
             obs_data, _ = self.agent.observation_process(env_obs)
             self.logger.info(
-                f"[Agent{self.agent_id}] Episode {self.episode_cnt} start alpha={last_alpha:.3f}"
+                f"[Agent{self.agent_id}] Episode {self.episode_cnt} start "
+                f"alpha={last_alpha:.3f} max_step={episode_max_step} "
+                f"charger_count={episode_charger_count} "
+                f"battery_max={episode_battery_max}"
             )
 
             while not done:
@@ -206,6 +223,11 @@ class EpisodeRunner:
                     fm = self.agent.preprocessor
                     cleaning_ratio = fm.dirt_cleaned / max(fm.total_dirt, 1)
                     episode_score = float(final_parsed["total_score"])
+                    arrival_steps = sorted(fm.charger_arrival_steps.values())
+                    charger_arrived_count = len(arrival_steps)
+                    first_arrival_step = arrival_steps[0] if charger_arrived_count >= 1 else -1
+                    second_arrival_step = arrival_steps[1] if charger_arrived_count >= 2 else -1
+                    third_arrival_step = arrival_steps[2] if charger_arrived_count >= 3 else -1
                     score_ratio = episode_score / 2000.0
                     if truncated:
                         final_reward = 2.5 * cleaning_ratio + 1.5 * score_ratio
@@ -223,22 +245,36 @@ class EpisodeRunner:
                         f"[Agent{self.agent_id}][GAMEOVER] "
                         f"ep={self.episode_cnt} steps={step} result={result_str} "
                         f"mode={last_mode} alpha={last_alpha:.3f}->{new_alpha:.3f} "
+                        f"max_step={episode_max_step} "
+                        f"charger_count={episode_charger_count} "
+                        f"battery_max={episode_battery_max} "
                         f"score={episode_score:.1f} reward={total_reward + final_reward:.3f} "
-                        f"dirt={fm.dirt_cleaned}/{fm.total_dirt}"
+                        f"dirt={fm.dirt_cleaned}/{fm.total_dirt} "
+                        f"charger_arrivals={charger_arrived_count} "
+                        f"arrival_steps=[{first_arrival_step},{second_arrival_step},{third_arrival_step}]"
                     )
 
                     now = time.time()
                     if now - self.last_report_monitor_time >= 60 and self.monitor:
+                        monitor_payload = {
+                            "reward": total_reward + final_reward,
+                            "episode_cnt": self.episode_cnt,
+                            "mix_alpha": new_alpha,
+                            "score": episode_score,
+                            "local_predict_cnt": self.local_predict_cnt,
+                            "local_frame_cnt": self.local_frame_cnt,
+                            "local_yield_cnt": self.local_yield_cnt,
+                            "max_step_target_1000": 1000 if episode_max_step == 1000 else 0,
+                            "finished_steps_actual_1000": step if episode_max_step == 1000 else 0,
+                            "max_step_target_2000": 2000 if episode_max_step == 2000 else 0,
+                            "finished_steps_actual_2000": step if episode_max_step == 2000 else 0,
+                            "charger_arrived_count": charger_arrived_count,
+                            "charger_first_arrival_step": first_arrival_step,
+                            "charger_second_arrival_step": second_arrival_step,
+                            "charger_third_arrival_step": third_arrival_step,
+                        }
                         self.monitor.put_data({
-                            os.getpid(): {
-                                "reward": total_reward + final_reward,
-                                "episode_cnt": self.episode_cnt,
-                                "mix_alpha": new_alpha,
-                                "score": episode_score,
-                                "local_predict_cnt": self.local_predict_cnt,
-                                "local_frame_cnt": self.local_frame_cnt,
-                                "local_yield_cnt": self.local_yield_cnt,
-                            }
+                            os.getpid(): monitor_payload
                         })
                         self.last_report_monitor_time = now
 

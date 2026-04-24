@@ -9,7 +9,11 @@ Author: Tencent AI Arena Authors
 Feature preprocessor for Robot Vacuum.
 """
 
+from typing import Any, List, Sequence, Set, Tuple
+
 import numpy as np
+
+Position = Tuple[int, int]
 
 
 def _norm(v, v_max, v_min=0.0):
@@ -22,9 +26,9 @@ def _norm(v, v_max, v_min=0.0):
 
 class Preprocessor:
     """
-    输出 77D 特征：
+    输出 84D 特征：
       local_view   : 49D = centered 7x7 local map
-      global_state : 20D = hand-crafted global statistics
+      global_state : 27D = hand-crafted global statistics + episode config
       legal_action :  8D = env legal action mask
     """
 
@@ -38,6 +42,9 @@ class Preprocessor:
 
     def reset(self):
         self.step_no = 0
+        self.episode_max_step = 1000
+        self.episode_charger_count = 4
+        self.episode_battery_max = 200
         self.battery = 200
         self.battery_max = 200
         self.prev_battery = 200
@@ -60,8 +67,22 @@ class Preprocessor:
 
         self._nearest_dirt_dist = 200.0
         self._last_nearest_dirt_dist = 200.0
+        self._nearest_unarrived_charger_dist = self.MAX_DIST
+        self._last_nearest_unarrived_charger_dist = self.MAX_DIST
         self.new_observed_cells = 0
         self.cur_revisit_count = 0
+        self.charger_regions: List[Set[Position]] = []
+        self.rewarded_arrived_charger_regions = set()
+        self.new_charger_arrival_reward = 0.0
+        self.charger_arrival_steps = {}
+
+    def set_episode_config(self, max_step=None, robot_count=None, charger_count=None, battery_max=None):
+        if max_step is not None:
+            self.episode_max_step = max(1, int(max_step))
+        if charger_count is not None:
+            self.episode_charger_count = int(np.clip(charger_count, 1, 4))
+        if battery_max is not None:
+            self.episode_battery_max = int(np.clip(battery_max, 100, 999))
 
     def pb2struct(self, env_obs: dict, last_action: int):
         """Parse env observation and cache required state."""
@@ -96,12 +117,25 @@ class Preprocessor:
         self.visit_count[self.cur_pos] = self.cur_revisit_count + 1
         self.visited.add(self.cur_pos)
 
-        for organ in frame_state.get("organs", []):
-            if organ.get("sub_type") == 1:
-                cx = int(organ["pos"]["x"])
-                cz = int(organ["pos"]["z"])
-                if (cx, cz) not in self.charger_positions:
-                    self.charger_positions.append((cx, cz))
+        self.charger_regions = self._parse_charger_regions(frame_state.get("organs", []))
+        self.new_charger_arrival_reward = 0.0
+        self._last_nearest_unarrived_charger_dist = self._nearest_unarrived_charger_dist
+        for region in self.charger_regions:
+            center = self._charger_region_center(region)
+            if center not in self.charger_positions:
+                self.charger_positions.append(center)
+            region_key = self._charger_region_key(region)
+            if self.cur_pos in region and region_key not in self.rewarded_arrived_charger_regions:
+                arrival_order = len(self.rewarded_arrived_charger_regions)
+                self.rewarded_arrived_charger_regions.add(region_key)
+                self.charger_arrival_steps[region_key] = self.step_no
+                if arrival_order == 0:
+                    self.new_charger_arrival_reward += 0.18
+                elif arrival_order == 1:
+                    self.new_charger_arrival_reward += 0.24
+                else:
+                    self.new_charger_arrival_reward += 0.22
+        self._nearest_unarrived_charger_dist = self._nearest_unarrived_charger_distance()
 
         self.npc_positions = [
             (int(n["pos"]["x"]), int(n["pos"]["z"]))
@@ -209,8 +243,85 @@ class Preprocessor:
         dists = np.sqrt((coords[:, 0] - center) ** 2 + (coords[:, 1] - center) ** 2)
         return float(np.min(dists))
 
+    def _in_bounds(self, pos: Position) -> bool:
+        return 0 <= pos[0] < self.GRID_SIZE and 0 <= pos[1] < self.GRID_SIZE
+
+    def _charger_region_key(self, region: Set[Position]) -> Position:
+        return min(region)
+
+    def _charger_region_center(self, region: Set[Position]) -> Position:
+        xs = sorted(cell[0] for cell in region)
+        zs = sorted(cell[1] for cell in region)
+        return (xs[len(xs) // 2], zs[len(zs) // 2])
+
+    def _get_dict(self, obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _parse_position(self, obj: Any) -> Position:
+        x = int(self._safe_float(self._get_dict(obj, "x", 0), 0.0))
+        z = int(self._safe_float(self._get_dict(obj, "z", 0), 0.0))
+        return (x, z)
+
+    def _parse_charger_regions(self, organs: Sequence[Any]) -> List[Set[Position]]:
+        regions: List[Set[Position]] = []
+        for organ in organs:
+            if int(self._safe_float(self._get_dict(organ, "sub_type", 0), 0.0)) != 1:
+                continue
+            pos = self._parse_position(self._get_dict(organ, "pos", {}))
+            w = max(1, int(self._safe_float(self._get_dict(organ, "w", 3), 3.0)))
+            h = max(1, int(self._safe_float(self._get_dict(organ, "h", 3), 3.0)))
+            half_w = w // 2
+            half_h = h // 2
+
+            region: Set[Position] = set()
+            for dx in range(w):
+                for dz in range(h):
+                    region.add((pos[0] + dx, pos[1] + dz))
+            for dx in range(-half_w, half_w + 1):
+                for dz in range(-half_h, half_h + 1):
+                    region.add((pos[0] + dx, pos[1] + dz))
+
+            region = {cell for cell in region if self._in_bounds(cell)}
+            if region:
+                regions.append(region)
+        return regions
+
+    def _nearest_charger_distance(self) -> float:
+        hx, hz = self.cur_pos
+        if not self.charger_positions:
+            return self.MAX_DIST
+        return float(min(
+            np.sqrt((cx - hx) ** 2 + (cz - hz) ** 2)
+            for cx, cz in self.charger_positions
+        ))
+
+    def _nearest_unarrived_charger_distance(self) -> float:
+        hx, hz = self.cur_pos
+        unarrived_centers = []
+        for region in self.charger_regions:
+            region_key = self._charger_region_key(region)
+            if region_key in self.rewarded_arrived_charger_regions:
+                continue
+            unarrived_centers.append(self._charger_region_center(region))
+
+        if not unarrived_centers:
+            return self.MAX_DIST
+
+        return float(min(
+            np.sqrt((cx - hx) ** 2 + (cz - hz) ** 2)
+            for cx, cz in unarrived_centers
+        ))
+
     def _get_global_state_feature(self) -> np.ndarray:
-        """Construct the 20D global handcrafted feature vector."""
+        """Construct the 27D global handcrafted feature vector."""
         hx, hz = self.cur_pos
 
         step_norm = _norm(self.step_no, 2000)
@@ -219,6 +330,14 @@ class Preprocessor:
         remaining_dirt = 1.0 - cleaning_progress
         pos_x_norm = _norm(hx, self.GRID_SIZE)
         pos_z_norm = _norm(hz, self.GRID_SIZE)
+        max_step_norm = _norm(self.episode_max_step, 2000, 1)
+        step_ratio = _norm(self.step_no, self.episode_max_step, 0)
+        time_left_ratio = max(0.0, 1.0 - step_ratio)
+        charger_count_norm = _norm(self.episode_charger_count, 4, 1)
+        observed_charger_ratio = min(len(self.charger_positions) / max(self.episode_charger_count, 1), 1.0)
+        battery_capacity_norm = _norm(self.battery_max, 999, 100)
+        nearest_charger_dist = self._nearest_charger_distance()
+        return_pressure = np.clip(nearest_charger_dist / max(float(self.battery), 1.0), 0.0, 1.5) / 1.5
 
         charger_feats = self._get_charger_feature()
         npc_feats = self._get_npc_feature()
@@ -255,6 +374,13 @@ class Preprocessor:
                     unvisited_ratio,
                     is_low_battery,
                     exploration_progress,
+                    max_step_norm,
+                    step_ratio,
+                    time_left_ratio,
+                    charger_count_norm,
+                    observed_charger_ratio,
+                    battery_capacity_norm,
+                    return_pressure,
                 ],
                 dtype=np.float32,
             ),
@@ -271,13 +397,33 @@ class Preprocessor:
         prev_battery_ratio = _norm(self.prev_battery, self.battery_max)
         cur_battery_ratio = _norm(self.battery, self.battery_max)
         charge_gain_ratio = max(0.0, cur_battery_ratio - prev_battery_ratio)
-
+        nearest_charger_dist = self._nearest_charger_distance()
+        charger_known = nearest_charger_dist < self.MAX_DIST
+        is_on_charger = any(self.cur_pos in region for region in self.charger_regions)
+        is_starving = (
+            charger_known
+            and not is_on_charger
+            and float(self.battery) <= nearest_charger_dist + 20.0
+        )
         cleaning_reward = 0.22 * cleaned_this_step
         explore_reward = 0.003 * min(self.new_observed_cells, 12) * max(0.0, 1.0 - cleaning_progress)
         approach_reward = 0.01 if cleaned_this_step == 0 and self._nearest_dirt_dist < self._last_nearest_dirt_dist else 0.0
+        fresh_path_reward = 0.0
+        if self.cur_revisit_count == 0:
+            fresh_path_reward = 0.012
+        elif self.cur_revisit_count == 1:
+            fresh_path_reward = 0.006
+        fresh_path_reward *= max(0.4, 1.0 - 0.5 * cleaning_progress)
+        unarrived_charger_progress_reward = 0.0
+        if is_starving:
+            cleaning_reward = 0.0
+            explore_reward = 0.0
+            approach_reward = 0.0
         # Shift charging preference earlier and punish staying in the dangerous low-battery zone.
-        target_low = 0.32
-        target_high = 0.58
+        charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
+        low_capacity_factor = np.clip((260.0 - float(self.battery_max)) / 160.0, 0.0, 1.0)
+        target_low = np.clip(0.32 + 0.05 * charger_scarcity + 0.03 * low_capacity_factor, 0.30, 0.42)
+        target_high = np.clip(0.58 + 0.04 * charger_scarcity + 0.03 * low_capacity_factor, 0.54, 0.68)
         if prev_battery_ratio < target_low:
             charge_timing_factor = prev_battery_ratio / max(target_low, 1e-6)
         elif prev_battery_ratio <= target_high:
@@ -306,15 +452,33 @@ class Preprocessor:
                 charge_event_reward -= 0.16 + 0.24 * (prev_battery_ratio - 0.60) / 0.40
         low_battery_penalty = -0.035 * max(0.0, target_low - cur_battery_ratio) / max(target_low, 1e-6)
         critical_battery_penalty = -0.090 * max(0.0, 0.22 - cur_battery_ratio) / 0.22
-        revisit_penalty = -0.0025 * min(3, self.cur_revisit_count) * (0.35 + cleaning_progress)
+        unarrived_progress = (
+            self._last_nearest_unarrived_charger_dist - self._nearest_unarrived_charger_dist
+        )
+        if (
+            charger_known
+            and not is_starving
+            and not is_on_charger
+            and self._nearest_unarrived_charger_dist < self.MAX_DIST
+            and cur_battery_ratio >= target_low + 0.05
+            and unarrived_progress > 0.0
+        ):
+            unarrived_charger_progress_reward = 0.012 * np.clip(unarrived_progress / 2.0, 0.0, 1.5)
+        revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
         step_penalty = -(0.001 + 0.002 * cleaning_progress)
+        if is_starving:
+            step_penalty *= 2.5
+        charger_arrival_reward = self.new_charger_arrival_reward * max(0.60, 1.0 - 0.35 * cleaning_progress)
 
         return (
             cleaning_reward
             + explore_reward
             + approach_reward
+            + fresh_path_reward
+            + unarrived_charger_progress_reward
             + charge_efficiency_reward
             + charge_event_reward
+            + charger_arrival_reward
             + low_battery_penalty
             + critical_battery_penalty
             + revisit_penalty

@@ -374,6 +374,38 @@ class CoveragePlanner:
         self.current_mode = "explore"           # 当前 target_mode 字符串
         self.last_policy_info: Optional[PolicyInfo] = None
         self.current_step = 0                   # 当前步数 (step_no)，来自 observation
+        self.episode_max_step = 1000
+        self.episode_charger_count = 4
+        self.episode_battery_max = 200
+
+    def set_episode_config(self, max_step=None, robot_count=None, charger_count=None, battery_max=None):
+        if max_step is not None:
+            self.episode_max_step = max(1, int(max_step))
+        if charger_count is not None:
+            self.episode_charger_count = int(np.clip(charger_count, 1, 4))
+        if battery_max is not None:
+            self.episode_battery_max = int(np.clip(battery_max, 100, 999))
+
+    def _dynamic_return_margin(self) -> float:
+        charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
+        low_capacity_factor = np.clip((260.0 - float(self.episode_battery_max)) / 160.0, 0.0, 1.0)
+        long_horizon_bonus = 2.0 if self.episode_max_step >= 1500 else 0.0
+        return self.BASE_RETURN_MARGIN + 6.0 * charger_scarcity + 4.0 * low_capacity_factor + long_horizon_bonus
+
+    def _dynamic_low_battery_ratio(self) -> float:
+        charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
+        low_capacity_factor = np.clip((260.0 - float(self.episode_battery_max)) / 160.0, 0.0, 1.0)
+        long_horizon_bonus = 0.02 if self.episode_max_step >= 1500 else 0.0
+        return float(np.clip(
+            self.LOW_BATTERY_RATIO + 0.05 * charger_scarcity + 0.03 * low_capacity_factor + long_horizon_bonus,
+            0.28,
+            0.46,
+        ))
+
+    def _dynamic_exit_return_ratio(self) -> float:
+        charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
+        low_capacity_factor = np.clip((260.0 - float(self.episode_battery_max)) / 160.0, 0.0, 1.0)
+        return float(np.clip(self.EXIT_RETURN_RATIO + 0.02 * charger_scarcity + 0.01 * low_capacity_factor, 0.93, 0.99))
 
     # ─────────────────────────────────────────────────────────────────────────
     # Main update — called once per frame（每帧主调用）
@@ -441,8 +473,11 @@ class CoveragePlanner:
 
         # ── 充电桩 (charger) 返回逻辑 ───────────────────────────────────────
         on_charger = self._hero_on_charger(hero_pos)
+        dynamic_return_margin = self._dynamic_return_margin()
+        dynamic_low_battery_ratio = self._dynamic_low_battery_ratio()
+        dynamic_exit_return_ratio = self._dynamic_exit_return_ratio()
         # 抵达充电桩且电量已满 → 退出返回模式，重置目标，恢复清扫
-        if on_charger and battery_ratio >= self.EXIT_RETURN_RATIO:
+        if on_charger and battery_ratio >= dynamic_exit_return_ratio:
             self.return_mode  = False
             self.current_goal = None
             self.current_mode = "explore"
@@ -460,8 +495,8 @@ class CoveragePlanner:
         should_charge = (
             self.return_mode
             or (charger_known and np.isfinite(charger_distance)
-                and battery <= charger_distance + self.BASE_RETURN_MARGIN + extra_return_margin)
-            or (charger_known and battery_ratio <= self.LOW_BATTERY_RATIO)
+                and battery <= charger_distance + dynamic_return_margin + extra_return_margin)
+            or (charger_known and battery_ratio <= dynamic_low_battery_ratio)
         )
         if should_charge:
             self.return_mode = True   # 一旦触发，锁定返回模式直至充满
@@ -593,7 +628,7 @@ class CoveragePlanner:
             or not charger_known
         )
         known_bbox = self._explored_bounding_box()  # 已探索区域的外接矩形
-        reserve    = self.BASE_RETURN_MARGIN + 4.0  # 电量安全预留（基础余量 + 缓冲）
+        reserve    = self._dynamic_return_margin() + 4.0  # 电量安全预留（基础余量 + 缓冲）
 
         best_score:  float             = -1e9
         best_target: Optional[Position] = None
@@ -719,15 +754,14 @@ class CoveragePlanner:
         charger_targets = self._charger_cells()  # 所有充电桩格子的平铺列表
         if not charger_targets:
             return [], float("inf"), None
-
-        # 优先尝试只走已知格子
         path, distance = self._astar_path(hero_pos, charger_targets, False, npcs)
         if path:
             return path, distance, path[-1]
 
-        # 备用：允许穿越 UNKNOWN 格子（充电桩不可达时的最后手段）
         path, distance = self._astar_path(hero_pos, charger_targets, True, npcs)
-        return path, distance, (path[-1] if path else None)
+        if path:
+            return path, distance, path[-1]
+        return [], float("inf"), None
 
     def _astar_path(
         self,
@@ -903,6 +937,7 @@ class CoveragePlanner:
         path_action = self._next_path_action(path) if path else None
         known_bbox  = self._explored_bounding_box()
         edge_mode   = target_mode in ("edge_frontier", "find_charger_edge")
+        current_npc_distance = self._nearest_npc_dist(hero_pos, npcs)
 
         for action in range(8):
             if safe_mask[action] <= 0.5:
@@ -916,7 +951,7 @@ class CoveragePlanner:
             frontier_gain     = self._count_unobserved_cells(nxt, 1)  # 半径 1 内 UNKNOWN 数（frontier 密度）
             revisit_penalty   = 0.18 * min(6, int(self.visit_count[nxt[1], nxt[0]]))
             npc_dist          = self._nearest_npc_dist(nxt, npcs)
-            npc_penalty       = max(0.0, 7.0 - npc_dist) * 0.95   # 距 NPC < 7 格时扣分
+            npc_penalty       = max(0.0, 7.5 - npc_dist) * 1.05   # 轻量增强近 NPC 风险惩罚
             npc_clean_penalty = 0.9 * float(self.npc_cleaned[nxt[1], nxt[0]])
 
             score = 0.0
@@ -936,6 +971,11 @@ class CoveragePlanner:
                 progress = float(self._chebyshev_dist(hero_pos, target_pos)
                                  - self._chebyshev_dist(nxt,      target_pos))
                 score += (0.95 if should_charge else 0.45) * progress
+
+            # 仅在非常接近 NPC 时，轻量奖励能拉开距离的动作，避免极短局。
+            if current_npc_distance <= 3.0:
+                npc_escape_progress = max(0.0, npc_dist - current_npc_distance)
+                score += 1.2 * npc_escape_progress
 
             # 边缘模式（扩张阶段）额外奖励靠近已知区域边缘的动作
             if edge_mode:

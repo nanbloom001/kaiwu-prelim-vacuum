@@ -48,6 +48,20 @@ class Agent(BaseAgent):
 
         super().__init__(agent_type, self.device, logger, monitor)
 
+    def set_episode_config(self, max_step=None, robot_count=None, charger_count=None, battery_max=None):
+        self.preprocessor.set_episode_config(
+            max_step=max_step,
+            robot_count=robot_count,
+            charger_count=charger_count,
+            battery_max=battery_max,
+        )
+        self.planner.set_episode_config(
+            max_step=max_step,
+            robot_count=robot_count,
+            charger_count=charger_count,
+            battery_max=battery_max,
+        )
+
     def reset(self, env_obs):
         del env_obs
         self.preprocessor = Preprocessor()
@@ -177,6 +191,20 @@ class Agent(BaseAgent):
         alpha = float(np.clip(residual_alpha, 0.0, 1.0))
         if policy_info is None:
             return alpha
+        charger_distance = float(getattr(policy_info, "charger_distance", 999.0))
+        battery = float(getattr(policy_info, "battery", 0.0))
+        target_mode = getattr(policy_info, "target_mode", "")
+        should_charge = bool(getattr(policy_info, "should_charge", False))
+        if (
+            should_charge
+            and target_mode == "charge"
+            and np.isfinite(charger_distance)
+            and charger_distance < 900.0
+        ):
+            if battery <= charger_distance + 14.0:
+                return 0.0
+            if battery <= charger_distance + 20.0:
+                alpha = min(alpha, 0.002)
         if getattr(policy_info, "target_mode", "") == "charge":
             return min(alpha, Config.RESIDUAL_ALPHA_CHARGE_CAP)
         if getattr(policy_info, "target_mode", "") == "fallback":

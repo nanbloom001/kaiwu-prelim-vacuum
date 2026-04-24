@@ -12,8 +12,8 @@ Configuration for Robot Vacuum PPO agent.
 
 class Config:
 
-    # local_view(7x7=49) + global_state(20) + legal_action(8) = 77D
-    FEATURES = [49, 20, 8]
+    # local_view(7x7=49) + global_state(27) + legal_action(8) = 84D
+    FEATURES = [49, 27, 8]
     FEATURE_SPLIT_SHAPE = FEATURES
     FEATURE_LEN = sum(FEATURES)
     DIM_OF_OBSERVATION = FEATURE_LEN
@@ -53,8 +53,8 @@ class Config:
     RESIDUAL_PLATEAU_PATIENCE = 16
     RESIDUAL_PLATEAU_SCORE = 1820.0
     RESIDUAL_ALPHA_STEP = 0.015
-    PLANNER_PRIOR_TEMPERATURE = 0.58
+    PLANNER_PRIOR_TEMPERATURE = 0.54
 
     # Behavior cloning regularization against planner, decayed as alpha rises
     BC_COEF_START = 1.10
-    BC_COEF_MIN = 0.32
+    BC_COEF_MIN = 0.28
