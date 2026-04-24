@@ -415,6 +415,7 @@ class CoveragePlanner:
 
     # ── Decision thresholds（充电策略与 NPC 安全阈值）────────────────────────
     BASE_RETURN_MARGIN    = 22.0  # 触发返回充电的电量余量：battery <= charger_distance + 22 时开始返回
+    COVERAGE_RETURN_BUFFER = 8.0   # Coverage-target-only return safety buffer.
     NPC_RETURN_MARGIN     = 28.0  # 充电路径经过 NPC 风险区时额外增加的安全余量（避免路途中碰撞）
     LOW_BATTERY_RATIO     = 0.30  # 电量比低于此值时强制返回充电桩（应对充电桩距离估算误差）
     EXIT_RETURN_RATIO     = 0.95  # 抵达充电桩且电量比超过此值后退出返回模式，恢复正常清扫
@@ -727,7 +728,10 @@ class CoveragePlanner:
                     continue
 
                 # 电量安全门控：确保前往 pos 后还能回到充电桩
-                charger_need = self._heuristic_charger_distance(pos) if charger_known else 0.0
+                charger_need = (
+                    self._heuristic_charger_distance(pos) + self.COVERAGE_RETURN_BUFFER
+                    if charger_known else 0.0
+                )
                 if charger_known and battery <= dist + charger_need + reserve:
                     continue
 

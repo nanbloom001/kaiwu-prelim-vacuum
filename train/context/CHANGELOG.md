@@ -9,6 +9,7 @@
 2026-04-25 07:04 | T0: Adapt LTSPPO charge constraint benchmark design; local holdout benchmark scaffolding prepared (inference-only evaluation, per-episode env config injection, and metric artifacts).
 2026-04-25 07:15 | T1: Baseline capture anchored at HEAD a34e9aa with origin/win_YJY; validate resume_best latest alignment and mutation-guard inventory.
 2026-04-25 08:05 | T4: Guarded best checkpoint promotion so only completed episodes can update robust best state; failure telemetry remains intact.
+2026-04-25 08:30 | T5: Added coverage-target-only return buffer in algorithm.py to tighten battery gating without changing global return margins or charge-mode A*.
 
 ## 2026-04-15
 
