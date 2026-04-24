@@ -3,6 +3,8 @@
 2026-04-25 03:45 | 初始化分层 AGENTS.md 知识库，聚焦比赛规划、win_YJY 当前分支、PPO 主线与训练/提交链路。
 2026-04-25 05:15 | Added fixed [4,7] holdout benchmark dry-run/analyzer contract with mutation guard and NO_EPISODES-safe reporting.
 2026-04-25 05:24 | Attempted non-dry-run BASELINE holdout benchmark; runner exited 3 REAL_EXECUTION_UNSUPPORTED_IN_T2, produced failure JSON/NO_EPISODES analysis with clean mutation guard.
+2026-04-25 05:58 | Enhanced holdout analyzer with failure classification, missing replay fallback, and single next_step NEED_MORE_DATA/actionable diagnostics.
+2026-04-25 06:07 | Fixed holdout analyzer reason predicates so battery_fail/out_of_battery/battery_death and collision_fail aliases count/classify correctly.
 
 ## 2026-04-15
 
