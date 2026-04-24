@@ -12,6 +12,8 @@
 2026-04-25 08:30 | T5: Added coverage-target-only return buffer in algorithm.py to tighten battery gating without changing global return margins or charge-mode A*.
 2026-04-25 08:45 | T6: Added safe closed-loop dry-run/decision runner for Train→Benchmark→Analyze→Accept/Rollback gating without starting Docker.
 2026-04-25 09:00 | T6-fix: Corrected closed-loop accept gating so >900 score still requires completed-rate and clean_per_step stability checks.
+2026-04-25 09:20 | T6-fix: Narrowed infrastructure mutation rejection so informational MODEL_MUTATION_GUARD risks no longer trigger REJECT while real mutation errors still do.
+2026-04-25 09:40 | T6-fix: Tightened mutation guard again so warning/info artifact-change language rejects while unchanged MODEL_MUTATION_GUARD info stays non-blocking.
 2026-04-25 06:20 | T10: Recorded evidence gate blocking reward/refactor/network escalation until real holdout episodes resolve REAL_EXECUTION_UNSUPPORTED_IN_T2 and NEED_MORE_DATA.
 2026-04-25 09:10 | T9: Recorded NOT_READY final checkpoint selection gate; no real >900 holdout evidence exists yet.
 

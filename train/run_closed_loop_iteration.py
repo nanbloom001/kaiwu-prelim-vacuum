@@ -153,7 +153,21 @@ def infrastructure_reject_reasons(payload: dict[str, Any]) -> list[str]:
         combined = f"{code} {message}".upper()
         if "LEAK" in combined:
             reasons.append("holdout leakage reported by benchmark/analyzer risk")
-        if "MODEL_MUTATION" in code or ("MUTATION" in combined and severity == "error"):
+        real_mutation_code = "MODEL_MUTATION" in code and "GUARD" not in code
+        real_mutation_message = any(
+            token in combined
+            for token in (
+                "MUTATION DETECTED",
+                "MUTATED",
+                "ARTIFACT CHANGED",
+                "ARTIFACTS CHANGED",
+                "ARTIFACT MUTATED",
+                "ARTIFACTS MUTATED",
+                "CHANGED ARTIFACT",
+                "CHANGED ARTIFACTS",
+            )
+        )
+        if (severity == "error" and real_mutation_code) or real_mutation_message:
             reasons.append("eval model mutation reported by benchmark/analyzer risk")
     return sorted(set(reasons))
 
