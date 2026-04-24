@@ -22,11 +22,16 @@ import heapq
 import os
 import numpy as np
 
+from agent_ppo.conf import conf as conf_module
 from agent_ppo.conf.conf import Config
 from agent_ppo.utils.return_readiness import (
     control_stack_simplify_active,
     evaluate_simplified_return_readiness,
 )
+
+
+def _config():
+    return conf_module.Config
 from agent_ppo.utils.strong_heuristic import (
     evaluate_strong_heuristic_mode,
     logical_mode_to_teacher_name,
@@ -366,6 +371,7 @@ class ExpertPolicy:
 
     def get_teacher_guidance(self, prep, legal_action=None, last_action=-1, signal=None):
         """Return optional teacher guidance payload for future mode/target supervision."""
+        cfg = _config()
         signal = signal or self.get_charger_signal(prep, legal_action, last_action)
         if not (
             signal["target_reliable"]
@@ -407,16 +413,16 @@ class ExpertPolicy:
                 total_charger=int(getattr(prep, "total_charger", 1)),
                 unknown_ratio=float(unknown_ratio),
                 route_contract_pressure=float(contract_pressure),
-                return_battery_ratio=float(Config.RETURN_BATTERY_RATIO),
-                return_slack_threshold=float(Config.RETURN_SLACK_THRESHOLD),
-                return_exit_battery_ratio=float(Config.STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO),
-                pre_return_battery_ratio=float(Config.PREPARE_RETURN_BATTERY_RATIO),
-                pre_return_slack_threshold=float(Config.PREPARE_RETURN_SLACK_THRESHOLD),
-                pre_return_recoverability_threshold=float(Config.STRONG_HEURISTIC_PRE_RETURN_RECOVERABILITY_THRESHOLD),
-                pre_return_unknown_ratio_threshold=float(Config.STRONG_HEURISTIC_PRE_RETURN_UNKNOWN_RATIO_THRESHOLD),
-                pre_return_route_pressure_threshold=float(Config.STRONG_HEURISTIC_PRE_RETURN_ROUTE_PRESSURE_THRESHOLD),
-                charge_margin_warn=float(Config.CHARGE_MARGIN_WARN),
-                evade_npc_distance=float(Config.STRONG_HEURISTIC_EVADE_NPC_DISTANCE),
+                return_battery_ratio=float(cfg.RETURN_BATTERY_RATIO),
+                return_slack_threshold=float(cfg.RETURN_SLACK_THRESHOLD),
+                return_exit_battery_ratio=float(cfg.STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO),
+                pre_return_battery_ratio=float(cfg.PREPARE_RETURN_BATTERY_RATIO),
+                pre_return_slack_threshold=float(cfg.PREPARE_RETURN_SLACK_THRESHOLD),
+                pre_return_recoverability_threshold=float(cfg.STRONG_HEURISTIC_PRE_RETURN_RECOVERABILITY_THRESHOLD),
+                pre_return_unknown_ratio_threshold=float(cfg.STRONG_HEURISTIC_PRE_RETURN_UNKNOWN_RATIO_THRESHOLD),
+                pre_return_route_pressure_threshold=float(cfg.STRONG_HEURISTIC_PRE_RETURN_ROUTE_PRESSURE_THRESHOLD),
+                charge_margin_warn=float(cfg.CHARGE_MARGIN_WARN),
+                evade_npc_distance=float(cfg.STRONG_HEURISTIC_EVADE_NPC_DISTANCE),
             )
             mode = logical_mode_to_teacher_name(str(logical["logical_mode"]))
             return_action_teacher_mask = 0.0
@@ -452,51 +458,51 @@ class ExpertPolicy:
                 total_charger=int(getattr(prep, "total_charger", 1)),
                 planner_topk_reachable_count=int(signal.get("planner_topk_reachable_count", known_path_count)),
                 unknown_ratio=unknown_ratio,
-                return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
-                return_battery_ratio=Config.RETURN_BATTERY_RATIO,
-                return_recoverability_threshold=Config.RETURN_RECOVERABILITY_THRESHOLD,
-                prepare_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
-                contract_battery_ratio=Config.CONTRACT_BATTERY_RATIO,
-                contract_recoverability_threshold=Config.CONTRACT_RECOVERABILITY_THRESHOLD,
-                charge_margin_low=Config.CHARGE_MARGIN_LOW,
-                charge_margin_warn=Config.CHARGE_MARGIN_WARN,
-                contract_route_pressure_threshold=Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
-                unknown_path_risk_battery_ratio=Config.UNKNOWN_PATH_RISK_BATTERY_RATIO,
-                unknown_path_risk_threshold=Config.UNKNOWN_PATH_RISK_THRESHOLD,
+                return_slack_threshold=cfg.RETURN_SLACK_THRESHOLD,
+                return_battery_ratio=cfg.RETURN_BATTERY_RATIO,
+                return_recoverability_threshold=cfg.RETURN_RECOVERABILITY_THRESHOLD,
+                prepare_return_slack_threshold=cfg.PREPARE_RETURN_SLACK_THRESHOLD,
+                contract_battery_ratio=cfg.CONTRACT_BATTERY_RATIO,
+                contract_recoverability_threshold=cfg.CONTRACT_RECOVERABILITY_THRESHOLD,
+                charge_margin_low=cfg.CHARGE_MARGIN_LOW,
+                charge_margin_warn=cfg.CHARGE_MARGIN_WARN,
+                contract_route_pressure_threshold=cfg.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
+                unknown_path_risk_battery_ratio=cfg.UNKNOWN_PATH_RISK_BATTERY_RATIO,
+                unknown_path_risk_threshold=cfg.UNKNOWN_PATH_RISK_THRESHOLD,
             )
             if readiness["return_now"]:
                 mode = "return"
             elif readiness["pre_return_ready"]:
                 mode = "contract"
-            elif depart_steps <= Config.DEPART_STEPS:
+            elif depart_steps <= cfg.DEPART_STEPS:
                 mode = "depart"
-            elif local_dirt_density >= Config.HARVEST_DIRT_DENSITY:
+            elif local_dirt_density >= cfg.HARVEST_DIRT_DENSITY:
                 mode = "harvest"
             else:
                 mode = "expand"
         elif (
-            battery_ratio <= Config.RETURN_BATTERY_RATIO
-            or slack <= Config.RETURN_SLACK_THRESHOLD
-            or recoverability <= Config.RETURN_RECOVERABILITY_THRESHOLD
-            or margin <= Config.CHARGE_MARGIN_LOW
+            battery_ratio <= cfg.RETURN_BATTERY_RATIO
+            or slack <= cfg.RETURN_SLACK_THRESHOLD
+            or recoverability <= cfg.RETURN_RECOVERABILITY_THRESHOLD
+            or margin <= cfg.CHARGE_MARGIN_LOW
         ):
             mode = "return"
         elif (
-            battery_ratio <= Config.CONTRACT_BATTERY_RATIO
-            or slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD
-            or recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
+            battery_ratio <= cfg.CONTRACT_BATTERY_RATIO
+            or slack <= cfg.PREPARE_RETURN_SLACK_THRESHOLD
+            or recoverability <= cfg.CONTRACT_RECOVERABILITY_THRESHOLD
             or contract_pressure >= 0.5
-            or margin <= Config.CHARGE_MARGIN_WARN
+            or margin <= cfg.CHARGE_MARGIN_WARN
             or (
                 known_path_count < min(int(getattr(prep, "total_charger", 1)), 2)
-                and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
-                and unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD
+                and battery_ratio <= cfg.UNKNOWN_PATH_RISK_BATTERY_RATIO
+                and unknown_ratio >= cfg.UNKNOWN_PATH_RISK_THRESHOLD
             )
         ):
             mode = "contract"
-        elif depart_steps <= Config.DEPART_STEPS:
+        elif depart_steps <= cfg.DEPART_STEPS:
             mode = "depart"
-        elif local_dirt_density >= Config.HARVEST_DIRT_DENSITY:
+        elif local_dirt_density >= cfg.HARVEST_DIRT_DENSITY:
             mode = "harvest"
         else:
             mode = "expand"

@@ -12,6 +12,7 @@ import hashlib
 import os
 import re
 import shutil
+import socket
 import time
 from collections import deque
 from copy import deepcopy
@@ -57,9 +58,26 @@ from agent_ppo.utils.return_readiness import (
 )
 from agent_ppo.utils.reward_metrics import compute_reward_contribution_payload
 from agent_ppo.utils.reward_schedule import get_reward_schedule
-from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
-from tools.metrics_utils import get_training_metrics
-from tools.train_env_conf_validate import read_usr_conf
+
+try:
+    from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
+except Exception:  # pragma: no cover - host import fallback for local tests
+    def handle_disaster_recovery(*args, **kwargs):
+        return False
+
+
+try:
+    from tools.metrics_utils import get_training_metrics
+except Exception:  # pragma: no cover - host import fallback for local tests
+    def get_training_metrics():
+        return None
+
+
+try:
+    from tools.train_env_conf_validate import read_usr_conf
+except Exception:  # pragma: no cover - host import fallback for local tests
+    def read_usr_conf(*args, **kwargs):
+        return {}
 
 try:
     import fcntl
@@ -96,6 +114,58 @@ def _env_int_list(name, default):
 def _env_clamped_int(name, default, v_min, v_max):
     value = _env_int(name, default)
     return int(np.clip(value, v_min, v_max))
+
+
+def _resolve_local_ip(*names) -> str | None:
+    original_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(1.0)
+    try:
+        for name in names:
+            candidate = str(name or "").strip()
+            if not candidate:
+                continue
+            try:
+                _, _, addresses = socket.gethostbyname_ex(candidate)
+            except (OSError, socket.timeout):
+                continue
+            if addresses:
+                return addresses[0]
+        return None
+    finally:
+        socket.setdefaulttimeout(original_timeout)
+
+
+def _resolve_benchmark_aisrv_index() -> str:
+    aisrv_index = str(os.getenv("KAIWU_AISRV_INDEX", "") or "").strip()
+    if aisrv_index:
+        return aisrv_index
+
+    current_name = str(os.getenv("HOSTNAME", "") or "").strip()
+    if not current_name:
+        try:
+            current_name = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    match = re.search(r"(?:^|[-_])aisrv[-_](\d+)$", current_name)
+    if match:
+        return match.group(1)
+
+    current_ip = _resolve_local_ip(current_name)
+    if not current_ip:
+        return ""
+
+    project_name = str(os.getenv("COMPOSE_PROJECT_NAME", "kaiwu-train") or "kaiwu-train").strip() or "kaiwu-train"
+    service_count = max(_env_int("KAIWU_BENCHMARK_WORKER_COUNT", _env_int("KAIWU_AISRV_NUM", 16)), 1)
+    for index in range(1, service_count + 1):
+        service_ip = _resolve_local_ip(
+            f"{project_name}-aisrv-{index}",
+            f"{project_name}_aisrv_{index}",
+        )
+        if service_ip and service_ip == current_ip:
+            return str(index)
+
+    return ""
 
 
 REWARD_COMPONENT_KEYS = (
@@ -282,17 +352,42 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
 
     # Benchmark mode: run fixed eval scenarios, save results, exit
     if os.getenv("KAIWU_BENCHMARK_MODE", "").strip() in ("1", "true"):
-        aisrv_index = os.getenv("KAIWU_AISRV_INDEX", "").strip()
+        aisrv_index = _resolve_benchmark_aisrv_index()
+        benchmark_checkpoint = os.getenv("KAIWU_BENCHMARK_CHECKPOINT", "").strip()
+        benchmark_policy_mode = os.getenv("KAIWU_BENCHMARK_POLICY_MODE", "eval").strip().lower() or "eval"
+        benchmark_maps = os.getenv("KAIWU_BENCHMARK_MAPS", "").strip()
+        benchmark_rounds_json = os.getenv("KAIWU_BENCHMARK_ROUNDS_JSON", "").strip()
+        if logger is not None:
+            logger.info(
+                "[BENCHMARK] Entering serial benchmark branch "
+                f"active=True aisrv_index={aisrv_index or '<empty>'} "
+                f"hostname={os.getenv('HOSTNAME', '').strip() or '<empty>'} "
+                f"checkpoint={benchmark_checkpoint or '<default>'} "
+                f"policy_mode={benchmark_policy_mode} "
+                f"maps={benchmark_maps or '<default>'} "
+                f"rounds_override={'set' if benchmark_rounds_json else 'default'}"
+            )
         if aisrv_index not in ("", "1"):
-            logger.info(f"[BENCHMARK] Skipping on aisrv-{aisrv_index}, only aisrv-1 runs benchmark")
+            if logger is not None:
+                logger.info(f"[BENCHMARK] Skipping on aisrv-{aisrv_index}, only aisrv-1 runs benchmark")
             marker = Path("/workspace/code/.benchmark_done")
             while not marker.exists():
                 time.sleep(5)
-            logger.info("[BENCHMARK] aisrv-1 benchmark complete, exiting")
+            if logger is not None:
+                logger.info("[BENCHMARK] aisrv-1 benchmark complete, exiting")
             return
         from agent_ppo.eval.benchmark import run_benchmark
-        usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
-        run_benchmark(env, agent, usr_conf, logger)
+        try:
+            usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
+            run_benchmark(env, agent, usr_conf, logger)
+        except Exception:
+            if logger is not None:
+                logger.exception(
+                    "[BENCHMARK] Serial benchmark branch failed "
+                    f"aisrv_index={aisrv_index or '<empty>'} "
+                    f"checkpoint={benchmark_checkpoint or '<default>'}"
+                )
+            raise
         return
 
     archive = ExperimentArchive(service_name=os.getenv("KAIWU_SERVICE_NAME") or "aisrv")

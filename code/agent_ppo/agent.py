@@ -690,6 +690,9 @@ class Agent(BaseAgent):
                     checkpoint_id,
                 )
 
+    def _business_load_model(self, path=None, id="1"):
+        return self.load_model(path=path, id=id)
+
     def get_runtime_metrics(self):
         return {
             "load_model_calls": self._model_load_call_count,

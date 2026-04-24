@@ -15,6 +15,7 @@ import os
 
 import numpy as np
 
+from agent_ppo.conf import conf as conf_module
 from agent_ppo.conf.conf import Config
 from agent_ppo.feature.expert import ExpertPolicy
 from agent_ppo.utils.constraint_utils import (
@@ -40,6 +41,10 @@ from agent_ppo.utils.strong_heuristic import (
     strong_heuristic_slice2a_active,
 )
 from agent_ppo.utils.reward_schedule import get_reward_schedule
+
+
+def _config():
+    return conf_module.Config
 
 
 def _norm(value, v_max, v_min=0.0):
@@ -1202,6 +1207,7 @@ class Preprocessor:
         return merged
 
     def _infer_mode(self):
+        cfg = _config()
         battery_ratio = self.battery / max(self.battery_max, 1)
         guidance = self._get_guidance()
         margin = float(guidance.get("margin", 0.0))
@@ -1231,16 +1237,16 @@ class Preprocessor:
                 total_charger=self.total_charger,
                 unknown_ratio=unknown_ratio,
                 route_contract_pressure=self.route_contract_pressure,
-                return_battery_ratio=Config.RETURN_BATTERY_RATIO,
-                return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
-                return_exit_battery_ratio=Config.STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO,
-                pre_return_battery_ratio=Config.PREPARE_RETURN_BATTERY_RATIO,
-                pre_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
-                pre_return_recoverability_threshold=Config.STRONG_HEURISTIC_PRE_RETURN_RECOVERABILITY_THRESHOLD,
-                pre_return_unknown_ratio_threshold=Config.STRONG_HEURISTIC_PRE_RETURN_UNKNOWN_RATIO_THRESHOLD,
-                pre_return_route_pressure_threshold=Config.STRONG_HEURISTIC_PRE_RETURN_ROUTE_PRESSURE_THRESHOLD,
-                charge_margin_warn=Config.CHARGE_MARGIN_WARN,
-                evade_npc_distance=Config.STRONG_HEURISTIC_EVADE_NPC_DISTANCE,
+                return_battery_ratio=cfg.RETURN_BATTERY_RATIO,
+                return_slack_threshold=cfg.RETURN_SLACK_THRESHOLD,
+                return_exit_battery_ratio=cfg.STRONG_HEURISTIC_RETURN_EXIT_BATTERY_RATIO,
+                pre_return_battery_ratio=cfg.PREPARE_RETURN_BATTERY_RATIO,
+                pre_return_slack_threshold=cfg.PREPARE_RETURN_SLACK_THRESHOLD,
+                pre_return_recoverability_threshold=cfg.STRONG_HEURISTIC_PRE_RETURN_RECOVERABILITY_THRESHOLD,
+                pre_return_unknown_ratio_threshold=cfg.STRONG_HEURISTIC_PRE_RETURN_UNKNOWN_RATIO_THRESHOLD,
+                pre_return_route_pressure_threshold=cfg.STRONG_HEURISTIC_PRE_RETURN_ROUTE_PRESSURE_THRESHOLD,
+                charge_margin_warn=cfg.CHARGE_MARGIN_WARN,
+                evade_npc_distance=cfg.STRONG_HEURISTIC_EVADE_NPC_DISTANCE,
             )
             return logical_mode_to_training_mode(str(mode_decision["logical_mode"]), self)
 
@@ -1258,67 +1264,67 @@ class Preprocessor:
                 total_charger=self.total_charger,
                 planner_topk_reachable_count=planner_topk_reachable_count,
                 unknown_ratio=unknown_ratio,
-                return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
-                return_battery_ratio=Config.RETURN_BATTERY_RATIO,
-                return_recoverability_threshold=Config.RETURN_RECOVERABILITY_THRESHOLD,
-                prepare_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
-                contract_battery_ratio=Config.CONTRACT_BATTERY_RATIO,
-                contract_recoverability_threshold=Config.CONTRACT_RECOVERABILITY_THRESHOLD,
-                charge_margin_low=Config.CHARGE_MARGIN_LOW,
-                charge_margin_warn=Config.CHARGE_MARGIN_WARN,
-                contract_route_pressure_threshold=Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
-                unknown_path_risk_battery_ratio=Config.UNKNOWN_PATH_RISK_BATTERY_RATIO,
-                unknown_path_risk_threshold=Config.UNKNOWN_PATH_RISK_THRESHOLD,
+                return_slack_threshold=cfg.RETURN_SLACK_THRESHOLD,
+                return_battery_ratio=cfg.RETURN_BATTERY_RATIO,
+                return_recoverability_threshold=cfg.RETURN_RECOVERABILITY_THRESHOLD,
+                prepare_return_slack_threshold=cfg.PREPARE_RETURN_SLACK_THRESHOLD,
+                contract_battery_ratio=cfg.CONTRACT_BATTERY_RATIO,
+                contract_recoverability_threshold=cfg.CONTRACT_RECOVERABILITY_THRESHOLD,
+                charge_margin_low=cfg.CHARGE_MARGIN_LOW,
+                charge_margin_warn=cfg.CHARGE_MARGIN_WARN,
+                contract_route_pressure_threshold=cfg.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
+                unknown_path_risk_battery_ratio=cfg.UNKNOWN_PATH_RISK_BATTERY_RATIO,
+                unknown_path_risk_threshold=cfg.UNKNOWN_PATH_RISK_THRESHOLD,
             )
             if readiness["return_now"]:
                 return self.MODE_RETURN
             if readiness["pre_return_ready"]:
                 return self.MODE_CONTRACT
         if (
-            self.charger_slack <= Config.RETURN_SLACK_THRESHOLD
-            or battery_ratio <= Config.RETURN_BATTERY_RATIO
-            or self.future_recoverability_score <= Config.RETURN_RECOVERABILITY_THRESHOLD
-            or planner_multi_route_recoverability <= Config.RETURN_RECOVERABILITY_THRESHOLD
-            or margin <= Config.CHARGE_MARGIN_LOW
+            self.charger_slack <= cfg.RETURN_SLACK_THRESHOLD
+            or battery_ratio <= cfg.RETURN_BATTERY_RATIO
+            or self.future_recoverability_score <= cfg.RETURN_RECOVERABILITY_THRESHOLD
+            or planner_multi_route_recoverability <= cfg.RETURN_RECOVERABILITY_THRESHOLD
+            or margin <= cfg.CHARGE_MARGIN_LOW
         ):
             return self.MODE_RETURN
         contract_soft_hits = 0
-        contract_soft_hits += int(self.charger_slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD)
-        contract_soft_hits += int(battery_ratio <= Config.CONTRACT_BATTERY_RATIO)
-        contract_soft_hits += int(self.future_recoverability_score <= Config.CONTRACT_RECOVERABILITY_THRESHOLD)
+        contract_soft_hits += int(self.charger_slack <= cfg.PREPARE_RETURN_SLACK_THRESHOLD)
+        contract_soft_hits += int(battery_ratio <= cfg.CONTRACT_BATTERY_RATIO)
+        contract_soft_hits += int(self.future_recoverability_score <= cfg.CONTRACT_RECOVERABILITY_THRESHOLD)
         contract_soft_hits += int(
-            planner_multi_route_recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
+            planner_multi_route_recoverability <= cfg.CONTRACT_RECOVERABILITY_THRESHOLD
         )
         contract_soft_hits += int(
-            self.route_contract_pressure >= Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD
+            self.route_contract_pressure >= cfg.CONTRACT_ROUTE_PRESSURE_THRESHOLD
         )
-        contract_soft_hits += int(margin <= Config.CHARGE_MARGIN_WARN)
+        contract_soft_hits += int(margin <= cfg.CHARGE_MARGIN_WARN)
         contract_hard_risk = bool(
             known_path_count < min(self.total_charger, 2)
             and planner_topk_reachable_count <= 0
-            and battery_ratio <= Config.UNKNOWN_PATH_RISK_BATTERY_RATIO
-            and unknown_ratio >= Config.UNKNOWN_PATH_RISK_THRESHOLD
+            and battery_ratio <= cfg.UNKNOWN_PATH_RISK_BATTERY_RATIO
+            and unknown_ratio >= cfg.UNKNOWN_PATH_RISK_THRESHOLD
         )
         if train_phase == "s1_survival":
             strong_hits = 0
-            strong_hits += int(self.charger_slack <= Config.PREPARE_RETURN_SLACK_THRESHOLD)
-            strong_hits += int(margin <= Config.CHARGE_MARGIN_WARN)
-            strong_hits += int(self.route_contract_pressure >= Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD)
+            strong_hits += int(self.charger_slack <= cfg.PREPARE_RETURN_SLACK_THRESHOLD)
+            strong_hits += int(margin <= cfg.CHARGE_MARGIN_WARN)
+            strong_hits += int(self.route_contract_pressure >= cfg.CONTRACT_ROUTE_PRESSURE_THRESHOLD)
 
             weak_hits = 0
-            weak_hits += int(battery_ratio <= Config.CONTRACT_BATTERY_RATIO)
-            weak_hits += int(self.future_recoverability_score <= Config.CONTRACT_RECOVERABILITY_THRESHOLD)
+            weak_hits += int(battery_ratio <= cfg.CONTRACT_BATTERY_RATIO)
+            weak_hits += int(self.future_recoverability_score <= cfg.CONTRACT_RECOVERABILITY_THRESHOLD)
             weak_hits += int(
-                planner_multi_route_recoverability <= Config.CONTRACT_RECOVERABILITY_THRESHOLD
+                planner_multi_route_recoverability <= cfg.CONTRACT_RECOVERABILITY_THRESHOLD
             )
 
             if ((strong_hits >= 1 and weak_hits >= 1) or weak_hits >= 2 or contract_hard_risk):
                 return self.MODE_CONTRACT
-        elif contract_soft_hits >= Config.CONTRACT_SOFT_TRIGGER_MIN_HITS or contract_hard_risk:
+        elif contract_soft_hits >= cfg.CONTRACT_SOFT_TRIGGER_MIN_HITS or contract_hard_risk:
             return self.MODE_CONTRACT
-        if self.steps_since_charge <= Config.DEPART_STEPS:
+        if self.steps_since_charge <= cfg.DEPART_STEPS:
             return self.MODE_DEPART
-        if self.local_dirt_density >= Config.HARVEST_DIRT_DENSITY or self.dirty_adjacent >= 2:
+        if self.local_dirt_density >= cfg.HARVEST_DIRT_DENSITY or self.dirty_adjacent >= 2:
             return self.MODE_HARVEST
         return self.MODE_EXPAND
 

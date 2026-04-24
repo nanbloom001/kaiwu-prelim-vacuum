@@ -1814,6 +1814,131 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertAlmostEqual(diagnostics["avg_reward_charge_detour_cost"], -0.15, places=5)
         self.assertAlmostEqual(diagnostics["avg_reward_planner_alignment"], -0.125, places=5)
 
+    def test_benchmark_workflow_derives_primary_worker_from_hostname_when_aisrv_index_missing(self):
+        try:
+            import agent_ppo.workflow.train_workflow as train_workflow_mod
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"train_workflow import unavailable in local test env: {exc}")
+
+        env = Mock()
+        agent = Mock()
+        logger = Mock()
+        run_benchmark_mock = Mock()
+        benchmark_module = types.SimpleNamespace(run_benchmark=run_benchmark_mock)
+
+        with patch.dict(
+            os.environ,
+            {
+                "KAIWU_BENCHMARK_MODE": "1",
+                "KAIWU_BENCHMARK_PARALLEL_MODE": "",
+                "KAIWU_AISRV_INDEX": "",
+                "HOSTNAME": "kaiwu-train-aisrv-1",
+                "KAIWU_BENCHMARK_CHECKPOINT": "saved_models/demo.pkl",
+                "KAIWU_BENCHMARK_POLICY_MODE": "eval",
+                "KAIWU_BENCHMARK_MAPS": "1,2",
+            },
+            clear=False,
+        ), patch.object(train_workflow_mod, "read_usr_conf", return_value={"mode": "benchmark"}), patch.dict(
+            sys.modules,
+            {"agent_ppo.eval.benchmark": benchmark_module},
+            clear=False,
+        ):
+            train_workflow_mod.workflow([env], [agent], logger=logger)
+
+        run_benchmark_mock.assert_called_once_with(env, agent, {"mode": "benchmark"}, logger)
+        logger.info.assert_any_call(
+            "[BENCHMARK] Entering serial benchmark branch "
+            "active=True aisrv_index=1 "
+            "hostname=kaiwu-train-aisrv-1 "
+            "checkpoint=saved_models/demo.pkl "
+            "policy_mode=eval maps=1,2 rounds_override=default"
+        )
+
+    def test_benchmark_workflow_logs_traceback_context_before_reraising_serial_failure(self):
+        try:
+            import agent_ppo.workflow.train_workflow as train_workflow_mod
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"train_workflow import unavailable in local test env: {exc}")
+
+        env = Mock()
+        agent = Mock()
+        logger = Mock()
+        expected_exc = RuntimeError("benchmark exploded")
+        run_benchmark_mock = Mock(side_effect=expected_exc)
+        benchmark_module = types.SimpleNamespace(run_benchmark=run_benchmark_mock)
+
+        with patch.dict(
+            os.environ,
+            {
+                "KAIWU_BENCHMARK_MODE": "1",
+                "KAIWU_BENCHMARK_PARALLEL_MODE": "",
+                "KAIWU_AISRV_INDEX": "",
+                "HOSTNAME": "kaiwu-train-aisrv-1",
+                "KAIWU_BENCHMARK_CHECKPOINT": "saved_models/demo.pkl",
+            },
+            clear=False,
+        ), patch.object(train_workflow_mod, "read_usr_conf", return_value={"mode": "benchmark"}), patch.dict(
+            sys.modules,
+            {"agent_ppo.eval.benchmark": benchmark_module},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "benchmark exploded"):
+                train_workflow_mod.workflow([env], [agent], logger=logger)
+
+        logger.exception.assert_called_once_with(
+            "[BENCHMARK] Serial benchmark branch failed aisrv_index=1 checkpoint=saved_models/demo.pkl"
+        )
+
+    def test_benchmark_workflow_skips_secondary_worker_when_ip_fallback_derives_non_primary_index(self):
+        try:
+            import agent_ppo.workflow.train_workflow as train_workflow_mod
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"train_workflow import unavailable in local test env: {exc}")
+
+        env = Mock()
+        agent = Mock()
+        logger = Mock()
+        run_benchmark_mock = Mock()
+        benchmark_module = types.SimpleNamespace(run_benchmark=run_benchmark_mock)
+
+        def fake_gethostbyname_ex(name):
+            dns_table = {
+                "container-hash": ("container-hash", [], ["172.19.0.38"]),
+                "kaiwu-train-aisrv-1": ("kaiwu-train-aisrv-1", [], ["172.19.0.37"]),
+                "kaiwu-train_aisrv_1": ("kaiwu-train_aisrv_1", [], ["172.19.0.37"]),
+                "kaiwu-train-aisrv-2": ("kaiwu-train-aisrv-2", [], ["172.19.0.38"]),
+                "kaiwu-train_aisrv_2": ("kaiwu-train_aisrv_2", [], ["172.19.0.38"]),
+            }
+            if name in dns_table:
+                return dns_table[name]
+            raise OSError(name)
+
+        with patch.dict(
+            os.environ,
+            {
+                "KAIWU_BENCHMARK_MODE": "1",
+                "KAIWU_BENCHMARK_PARALLEL_MODE": "",
+                "KAIWU_AISRV_INDEX": "",
+                "HOSTNAME": "",
+                "COMPOSE_PROJECT_NAME": "kaiwu-train",
+                "KAIWU_BENCHMARK_WORKER_COUNT": "2",
+            },
+            clear=False,
+        ), patch.object(train_workflow_mod.Path, "read_text", return_value="container-hash\n"), patch.object(
+            train_workflow_mod.socket,
+            "gethostbyname_ex",
+            side_effect=fake_gethostbyname_ex,
+        ), patch.object(train_workflow_mod.Path, "exists", return_value=True), patch.dict(
+            sys.modules,
+            {"agent_ppo.eval.benchmark": benchmark_module},
+            clear=False,
+        ):
+            train_workflow_mod.workflow([env], [agent], logger=logger)
+
+        run_benchmark_mock.assert_not_called()
+        logger.info.assert_any_call("[BENCHMARK] Skipping on aisrv-2, only aisrv-1 runs benchmark")
+        logger.info.assert_any_call("[BENCHMARK] aisrv-1 benchmark complete, exiting")
+
     def test_build_monitor_payload_tolerates_missing_readiness_window_keys(self):
         try:
             from agent_ppo.workflow.train_workflow import EpisodeRunner
