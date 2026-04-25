@@ -19,6 +19,7 @@
 2026-04-25 11:24 | T4: Added holdout episode lifecycle summaries/evidence windows and taught analyzer to classify charger-unknown and optimistic-route-budget failures from episode-level diagnostics; synthetic fixtures passed.
 2026-04-25 11:44 | T6: Verified holdout compile, synthetic analyzer fixtures, and dry-run benchmark outputs; wrote fresh QA evidence without touching model artifacts.
 2026-04-25 11:58 | F1 fix: added holdout contract.fixed_config alias plus pre-action decision_context fields step, pos_before, and last_action for deterministic rejection-gap closure.
+2026-04-25 13:35 | T3: runner now aggregates shard-local holdout results itself, waits for every shard marker/result, fails closed on shard coverage/schema issues, and ships no-Docker aggregation evidence.
 
 ## 2026-04-15
 
@@ -70,3 +71,15 @@
 
 2026-04-25 10:23 | Adapted linux-LTSPPO benchmark runtime to win_YJY. New files: code/agent_ppo/eval/holdout_benchmark.py (inference-only benchmark), train/.docker-compose.benchmark.yaml. Modified: train_workflow.py (KAIWU_BENCHMARK_MODE dispatch), run_holdout_benchmark.py (docker compose launch). Smoke test passed: map4=372(battery fail), map7=896(completed), avg=634.
 2026-04-25 12:40 | Fixed holdout diagnostic mask counting to avoid numpy truth-value crashes by using safe mask counters and first-value extraction.
+2026-04-25 12:58 | Added shard-worker holdout benchmark execution with strict hostname assignment validation, shard-local result/done outputs, and benchmark gate relaxation for non-primary AISRV workers only in sharded mode.
+2026-04-25 16:16 | Task 4 sharded smoke blocked: benchmark runner failed before JSON generation because hostname resolution inside kaiwu-train-aisrv-1 tried to exec missing 'hostname' binary.
+2026-04-25 16:26 | Fix sharded holdout runner hostname resolution via docker inspect; Task 4 smoke now passes on maps 4/7 with 2 shards.
+2026-04-25 16:31 | Task 5: real sharded 2x10 baseline finished below target at avg 652.4 (map4 605.8, map7 699.0; completed 0.65, battery fail 0.30, collision fail 0.05); analyzer marked ACTIONABLE with repeated invalid-move/stuck diagnostics first, and the closed-loop helper emitted CONTINUE for Task 6 candidate selection.
+2026-04-25 23:02 | Fixed holdout benchmark parallel execution defaults: runner now shards by default, map-partitions maps 4/7 across AISRV workers, waits for shard assignments safely, and reports wall-clock shard timing.
+2026-04-25 23:20 | Extended holdout benchmark parallelism to multi-GC per AISRV: runner now sizes gamecore as AISRV shards x workers-per-AISRV and benchmark workers bind independent env/agent pairs when available.
+2026-04-25 23:31 | Set holdout benchmark default to 5 gamecore/env workers per AISRV so the fixed 10 episodes per map can complete in two worker waves when runtime exposes enough env/agent pairs.
+2026-04-25 23:39 | Reverted benchmark default to 4 episodes per map and 4 gamecore/env workers per AISRV after real 2x5 attempt showed framework exposed only one env/agent pair per AISRV.
+2026-04-25 23:46 | Investigated AISRV env handle exposure: multi-gamecore connects at AISRV server layer, but workflow still receives one env/agent handle; Linux branch confirms speedup should come from multi-AISRV task distribution.
+2026-04-26 00:03 | Implemented 2x4 dual-concurrency holdout benchmark path with AISRV env-count TOML patching, dynamic task queue execution, dry-run contract, and observed-worker validation.
+2026-04-26 00:10 | Validated real 2x4 dynamic holdout benchmark: 8/8 tasks completed, 8 logical workers observed across 2 AISRV x 4 process indexes, done marker reached at ~190s.
+2026-04-26 00:12 | Documented 2x4 dynamic holdout benchmark as the README standard and corrected benchmark overlay default episode comment.
