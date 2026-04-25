@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "profile_name": "dev_3c4r_1000_150_10",
+  "description": "Frozen development benchmark: 3 chargers, 4 robots, 1000 max steps, 150 battery, maps 1-10, one round.",
+  "env": {
+    "charger_count": 3,
+    "robot_count": 4,
+    "max_step": 1000,
+    "battery_max": 150
+  },
+  "maps": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "rounds": [
+    {
+      "name": "dev_round_1",
+      "desc": "3 chargers / 4 robots / 1000 steps / 150 battery",
+      "charger_count": 3,
+      "robot_count": 4,
+      "max_step": 1000,
+      "battery_max": 150
+    }
+  ],
+  "planned_episode_count": 10
+}

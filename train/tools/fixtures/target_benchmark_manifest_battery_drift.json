@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "generated_by": "fixture",
+  "profile_name": "battery_drift_fixture",
+  "profile_path": "train/benchmark_profiles/target_3c4r_1000_150_30.json",
+  "git_commit": "fixture",
+  "checkpoint_path": "fixture.pkl",
+  "checkpoint_sha256": null,
+  "policy_mode": "eval",
+  "runner": "serial",
+  "dry_run": true,
+  "start_time": "2026-04-25T00:00:00Z",
+  "end_time": "2026-04-25T00:00:00Z",
+  "result_path": "train/eval_results.json",
+  "env": {
+    "charger_count": 3,
+    "robot_count": 4,
+    "max_step": 1000,
+    "battery_max": 200
+  },
+  "maps": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "rounds": [
+    {
+      "name": "target_round_1",
+      "desc": "3 chargers / 4 robots / 1000 steps / 200 battery drift fixture",
+      "charger_count": 3,
+      "robot_count": 4,
+      "max_step": 1000,
+      "battery_max": 200
+    },
+    {
+      "name": "target_round_2",
+      "desc": "3 chargers / 4 robots / 1000 steps / 200 battery drift fixture",
+      "charger_count": 3,
+      "robot_count": 4,
+      "max_step": 1000,
+      "battery_max": 200
+    },
+    {
+      "name": "target_round_3",
+      "desc": "3 chargers / 4 robots / 1000 steps / 200 battery drift fixture",
+      "charger_count": 3,
+      "robot_count": 4,
+      "max_step": 1000,
+      "battery_max": 200
+    }
+  ],
+  "planned_episode_count": 30,
+  "planned_episodes": [
+    {"index": 1, "round_name": "target_round_1", "map": 1, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 2, "round_name": "target_round_1", "map": 2, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 3, "round_name": "target_round_1", "map": 3, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 4, "round_name": "target_round_1", "map": 4, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 5, "round_name": "target_round_1", "map": 5, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 6, "round_name": "target_round_1", "map": 6, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 7, "round_name": "target_round_1", "map": 7, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 8, "round_name": "target_round_1", "map": 8, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 9, "round_name": "target_round_1", "map": 9, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 10, "round_name": "target_round_1", "map": 10, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 11, "round_name": "target_round_2", "map": 1, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 12, "round_name": "target_round_2", "map": 2, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 13, "round_name": "target_round_2", "map": 3, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 14, "round_name": "target_round_2", "map": 4, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 15, "round_name": "target_round_2", "map": 5, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 16, "round_name": "target_round_2", "map": 6, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 17, "round_name": "target_round_2", "map": 7, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 18, "round_name": "target_round_2", "map": 8, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 19, "round_name": "target_round_2", "map": 9, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 20, "round_name": "target_round_2", "map": 10, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 21, "round_name": "target_round_3", "map": 1, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 22, "round_name": "target_round_3", "map": 2, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 23, "round_name": "target_round_3", "map": 3, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 24, "round_name": "target_round_3", "map": 4, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 25, "round_name": "target_round_3", "map": 5, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 26, "round_name": "target_round_3", "map": 6, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 27, "round_name": "target_round_3", "map": 7, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 28, "round_name": "target_round_3", "map": 8, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 29, "round_name": "target_round_3", "map": 9, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200},
+    {"index": 30, "round_name": "target_round_3", "map": 10, "charger_count": 3, "robot_count": 4, "max_step": 1000, "battery_max": 200}
+  ]
+}
