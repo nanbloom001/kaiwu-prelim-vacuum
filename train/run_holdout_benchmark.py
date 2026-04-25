@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import time
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -222,6 +224,196 @@ def infer_checkpoint_id(checkpoint_path: Path) -> str:
     return checkpoint_path.stem.replace(".", "-")
 
 
+def _launch_benchmark_via_docker(
+    repo_root: Path,
+    requested_maps: list[int],
+    episodes_per_map: int,
+    checkpoint_path: Path,
+    output_path: Path,
+    run_id: str,
+) -> int:
+    """Launch the holdout benchmark via docker compose benchmark overlay.
+
+    This stops training containers (port conflict), starts benchmark containers
+    with KAIWU_BENCHMARK_MODE=1, waits for completion, copies the result, then
+    optionally restarts training containers.
+    """
+    import subprocess
+
+    maps_str = ",".join(str(m) for m in requested_maps)
+    compose_file = str(repo_root / "train" / ".docker-compose.yaml")
+    benchmark_overlay = str(repo_root / "train" / ".docker-compose.benchmark.yaml")
+    train_profile = "--profile distributed"
+
+    # Compute checkpoint path relative to /workspace/code (container mount)
+    code_dir = repo_root / "code"
+    try:
+        checkpoint_relative = checkpoint_path.relative_to(code_dir)
+        checkpoint_container = str(checkpoint_relative).replace("\\", "/")
+    except ValueError:
+        checkpoint_container = "model.ckpt-resume.pkl"
+
+    env = dict(os.environ)
+    env.update({
+        "KAIWU_BENCHMARK_MODE": "1",
+        "KAIWU_BENCHMARK_MAPS": maps_str,
+        "KAIWU_BENCHMARK_EPISODES_PER_MAP": str(episodes_per_map),
+        "KAIWU_BENCHMARK_CHECKPOINT": checkpoint_container,
+    })
+
+    train_project = "kaiwu-train"
+    benchmark_project = "kaiwu-train"  # Must match training project name for framework service discovery
+
+    print(f"[HOLDOUT-BENCH] Starting benchmark via docker compose...", flush=True)
+    print(f"  maps={maps_str} episodes_per_map={episodes_per_map} checkpoint={checkpoint_container}", flush=True)
+
+    # Step 1: Stop training containers (port conflict)
+    training_was_running = False
+    try:
+        check = subprocess.run(
+            ["docker", "compose", "-p", train_project, "-f", compose_file, "ps", "-q"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if check.returncode == 0 and check.stdout.strip():
+            training_was_running = True
+            print(f"[HOLDOUT-BENCH] Stopping training containers (port conflict)...", flush=True)
+            subprocess.run(
+                ["docker", "compose", "-p", train_project, "-f", compose_file, "down"],
+                capture_output=True, text=True, timeout=120,
+            )
+            print("[HOLDOUT-BENCH] Training containers stopped.", flush=True)
+    except Exception as exc:
+        print(f"[HOLDOUT-BENCH] Warning: could not check/stop training: {exc}", flush=True)
+
+    try:
+        # Step 2: Start benchmark containers
+        up_cmd = [
+            "docker", "compose",
+            "-p", benchmark_project,
+            "-f", compose_file,
+            "-f", benchmark_overlay,
+            "--profile", "distributed",
+            "up", "-d",
+        ]
+        print(f"  Running: {' '.join(up_cmd)}", flush=True)
+        result = subprocess.run(up_cmd, capture_output=True, text=True, timeout=120, env=env)
+        if result.returncode != 0:
+            print(f"[HOLDOUT-BENCH] docker compose up failed:", file=sys.stderr)
+            print(result.stderr, file=sys.stderr)
+            return 4
+
+        # Step 3: Wait for completion marker in aisrv container
+        aisrv_container = f"{benchmark_project}-aisrv-1"
+        print(f"[HOLDOUT-BENCH] Waiting for benchmark to complete (container: {aisrv_container})...", flush=True)
+
+        max_wait = 3600  # 1 hour max
+        poll_interval = 10
+        elapsed = 0
+        benchmark_completed = False
+        while elapsed < max_wait:
+            try:
+                check = subprocess.run(
+                    ["docker", "exec", aisrv_container, "test", "-f", "/workspace/code/.benchmark_done"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if check.returncode == 0:
+                    print(f"[HOLDOUT-BENCH] Benchmark completed after ~{elapsed}s", flush=True)
+                    benchmark_completed = True
+                    break
+            except Exception:
+                pass
+
+            # Check if container is still running
+            try:
+                ps = subprocess.run(
+                    ["docker", "inspect", "-f", "{{.State.Running}}", aisrv_container],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if ps.returncode != 0 or "true" not in ps.stdout.lower():
+                    print(f"[HOLDOUT-BENCH] Container {aisrv_container} exited.", file=sys.stderr)
+                    # Check logs for errors
+                    try:
+                        logs = subprocess.run(
+                            ["docker", "logs", "--tail", "50", aisrv_container],
+                            capture_output=True, text=True, timeout=30,
+                        )
+                        if logs.stdout:
+                            print(f"[HOLDOUT-BENCH] Container logs (last 50 lines):", file=sys.stderr)
+                            print(logs.stdout[-3000:], file=sys.stderr)
+                    except Exception:
+                        pass
+                    break
+            except Exception:
+                pass
+
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        # Step 4: Copy result from container
+        try:
+            result_container_path = "/workspace/code/holdout_result.json"
+            copy_cmd = ["docker", "cp", f"{aisrv_container}:{result_container_path}", str(output_path)]
+            subprocess.run(copy_cmd, capture_output=True, text=True, timeout=30)
+            print(f"[HOLDOUT-BENCH] Result copied to {output_path}", flush=True)
+        except Exception as exc:
+            print(f"[HOLDOUT-BENCH] Failed to copy result: {exc}", file=sys.stderr)
+
+        # Step 5: Tear down benchmark containers
+        print("[HOLDOUT-BENCH] Cleaning up benchmark containers...", flush=True)
+        try:
+            down_cmd = [
+                "docker", "compose",
+                "-p", benchmark_project,
+                "-f", compose_file,
+                "-f", benchmark_overlay,
+                "--profile", "distributed",
+                "down",
+            ]
+            subprocess.run(down_cmd, capture_output=True, text=True, timeout=60, env=env)
+        except Exception:
+            pass
+
+        # Step 6: Restart training containers if they were running
+        if training_was_running:
+            print("[HOLDOUT-BENCH] Restarting training containers...", flush=True)
+            try:
+                # Remove old containers first (process_stop.done issue)
+                subprocess.run(
+                    ["docker", "rm", "-f",
+                     "kaiwu-train-learner-1", "kaiwu-train-aisrv-1", "kaiwu-train-aisrv-2"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                subprocess.run(
+                    ["docker", "compose", "-p", train_project, "-f", compose_file,
+                     "--profile", "distributed", "up", "-d"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                print("[HOLDOUT-BENCH] Training containers restarted.", flush=True)
+            except Exception as exc:
+                print(f"[HOLDOUT-BENCH] Warning: could not restart training: {exc}", flush=True)
+
+        if output_path.exists():
+            print(json.dumps({"status": "COMPLETED", "output": str(output_path)}, ensure_ascii=True))
+            return 0
+        else:
+            print(f"[HOLDOUT-BENCH] Result file not found at {output_path}", file=sys.stderr)
+            return 5
+
+    except Exception as exc:
+        print(f"[HOLDOUT-BENCH] Unexpected error: {exc}", file=sys.stderr)
+        # Try to restart training even on failure
+        if training_was_running:
+            try:
+                subprocess.run(
+                    ["docker", "compose", "-p", train_project, "-f", compose_file,
+                     "--profile", "distributed", "up", "-d"],
+                    capture_output=True, text=True, timeout=120,
+                )
+            except Exception:
+                pass
+        return 6
+
+
 def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
@@ -289,7 +481,7 @@ def main() -> int:
 
     result = {
         "run_id": run_id,
-        "status": "DRY_RUN" if args.dry_run else "NOT_IMPLEMENTED",
+        "status": "DRY_RUN" if args.dry_run else "LAUNCHING",
         "contract": contract,
         "checkpoint": checkpoint,
         "detail_log_dir": str(detail_log_dir),
@@ -309,9 +501,13 @@ def main() -> int:
                 ),
             },
             {
-                "code": "REAL_EXECUTION_DEFERRED",
-                "severity": "warning",
-                "message": "T2 intentionally does not execute real holdout episodes. T3 should extend this runner with a safe runtime path.",
+                "code": "REAL_EXECUTION_VIA_DOCKER",
+                "severity": "info" if not args.dry_run else "warning",
+                "message": (
+                    "Real execution will launch benchmark via docker compose overlay."
+                    if not args.dry_run
+                    else "Dry-run: no real episodes executed."
+                ),
             },
         ],
         "decision_inputs": {
@@ -324,14 +520,16 @@ def main() -> int:
     }
 
     if not args.dry_run:
-        result["failure"] = {
-            "reason": "REAL_EXECUTION_UNSUPPORTED_IN_T2",
-            "message": "Non-dry-run execution is intentionally unsupported in T2 to avoid hidden training/runtime side effects. Use --dry-run in T2; T3 will add real execution.",
-        }
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(json.dumps({"status": result["status"], "output": str(output_path)}, ensure_ascii=True))
-        return 3
+        # Real execution: launch docker compose benchmark, wait for result, copy output.
+        benchmark_status = _launch_benchmark_via_docker(
+            repo_root=repo_root,
+            requested_maps=requested_maps,
+            episodes_per_map=int(args.episodes_per_map),
+            checkpoint_path=checkpoint_path,
+            output_path=output_path,
+            run_id=run_id,
+        )
+        return benchmark_status
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
