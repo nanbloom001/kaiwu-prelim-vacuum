@@ -414,8 +414,8 @@ class CoveragePlanner:
     PATH_ACTION_ORDER = (1, 3, 5, 7, 0, 2, 4, 6)  # A*/BFS 扩展顺序：斜向优先，加快收敛
 
     # ── Decision thresholds（充电策略与 NPC 安全阈值）────────────────────────
-    BASE_RETURN_MARGIN    = 22.0  # 触发返回充电的电量余量：battery <= charger_distance + 22 时开始返回
-    COVERAGE_RETURN_BUFFER = 8.0   # Coverage-target-only return safety buffer.
+    BASE_RETURN_MARGIN    = 28.0  # 固定 150 电量配置下提前返航，减少负 slack 电量死亡。
+    COVERAGE_RETURN_BUFFER = 8.0   # 覆盖目标候选门控专用缓冲，仅用于覆盖选点的返航安全余量。
     NPC_RETURN_MARGIN     = 28.0  # 充电路径经过 NPC 风险区时额外增加的安全余量（避免路途中碰撞）
     LOW_BATTERY_RATIO     = 0.30  # 电量比低于此值时强制返回充电桩（应对充电桩距离估算误差）
     EXIT_RETURN_RATIO     = 0.95  # 抵达充电桩且电量比超过此值后退出返回模式，恢复正常清扫
@@ -511,11 +511,19 @@ class CoveragePlanner:
         """
         # ── 解析 observation（观测信息）─────────────────────────────────────
         obs         = self._unwrap_observation(env_obs)
+        extra_info  = self._get(env_obs, "extra_info", {}) or self._get(obs, "extra_info", {}) or {}
         env_info    = self._get(obs, "env_info", {})      # EnvInfo：全局环境信息
         frame_state = self._get(obs, "frame_state", {})   # FrameState：帧状态数据
+        global_frame_state = self._get(extra_info, "frame_state", {})
         hero        = self._parse_hero_state(frame_state)  # HeroState：小悟机器人状态
-        npcs        = self._parse_npc_positions(frame_state)  # list[Position]：NPC 全局坐标
-        organs      = self._parse_organ_states(frame_state)   # list[OrganState]：充电桩物件
+        npcs        = self._merge_positions(
+            self._parse_npc_positions(frame_state),
+            self._parse_npc_positions(global_frame_state),
+        )  # list[Position]：NPC 全局坐标
+        organs      = self._merge_organ_states(
+            self._parse_organ_states(frame_state),
+            self._parse_organ_states(global_frame_state),
+        )   # list[OrganState]：充电桩物件
 
         # 小悟机器人当前位置 (x, z)；优先从 HeroState.pos 读取，回退到 EnvInfo.pos
         hero_pos      = self._parse_position(self._get(hero, "pos", self._get(env_info, "pos", {})))
@@ -688,7 +696,8 @@ class CoveragePlanner:
             path           : 到目标的 A* 路径（Position 列表），无路径时为 []
         """
         # ── 步骤 1：复用仍有效的当前目标 ──────────────────────────────────
-        if self._goal_is_still_valid(self.current_goal, hero_pos):
+        charger_known = bool(self.charger_regions)
+        if charger_known and self._goal_is_still_valid(self.current_goal, hero_pos):
             path, distance = self._astar_path(hero_pos, [self.current_goal], False, npcs)
             if path and np.isfinite(distance):
                 return self.current_mode, self.current_goal, distance, path
@@ -699,7 +708,6 @@ class CoveragePlanner:
         # 全局地图已知比例（已观测格子 / 总格子数）
         known_ratio     = (np.count_nonzero(self.global_map != self.UNKNOWN)
                            / float(self.MAP_SIZE * self.MAP_SIZE))
-        charger_known   = bool(self.charger_regions)
         # 扩张阶段判定：前 500 步 / 已知比例 < 78% / 充电桩未知 → 仍处于扩张阶段
         expansion_phase = (
             self.current_step <= self.AGGRESSIVE_EDGE_STEPS
@@ -765,6 +773,12 @@ class CoveragePlanner:
                     # 充电桩未知时，排斥离边缘太远且非 dirty 的格子，避免浪费在内部区域
                     if not charger_known and edge_bonus < 0.25 and cell != self.DIRT:
                         score -= 2.0
+                    if not charger_known:
+                        # 首桩未知时优先扩张视野；内部清扫会推迟发现充电桩。
+                        if cell == self.DIRT:
+                            score -= 1.8
+                        if not is_frontier:
+                            score -= 2.4
                 else:
                     # 开采阶段：边缘奖励降低，优先清扫已知的 dirty tile
                     score += 0.7 * edge_bonus
@@ -1058,6 +1072,9 @@ class CoveragePlanner:
             if current_npc_distance <= 3.0:
                 npc_escape_progress = max(0.0, npc_dist - current_npc_distance)
                 score += 1.2 * npc_escape_progress
+            if should_charge and npc_dist <= 4.0:
+                # 只做软惩罚，避免把唯一返航动作硬封死后转化为电量死亡。
+                score -= (5.0 - npc_dist) * 1.4
 
             # 边缘模式（扩张阶段）额外奖励靠近已知区域边缘的动作
             if edge_mode:
@@ -1893,6 +1910,40 @@ class CoveragePlanner:
         """
         organs = self._get(frame_state, "organs", [])
         return list(organs) if isinstance(organs, (list, tuple)) else []
+
+    def _merge_positions(self, *position_lists: Sequence[Position]) -> List[Position]:
+        merged: List[Position] = []
+        seen: Set[Position] = set()
+        for positions in position_lists:
+            for pos in positions:
+                key = (int(pos[0]), int(pos[1]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(key)
+        return merged
+
+    def _organ_key(self, organ: Any) -> Tuple[Any, ...]:
+        config_id = self._get(organ, "config_id", None)
+        if config_id not in (None, ""):
+            return ("config_id", str(config_id))
+        pos = self._parse_position(self._get(organ, "pos", {}))
+        sub_type = int(self._safe_float(self._get(organ, "sub_type", 0), 0.0))
+        w = int(self._safe_float(self._get(organ, "w", 0), 0.0))
+        h = int(self._safe_float(self._get(organ, "h", 0), 0.0))
+        return ("shape", sub_type, pos[0], pos[1], w, h)
+
+    def _merge_organ_states(self, *organ_lists: Sequence[Any]) -> List[Any]:
+        merged: List[Any] = []
+        seen: Set[Tuple[Any, ...]] = set()
+        for organs in organ_lists:
+            for organ in organs:
+                key = self._organ_key(organ)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(organ)
+        return merged
 
     def _parse_map_info(self, obs: Any) -> np.ndarray:
         """

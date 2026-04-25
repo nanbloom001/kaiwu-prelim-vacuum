@@ -84,12 +84,20 @@ class Preprocessor:
         if battery_max is not None:
             self.episode_battery_max = int(np.clip(battery_max, 100, 999))
 
+    def _dynamic_return_margin(self) -> float:
+        charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
+        low_capacity_factor = np.clip((260.0 - float(self.battery_max)) / 160.0, 0.0, 1.0)
+        long_horizon_bonus = 2.0 if self.episode_max_step >= 1500 else 0.0
+        return 28.0 + 6.0 * charger_scarcity + 4.0 * low_capacity_factor + long_horizon_bonus
+
     def pb2struct(self, env_obs: dict, last_action: int):
         """Parse env observation and cache required state."""
         del last_action
 
         observation = env_obs["observation"]
         frame_state = observation["frame_state"]
+        extra_info = self._get_dict(env_obs, "extra_info", {}) or self._get_dict(observation, "extra_info", {}) or {}
+        global_frame_state = self._get_dict(extra_info, "frame_state", {})
         env_info = observation["env_info"]
         hero = frame_state["heroes"]
 
@@ -117,7 +125,11 @@ class Preprocessor:
         self.visit_count[self.cur_pos] = self.cur_revisit_count + 1
         self.visited.add(self.cur_pos)
 
-        self.charger_regions = self._parse_charger_regions(frame_state.get("organs", []))
+        organs = self._merge_organ_states(
+            self._get_dict(frame_state, "organs", []),
+            self._get_dict(global_frame_state, "organs", []),
+        )
+        self.charger_regions = self._parse_charger_regions(organs)
         self.new_charger_arrival_reward = 0.0
         self._last_nearest_unarrived_charger_dist = self._nearest_unarrived_charger_dist
         for region in self.charger_regions:
@@ -137,10 +149,10 @@ class Preprocessor:
                     self.new_charger_arrival_reward += 0.22
         self._nearest_unarrived_charger_dist = self._nearest_unarrived_charger_distance()
 
-        self.npc_positions = [
-            (int(n["pos"]["x"]), int(n["pos"]["z"]))
-            for n in frame_state.get("npcs", [])
-        ]
+        self.npc_positions = self._merge_npc_positions(
+            self._get_dict(frame_state, "npcs", []),
+            self._get_dict(global_frame_state, "npcs", []),
+        )
 
     def _update_passable(self, hx: int, hz: int) -> int:
         """Merge current 21x21 observation into observed/passable maps."""
@@ -269,6 +281,47 @@ class Preprocessor:
         x = int(self._safe_float(self._get_dict(obj, "x", 0), 0.0))
         z = int(self._safe_float(self._get_dict(obj, "z", 0), 0.0))
         return (x, z)
+
+    def _merge_npc_positions(self, *npc_lists: Sequence[Any]) -> List[Position]:
+        merged: List[Position] = []
+        seen: Set[Position] = set()
+        for npcs in npc_lists:
+            if not isinstance(npcs, (list, tuple)):
+                continue
+            for npc in npcs:
+                pos_obj = self._get_dict(npc, "pos", None)
+                if pos_obj is None:
+                    continue
+                pos = self._parse_position(pos_obj)
+                if pos in seen:
+                    continue
+                seen.add(pos)
+                merged.append(pos)
+        return merged
+
+    def _organ_key(self, organ: Any) -> Tuple[Any, ...]:
+        config_id = self._get_dict(organ, "config_id", None)
+        if config_id not in (None, ""):
+            return ("config_id", str(config_id))
+        pos = self._parse_position(self._get_dict(organ, "pos", {}))
+        sub_type = int(self._safe_float(self._get_dict(organ, "sub_type", 0), 0.0))
+        w = int(self._safe_float(self._get_dict(organ, "w", 0), 0.0))
+        h = int(self._safe_float(self._get_dict(organ, "h", 0), 0.0))
+        return ("shape", sub_type, pos[0], pos[1], w, h)
+
+    def _merge_organ_states(self, *organ_lists: Sequence[Any]) -> List[Any]:
+        merged: List[Any] = []
+        seen: Set[Tuple[Any, ...]] = set()
+        for organs in organ_lists:
+            if not isinstance(organs, (list, tuple)):
+                continue
+            for organ in organs:
+                key = self._organ_key(organ)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(organ)
+        return merged
 
     def _parse_charger_regions(self, organs: Sequence[Any]) -> List[Set[Position]]:
         regions: List[Set[Position]] = []
@@ -400,10 +453,11 @@ class Preprocessor:
         nearest_charger_dist = self._nearest_charger_distance()
         charger_known = nearest_charger_dist < self.MAX_DIST
         is_on_charger = any(self.cur_pos in region for region in self.charger_regions)
+        return_margin = self._dynamic_return_margin()
         is_starving = (
             charger_known
             and not is_on_charger
-            and float(self.battery) <= nearest_charger_dist + 20.0
+            and float(self.battery) <= nearest_charger_dist + return_margin
         )
         cleaning_reward = 0.22 * cleaned_this_step
         explore_reward = 0.003 * min(self.new_observed_cells, 12) * max(0.0, 1.0 - cleaning_progress)
@@ -450,8 +504,8 @@ class Preprocessor:
                 charge_event_reward -= 0.08 * (prev_battery_ratio - 0.45) / 0.15
             else:
                 charge_event_reward -= 0.16 + 0.24 * (prev_battery_ratio - 0.60) / 0.40
-        low_battery_penalty = -0.035 * max(0.0, target_low - cur_battery_ratio) / max(target_low, 1e-6)
-        critical_battery_penalty = -0.090 * max(0.0, 0.22 - cur_battery_ratio) / 0.22
+        low_battery_penalty = -0.045 * max(0.0, target_low - cur_battery_ratio) / max(target_low, 1e-6)
+        critical_battery_penalty = -0.110 * max(0.0, 0.22 - cur_battery_ratio) / 0.22
         unarrived_progress = (
             self._last_nearest_unarrived_charger_dist - self._nearest_unarrived_charger_dist
         )

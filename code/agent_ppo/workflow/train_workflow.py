@@ -35,6 +35,18 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         logger.error("usr_conf is None, please check agent_ppo/conf/train_env_conf.toml")
         return
 
+    # --- Benchmark mode: run inference-only holdout eval, then exit ---
+    if os.getenv("KAIWU_BENCHMARK_MODE", "").strip() in ("1", "true"):
+        aisrv_index = os.getenv("KAIWU_AISRV_INDEX", "1").strip()
+        if aisrv_index not in ("", "1"):
+            logger.info(f"[BENCHMARK] Skipping on aisrv-{aisrv_index}, only aisrv-1 runs benchmark")
+            return
+        logger.info("[BENCHMARK] KAIWU_BENCHMARK_MODE detected — entering inference-only holdout benchmark")
+        from agent_ppo.eval.holdout_benchmark import run_holdout_benchmark
+        run_holdout_benchmark(env, agent, usr_conf, logger)
+        logger.info("[BENCHMARK] aisrv-1 benchmark complete, exiting")
+        return
+
     archive.ensure_run(
         {
             "workflow_started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -292,7 +304,7 @@ class EpisodeRunner:
         self.rolling_episode_total = 0
 
         self.death_trajectory_buffer = []
-        self.DEATH_TRAJ_LENGTH = 20
+        self.DEATH_TRAJ_LENGTH = 30
         self.config_stats = {}
 
         self.score_window = []
@@ -325,6 +337,104 @@ class EpisodeRunner:
         self.keep_episode_snapshots = Config.KEEP_EPISODE_RESUME_SNAPSHOTS
         self.keep_time_snapshots = Config.KEEP_TIME_RESUME_SNAPSHOTS
         self.keep_best_snapshots = Config.KEEP_BEST_RESUME_SNAPSHOTS
+
+    @staticmethod
+    def _round_float(value, default=None, digits=4):
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not np.isfinite(result):
+            return default
+        return round(result, digits)
+
+    @classmethod
+    def _json_sanitize(cls, value, max_items=32):
+        if isinstance(value, np.ndarray):
+            flat = value.reshape(-1)
+            return [cls._json_sanitize(item) for item in flat[:max_items]]
+        if isinstance(value, np.generic):
+            return cls._json_sanitize(value.item())
+        if isinstance(value, (list, tuple)):
+            return [cls._json_sanitize(item) for item in value[:max_items]]
+        if isinstance(value, dict):
+            return {str(key): cls._json_sanitize(item) for key, item in value.items()}
+        if isinstance(value, bool) or value is None or isinstance(value, str):
+            return value
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return cls._round_float(value)
+        return str(value)
+
+    def _append_death_snapshot(
+        self,
+        *,
+        step,
+        frame_no,
+        pre_hero,
+        post_hero,
+        prev_pos,
+        next_pos,
+        policy_info,
+        act_data,
+        env_action,
+    ):
+        fm = self.agent.preprocessor
+        snapshot = {
+            "step": int(step),
+            "frame_no": int(frame_no),
+            "pre_pos": list(prev_pos),
+            "post_pos": list(next_pos),
+            "invalid_move": bool(next_pos == prev_pos),
+            "battery_pre": self._json_sanitize(pre_hero.get("battery")),
+            "battery_post": self._json_sanitize(post_hero.get("battery")),
+            "battery": self._json_sanitize(getattr(fm, "battery", 0)),
+            "battery_max": self._json_sanitize(
+                post_hero.get("battery_max", pre_hero.get("battery_max", getattr(fm, "battery_max", 0)))
+            ),
+            "mode": str(getattr(policy_info, "target_mode", self.current_target_mode)),
+            "target_pos": self._json_sanitize(getattr(policy_info, "target_pos", None)),
+            "target_distance": self._round_float(getattr(policy_info, "target_distance", None)),
+            "charger_distance": self._round_float(getattr(policy_info, "charger_distance", None)),
+            "charger_slack": self._round_float(getattr(policy_info, "charger_slack", None)),
+            "nearest_npc_dist": self._round_float(getattr(policy_info, "nearest_npc_distance", None)),
+            "should_charge": bool(getattr(policy_info, "should_charge", False)),
+            "on_charger": bool(getattr(policy_info, "on_charger", False)),
+            "chosen_action": self._json_sanitize(getattr(policy_info, "chosen_action", None)),
+            "env_action": self._json_sanitize(env_action),
+            "last_action": self._json_sanitize(self.agent.last_action),
+            "safe_action_mask": self._json_sanitize(getattr(policy_info, "safe_action_mask", None)),
+            "action_scores": self._json_sanitize(getattr(policy_info, "action_scores", None)),
+            "model_action": self._json_sanitize(getattr(act_data, "action", None)),
+            "model_prob": self._json_sanitize(getattr(act_data, "prob", None)),
+            "planner_prob": self._json_sanitize(getattr(act_data, "planner_prob", None)),
+            "mix_alpha": self._json_sanitize(getattr(act_data, "mix_alpha", None)),
+            "frontier_density": self._round_float(getattr(policy_info, "frontier_density", None)),
+            "local_dirty_ratio": self._round_float(getattr(policy_info, "local_dirty_ratio", None)),
+            "local_unknown_ratio": self._round_float(getattr(policy_info, "local_unknown_ratio", None)),
+            "new_known_cells": self._json_sanitize(getattr(policy_info, "new_known_cells", None)),
+        }
+        self.death_trajectory_buffer.append(snapshot)
+        if len(self.death_trajectory_buffer) > self.DEATH_TRAJ_LENGTH:
+            self.death_trajectory_buffer.pop(0)
+
+    def _log_death_replay(self, fail_reason, episode_payload, sampled_env_conf, sampled_meta):
+        replay_payload = {
+            "episode_id": self.episode_cnt,
+            "fail_reason": fail_reason,
+            "map_id": episode_payload.get("map_id"),
+            "result": episode_payload.get("result"),
+            "finished_steps": episode_payload.get("finished_steps"),
+            "clean_score": episode_payload.get("clean_score"),
+            "charger_arrived_count": episode_payload.get("charger_arrived_count"),
+            "charger_first_arrival_step": episode_payload.get("charger_first_arrival_step"),
+            "train_stage": sampled_meta["stage"],
+            "train_profile": sampled_meta["profile"],
+            "sampled_env_conf": self._json_sanitize(deepcopy(sampled_env_conf)),
+            "trajectory": list(self.death_trajectory_buffer),
+        }
+        return self.archive.log_jsonl("death_replay", replay_payload)
 
     def _persist_best_score(self):
         data = {
@@ -533,6 +643,7 @@ class EpisodeRunner:
             total_reward = 0.0
             last_alpha = self.scheduler.action_alpha(self.current_target_mode)
             self.current_episode_invalid_moves = 0
+            self.death_trajectory_buffer.clear()
 
             self.logger.info(
                 f"Episode {self.episode_cnt} start "
@@ -587,19 +698,17 @@ class EpisodeRunner:
                 if next_pos == prev_pos:
                     self.current_episode_invalid_moves += 1
 
-                # Record death trajectory snapshot
-                fm = self.agent.preprocessor
-                self.death_trajectory_buffer.append({
-                    "step": step,
-                    "battery": getattr(fm, "battery", 0),
-                    "battery_max": getattr(fm, "battery_max", 0),
-                    "charger_slack": float(getattr(policy_info, "charger_slack", 0.0)),
-                    "nearest_npc_dist": float(getattr(policy_info, "nearest_npc_distance", 999.0)),
-                    "mode": self.current_target_mode,
-                    "action": self.agent.last_action,
-                })
-                if len(self.death_trajectory_buffer) > self.DEATH_TRAJ_LENGTH:
-                    self.death_trajectory_buffer.pop(0)
+                self._append_death_snapshot(
+                    step=step,
+                    frame_no=frame_no,
+                    pre_hero=pre_hero,
+                    post_hero=post_hero,
+                    prev_pos=prev_pos,
+                    next_pos=next_pos,
+                    policy_info=policy_info,
+                    act_data=act_data,
+                    env_action=act,
+                )
 
                 next_obs_data, _ = self.agent.observation_process(env_obs)
                 next_obs_data.frame_no = frame_no
@@ -726,22 +835,6 @@ class EpisodeRunner:
         final_reward = outcome_bonus + efficiency_bonus
         result_str = "WIN" if fail_reason == "completed" else "FAIL"
 
-        # Death trajectory logging
-        if fail_reason in ("battery", "collision"):
-            traj_parts = []
-            for s in self.death_trajectory_buffer:
-                traj_parts.append(
-                    f"s{s['step']}:bat={s['battery']}/{s['battery_max']}"
-                    f" slack={s['charger_slack']:.1f} npc={s['nearest_npc_dist']:.0f}"
-                    f" mode={s['mode']} act={s['action']}"
-                )
-            self.logger.info(
-                f"[DEATH_TRAJ] ep:{self.episode_cnt} reason:{fail_reason} "
-                f"traj=[{' | '.join(traj_parts)}]"
-            )
-            self.death_trajectory_buffer.clear()
-        elif fail_reason == "completed":
-            self.death_trajectory_buffer.clear()
         invalid_move_rate = self.current_episode_invalid_moves / max(step, 1)
         charge_count = float(env_info.get("charge_count", 0))
         finished_steps = float(env_info.get("finished_steps", step))
@@ -850,6 +943,28 @@ class EpisodeRunner:
             "mode": self.current_target_mode,
             "sampled_env_conf": deepcopy(sampled_env_conf),
         }
+        if fail_reason in ("battery", "collision"):
+            death_replay_path = self._log_death_replay(
+                fail_reason=fail_reason,
+                episode_payload=episode_payload,
+                sampled_env_conf=sampled_env_conf,
+                sampled_meta=sampled_meta,
+            )
+            traj_parts = []
+            for snapshot in self.death_trajectory_buffer:
+                traj_parts.append(
+                    f"s{snapshot['step']}:pos={snapshot['pre_pos']}->{snapshot['post_pos']}"
+                    f" bat={snapshot['battery_pre']}->{snapshot['battery_post']}/{snapshot['battery_max']}"
+                    f" slack={snapshot['charger_slack']} npc={snapshot['nearest_npc_dist']}"
+                    f" mode={snapshot['mode']} target={snapshot['target_pos']}"
+                    f" act={snapshot['env_action']}"
+                )
+            self.logger.info(
+                f"[DEATH_TRAJ] ep:{self.episode_cnt} reason:{fail_reason} "
+                f"jsonl:{death_replay_path} traj=[{' | '.join(traj_parts)}]"
+            )
+        self.death_trajectory_buffer.clear()
+
         self.archive.log_episode_summary(episode_payload)
         self.archive.log_event("episode_end", episode_payload)
         if fail_reason == "battery":
