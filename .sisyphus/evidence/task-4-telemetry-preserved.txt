@@ -1,0 +1,1 @@
+Telemetry preserved: `archive.log_episode_summary(episode_payload)`, `archive.log_event("episode_end", ...)`, `archive.log_event("battery_fail", ...)`, `archive.log_event("collision_fail", ...)`, and `_log_death_replay(...)` remain present on failed-episode paths.

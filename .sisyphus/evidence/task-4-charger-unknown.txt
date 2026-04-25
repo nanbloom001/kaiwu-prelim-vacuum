@@ -1,0 +1,145 @@
+﻿{
+  "checkpoint": {
+    "path": "synthetic-charger-unknown.pkl"
+  },
+  "combined": {
+    "avg_charge_count": 0.0,
+    "avg_clean_per_step": 1.208723,
+    "avg_clean_score": 388.0,
+    "avg_finished_steps": 321.0,
+    "avg_remaining_charge": 0.0,
+    "battery_fail_rate": 1.0,
+    "collision_fail_rate": 0.0,
+    "completed_rate": 0.0,
+    "episode_count": 1,
+    "score_p10": 388.0,
+    "score_p50": 388.0,
+    "score_p90": 388.0,
+    "status": "OK"
+  },
+  "decision_inputs": {},
+  "episodes_per_map": 1,
+  "failure_classification": {
+    "analyzed_episode_ids": [
+      "map7_ep01"
+    ],
+    "analyzed_failure_count": 1,
+    "categories": {
+      "charger_unknown": {
+        "count": 1,
+        "examples": [
+          {
+            "attempted_charge_step_count": 0,
+            "charger_arrived_count": 0,
+            "charger_first_arrival_step": -1,
+            "charger_known_final": false,
+            "clean_score": 388.0,
+            "death_replay_path": null,
+            "episode_id": "map7_ep01",
+            "fail_reason": "battery",
+            "finished_steps": 321,
+            "invalid_move_rate": 0.01,
+            "map_id": 7,
+            "min_charger_slack": null,
+            "reasons": [
+              "episode summary ended without any known charger"
+            ],
+            "remaining_charge": 0.0,
+            "repeat_action_max_streak": 2,
+            "revisit_ratio": 0.09
+          }
+        ],
+        "label": "Charger unknown / first charger not found"
+      },
+      "high_score_battery_death": {
+        "count": 0,
+        "examples": [],
+        "label": "High-score battery death"
+      },
+      "late_battery_death": {
+        "count": 0,
+        "examples": [],
+        "label": "Late or high-step battery death"
+      },
+      "npc_or_path_blocked": {
+        "count": 0,
+        "examples": [],
+        "label": "NPC or path blocked"
+      },
+      "optimistic_route_budget": {
+        "count": 0,
+        "examples": [],
+        "label": "Optimistic route budget / negative slack"
+      },
+      "repeated_invalid_move": {
+        "count": 0,
+        "examples": [],
+        "label": "Repeated invalid move / stuck pattern"
+      },
+      "return_too_late": {
+        "count": 0,
+        "examples": [],
+        "label": "Known charger but return too late"
+      },
+      "unknown": {
+        "count": 0,
+        "examples": [],
+        "label": "Unknown"
+      }
+    },
+    "status": "OK"
+  },
+  "fixed_config": {},
+  "maps": [
+    7
+  ],
+  "missing_replay_warnings": [],
+  "next_step": {
+    "evidence_paths": [
+      "D:\\TcKaiwuFinal\\.sisyphus\\evidence\\task-4-charger-unknown-fixture.json"
+    ],
+    "optimization_level": "targeted",
+    "recommendation": "Prioritize charger-discovery diagnostics on failed maps and verify the agent can enter charge-return mode before battery enters the terminal zone.",
+    "status": "ACTIONABLE"
+  },
+  "per_map": {
+    "7": {
+      "avg_charge_count": 0.0,
+      "avg_clean_per_step": 1.208723,
+      "avg_clean_score": 388.0,
+      "avg_finished_steps": 321.0,
+      "avg_remaining_charge": 0.0,
+      "battery_fail_rate": 1.0,
+      "collision_fail_rate": 0.0,
+      "completed_rate": 0.0,
+      "episode_count": 1,
+      "score_p10": 388.0,
+      "score_p50": 388.0,
+      "score_p90": 388.0,
+      "status": "OK"
+    }
+  },
+  "risks": [],
+  "run_id": "task-4-charger-unknown",
+  "schema_quality": {
+    "field_availability": {
+      "decision_context": false,
+      "evidence_windows": true,
+      "field_availability": false,
+      "final_window": true,
+      "outcome_state": false,
+      "step_log": false
+    },
+    "missing_signals": [
+      "step_log",
+      "decision_context",
+      "outcome_state",
+      "field_availability"
+    ],
+    "present_signals": [
+      "final_window",
+      "evidence_windows"
+    ],
+    "status": "OK"
+  }
+}

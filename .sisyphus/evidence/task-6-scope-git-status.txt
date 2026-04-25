@@ -1,0 +1,24 @@
+git status --short
+
+ M code/agent_ppo/algorithm/algorithm.py
+ M code/agent_ppo/feature/preprocessor.py
+ M code/agent_ppo/workflow/train_workflow.py
+ M code/latest_model.pkl
+ M code/model.ckpt-resume.meta.json
+ M code/model.ckpt-resume.pkl
+ M train/analyze_holdout_benchmark.py
+ M train/context/CHANGELOG.md
+ M train/run_holdout_benchmark.py
+?? .sisyphus/
+?? AGENTS.md
+?? code/agent_ppo/AGENTS.md
+?? code/agent_ppo/eval/
+?? train/.docker-compose.benchmark.yaml
+?? train/AGENTS.md
+?? train/context/AGENTS.md
+?? train/context/HANDOFF_20260425_WIN_YJY.md
+?? train/context/HOLDOUT_BENCHMARK_20260425_0941.json
+?? train/context/HOLDOUT_BENCHMARK_dryrun.json
+?? train/holdout_detail_logs/
+
+Note: the modified code/model entries above predate Task 6 and were not changed by this QA pass; this task only added changelog/notepad updates plus evidence under .sisyphus/evidence/.

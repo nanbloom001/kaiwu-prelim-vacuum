@@ -1,0 +1,6 @@
+STATIC ASSERTIONS
+- _build_ai_summary present: yes
+- reward_attribution_lite present: yes
+- anomaly_summary_lite present: yes
+- ai_summary.json written to session_dir / "ai_summary.json": yes
+- Global ai_summary write detected: no

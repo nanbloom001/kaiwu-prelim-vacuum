@@ -1,0 +1,111 @@
+{
+  "run_id": "task-4-charger-unknown",
+  "checkpoint": {
+    "path": "synthetic-charger-unknown.pkl"
+  },
+  "maps": [
+    7
+  ],
+  "episodes_per_map": 1,
+  "contract": {
+    "maps": [
+      7
+    ],
+    "episodes_per_map": 1
+  },
+  "episodes": [
+    {
+      "episode_id": "map7_ep01",
+      "map_id": 7,
+      "ep_idx": 1,
+      "result": "battery",
+      "fail_reason": "battery",
+      "done_reason": "battery",
+      "status": "failed",
+      "clean_score": 388.0,
+      "steps": 321,
+      "finished_steps": 321,
+      "max_step": 1000,
+      "battery_max": 150,
+      "charger_count": 3,
+      "charge_count": 0,
+      "remaining_charge": 0,
+      "invalid_move_count": 2,
+      "invalid_move_rate": 0.01,
+      "charger_known_final": false,
+      "known_charger_count_final": 0,
+      "charger_arrived_count": 0,
+      "charger_first_arrival_step": null,
+      "charger_arrival_steps": [],
+      "first_should_charge_step": null,
+      "attempted_charge_step_count": 0,
+      "first_return_mode_step": null,
+      "min_battery": 0,
+      "min_battery_step": 321,
+      "min_charger_slack": null,
+      "max_negative_charger_slack": 0.0,
+      "action_histogram": {
+        "0": 80,
+        "2": 120,
+        "6": 121
+      },
+      "last_actions": [
+        6,
+        6,
+        2,
+        6,
+        0,
+        6
+      ],
+      "repeat_action_max_streak": 2,
+      "revisit_ratio": 0.09,
+      "max_revisit_count": 2,
+      "unique_cells_visited": 228,
+      "observed_ratio_final": 0.19,
+      "final_window": [
+        {
+          "step": 321,
+          "action": 6,
+          "battery": 0,
+          "charger_slack": null,
+          "target_mode": "find_charger_edge",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 0,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 2,
+          "cur_revisit_count": 1,
+          "cur_pos": [
+            18,
+            72
+          ]
+        }
+      ],
+      "evidence_windows": {
+        "first_low_slack_window": [],
+        "first_should_charge_window": [],
+        "first_missed_charge_window": [],
+        "first_loop_window": [],
+        "last_failure_window": [
+          {
+            "step": 321,
+            "action": 6,
+            "battery": 0,
+            "charger_slack": null,
+            "target_mode": "find_charger_edge",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 0,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 2,
+            "cur_revisit_count": 1,
+            "cur_pos": [
+              18,
+              72
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

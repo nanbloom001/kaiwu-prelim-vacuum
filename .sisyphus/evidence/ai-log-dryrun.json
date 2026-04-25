@@ -1,0 +1,217 @@
+{
+  "checkpoint": {
+    "checkpoint_id": "model-ckpt-resume",
+    "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+    "requested_relative_path": "code/model.ckpt-resume.pkl",
+    "snapshot": {
+      "exists": true,
+      "mtime_utc": "2026-04-25T03:43:32.303429Z",
+      "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+      "sha256": "3D7766400CE9D1AB1967F6DB229EB6FB4AB212DD03B61D10A4E4BBF946598E27",
+      "size": 367235
+    },
+    "tracked_artifacts": {
+      "code/latest_model.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.284936Z",
+        "path": "D:\\TcKaiwuFinal\\code\\latest_model.pkl",
+        "sha256": "F630FF3C0C7A4B5A0C48BCECCFA73ECF02962A312CBADC23B3C3ED75E2018142",
+        "size": 367125
+      },
+      "code/model.ckpt-resume.meta.json": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.314814Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.meta.json",
+        "sha256": "B31038026758FA78155FD98C48BFA99F689CB49F9FBA16D145F872A40960479D",
+        "size": 120
+      },
+      "code/model.ckpt-resume.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.303429Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+        "sha256": "3D7766400CE9D1AB1967F6DB229EB6FB4AB212DD03B61D10A4E4BBF946598E27",
+        "size": 367235
+      }
+    }
+  },
+  "contract": {
+    "episodes_per_map": 1,
+    "fixed_config": {
+      "battery_max": 150,
+      "charger_count": 3,
+      "map_random": false,
+      "max_step": 1000,
+      "robot_count": 4
+    },
+    "maps": [
+      4,
+      7
+    ],
+    "training_maps_source": {
+      "maps": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        8,
+        9,
+        10
+      ],
+      "path": "D:\\TcKaiwuFinal\\code\\agent_ppo\\conf\\train_env_conf.toml",
+      "training_map_exclusion_verified": true
+    }
+  },
+  "decision_inputs": {
+    "checkpoint_id": "model-ckpt-resume",
+    "episodes_per_map": 1,
+    "fixed_config": {
+      "battery_max": 150,
+      "charger_count": 3,
+      "map_random": false,
+      "max_step": 1000,
+      "robot_count": 4
+    },
+    "maps": [
+      4,
+      7
+    ],
+    "planned_episode_count": 2
+  },
+  "detail_log_dir": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-114356",
+  "detail_log_schema": {
+    "description": "Per-step holdout detail log schema for AI-friendly analysis.",
+    "notes": {
+      "degrade_gracefully": true,
+      "detail_log_dir": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-114356",
+      "jsonl_pattern": "episode_<episode_id>.jsonl"
+    },
+    "required_fields": [
+      "episode_id",
+      "map_id",
+      "step",
+      "action",
+      "planner_mode",
+      "planner_target",
+      "battery",
+      "charger_distance",
+      "return_slack",
+      "reward_components",
+      "fail_reason",
+      "death_replay_path",
+      "checkpoint_id"
+    ],
+    "run_id": "holdout-benchmark-20260425-114356",
+    "sample_record": {
+      "action": {
+        "id": 0,
+        "name": "MOVE_UP"
+      },
+      "battery": 150,
+      "charger_distance": 18,
+      "checkpoint_id": "model-ckpt-resume",
+      "death_replay_path": null,
+      "episode_id": "holdout-benchmark-20260425-114356-map4-ep01",
+      "fail_reason": null,
+      "map_id": 4,
+      "planner_mode": "coverage",
+      "planner_target": {
+        "kind": "cell",
+        "x": 12,
+        "y": 8
+      },
+      "return_slack": 12,
+      "reward_components": {
+        "charge": 0.0,
+        "cleaning": 0.0,
+        "penalty": 0.0
+      },
+      "step": 1
+    },
+    "schema_version": 1
+  },
+  "detail_log_schema_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-114356\\schema.json",
+  "episodes": [],
+  "episodes_planned": [
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-114356\\episode_holdout-benchmark-20260425-114356-map4-ep01.jsonl",
+      "episode_id": "holdout-benchmark-20260425-114356-map4-ep01",
+      "map_id": 4,
+      "planned_index": 1,
+      "status": "PLANNED"
+    },
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-114356\\episode_holdout-benchmark-20260425-114356-map7-ep01.jsonl",
+      "episode_id": "holdout-benchmark-20260425-114356-map7-ep01",
+      "map_id": 7,
+      "planned_index": 1,
+      "status": "PLANNED"
+    }
+  ],
+  "model_mutation_guard": {
+    "after": {
+      "code/latest_model.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.284936Z",
+        "path": "D:\\TcKaiwuFinal\\code\\latest_model.pkl",
+        "sha256": "F630FF3C0C7A4B5A0C48BCECCFA73ECF02962A312CBADC23B3C3ED75E2018142",
+        "size": 367125
+      },
+      "code/model.ckpt-resume.meta.json": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.314814Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.meta.json",
+        "sha256": "B31038026758FA78155FD98C48BFA99F689CB49F9FBA16D145F872A40960479D",
+        "size": 120
+      },
+      "code/model.ckpt-resume.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.303429Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+        "sha256": "3D7766400CE9D1AB1967F6DB229EB6FB4AB212DD03B61D10A4E4BBF946598E27",
+        "size": 367235
+      }
+    },
+    "before": {
+      "code/latest_model.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.284936Z",
+        "path": "D:\\TcKaiwuFinal\\code\\latest_model.pkl",
+        "sha256": "F630FF3C0C7A4B5A0C48BCECCFA73ECF02962A312CBADC23B3C3ED75E2018142",
+        "size": 367125
+      },
+      "code/model.ckpt-resume.meta.json": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.314814Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.meta.json",
+        "sha256": "B31038026758FA78155FD98C48BFA99F689CB49F9FBA16D145F872A40960479D",
+        "size": 120
+      },
+      "code/model.ckpt-resume.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T03:43:32.303429Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+        "sha256": "3D7766400CE9D1AB1967F6DB229EB6FB4AB212DD03B61D10A4E4BBF946598E27",
+        "size": 367235
+      }
+    },
+    "drifted_paths": [],
+    "mutation_detected": false
+  },
+  "risks": [
+    {
+      "code": "MODEL_MUTATION_GUARD",
+      "message": "Tracked model artifacts remained unchanged during benchmark setup.",
+      "severity": "info"
+    },
+    {
+      "code": "REAL_EXECUTION_VIA_DOCKER",
+      "message": "Dry-run: no real episodes executed.",
+      "severity": "warning"
+    }
+  ],
+  "run_id": "holdout-benchmark-20260425-114356",
+  "status": "DRY_RUN"
+}

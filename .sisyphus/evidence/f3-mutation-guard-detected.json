@@ -1,0 +1,25 @@
+{
+  "candidate_commit": "HEAD",
+  "combined": {
+    "avg_clean_score": 901.0,
+    "avg_clean_per_step": 1.0,
+    "completed_rate": 0.96
+  },
+  "baseline": {
+    "combined": {
+      "avg_clean_score": 880.0,
+      "avg_clean_per_step": 1.0,
+      "completed_rate": 0.96
+    }
+  },
+  "model_mutation_guard": {
+    "mutation_detected": true
+  },
+  "risks": [
+    {
+      "code": "MODEL_MUTATION_DETECTED",
+      "severity": "error",
+      "message": "model mutation detected by benchmark"
+    }
+  ]
+}

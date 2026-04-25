@@ -1,0 +1,3141 @@
+{
+  "schema_version": 2,
+  "timestamp": "20260425-131256",
+  "checkpoint": {
+    "path": "/workspace/code/model.ckpt-resume.pkl",
+    "checkpoint_id": "resume"
+  },
+  "elapsed_seconds": 230.4,
+  "contract": {
+    "schema_version": 2,
+    "maps": [
+      4,
+      7
+    ],
+    "episodes_per_map": 1,
+    "round_def": {
+      "name": "holdout",
+      "desc": "3 chargers / 4 robots / 1000 steps / 150 battery",
+      "charger_count": 3,
+      "robot_count": 4,
+      "max_step": 1000,
+      "battery_max": 150
+    },
+    "fixed_config": {
+      "map_random": false,
+      "max_step": 1000,
+      "battery_max": 150,
+      "robot_count": 4,
+      "charger_count": 3
+    },
+    "checkpoint": {
+      "path": "/workspace/code/model.ckpt-resume.pkl",
+      "checkpoint_id": "resume"
+    }
+  },
+  "round_def": {
+    "name": "holdout",
+    "desc": "3 chargers / 4 robots / 1000 steps / 150 battery",
+    "charger_count": 3,
+    "robot_count": 4,
+    "max_step": 1000,
+    "battery_max": 150
+  },
+  "maps": [
+    4,
+    7
+  ],
+  "episodes_per_map": 1,
+  "overall": {
+    "episode_count": 2,
+    "win_episode_count": 1,
+    "avg_clean_score": 501.5,
+    "score_p10": 150.0,
+    "score_p50": 853.0,
+    "score_p90": 853.0,
+    "min_clean_score": 150.0,
+    "max_clean_score": 853.0,
+    "completed_rate": 0.5,
+    "battery_fail_rate": 0.5,
+    "collision_fail_rate": 0.0,
+    "avg_steps": 575.0,
+    "avg_charge_count": 5.0,
+    "avg_invalid_move_rate": 0.0,
+    "avg_dirt_ratio": 0.0818,
+    "avg_total_reward": 111.1
+  },
+  "per_map": {
+    "map4": {
+      "episode_count": 1,
+      "win_episode_count": 0,
+      "avg_clean_score": 150.0,
+      "score_p10": 150.0,
+      "score_p50": 150.0,
+      "score_p90": 150.0,
+      "min_clean_score": 150.0,
+      "max_clean_score": 150.0,
+      "completed_rate": 0.0,
+      "battery_fail_rate": 1.0,
+      "collision_fail_rate": 0.0,
+      "avg_steps": 150.0,
+      "avg_charge_count": 0.0,
+      "avg_invalid_move_rate": 0.0,
+      "avg_dirt_ratio": 0.019,
+      "avg_total_reward": 16.6
+    },
+    "map7": {
+      "episode_count": 1,
+      "win_episode_count": 1,
+      "avg_clean_score": 853.0,
+      "score_p10": 853.0,
+      "score_p50": 853.0,
+      "score_p90": 853.0,
+      "min_clean_score": 853.0,
+      "max_clean_score": 853.0,
+      "completed_rate": 1.0,
+      "battery_fail_rate": 0.0,
+      "collision_fail_rate": 0.0,
+      "avg_steps": 1000.0,
+      "avg_charge_count": 10.0,
+      "avg_invalid_move_rate": 0.0,
+      "avg_dirt_ratio": 0.1446,
+      "avg_total_reward": 205.7
+    }
+  },
+  "episodes": [
+    {
+      "episode_id": "map4_ep01",
+      "map_id": 4,
+      "ep_idx": 1,
+      "result": "battery",
+      "fail_reason": "battery",
+      "done_reason": "battery",
+      "status": "failed",
+      "clean_score": 150.0,
+      "steps": 150.0,
+      "finished_steps": 150.0,
+      "max_step": 1000,
+      "battery_max": 150,
+      "robot_count": 4,
+      "charger_count": 3,
+      "charge_count": 0.0,
+      "remaining_charge": 0.0,
+      "total_reward": 16.598,
+      "dirt_cleaned": 150,
+      "total_dirt": 7882,
+      "dirt_ratio": 0.019,
+      "invalid_move_count": 0,
+      "invalid_move_rate": 0.0,
+      "step_log": "episodes/map4_ep01.jsonl",
+      "field_availability": {
+        "decision_context": true,
+        "outcome_state": true,
+        "missing_signals": true,
+        "policy_top1": false,
+        "planner_top1": false,
+        "battery_delta": false
+      },
+      "missing_signals": [
+        "preprocessor.current_mode",
+        "preprocessor.invalid_move_count"
+      ],
+      "charger_known_first_step": 1,
+      "charger_known_final": true,
+      "known_charger_count_final": 3,
+      "charger_arrived_count": 0,
+      "charger_first_arrival_step": null,
+      "charger_arrival_steps": [],
+      "first_should_charge_step": 29,
+      "attempted_charge_step_count": 122,
+      "first_return_mode_step": 29,
+      "min_battery": 0,
+      "min_battery_step": 150,
+      "min_charger_slack": -11.0,
+      "max_negative_charger_slack": -11.0,
+      "action_histogram": {
+        "5": 36,
+        "3": 26,
+        "0": 1,
+        "1": 37,
+        "7": 50
+      },
+      "last_actions": [
+        3,
+        1,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        5,
+        5
+      ],
+      "repeat_action_max_streak": 20,
+      "revisit_ratio": 0.0,
+      "max_revisit_count": 0,
+      "unique_cells_visited": 150,
+      "observed_ratio_final": 0.2309,
+      "final_window": [
+        {
+          "step": 101,
+          "action": 7,
+          "battery": 49,
+          "charger_slack": 6.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            64,
+            71
+          ]
+        },
+        {
+          "step": 102,
+          "action": 7,
+          "battery": 48,
+          "charger_slack": 8.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            65,
+            72
+          ]
+        },
+        {
+          "step": 103,
+          "action": 7,
+          "battery": 47,
+          "charger_slack": 10.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            66,
+            73
+          ]
+        },
+        {
+          "step": 104,
+          "action": 7,
+          "battery": 46,
+          "charger_slack": 12.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            67,
+            74
+          ]
+        },
+        {
+          "step": 105,
+          "action": 7,
+          "battery": 45,
+          "charger_slack": 14.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            68,
+            75
+          ]
+        },
+        {
+          "step": 106,
+          "action": 7,
+          "battery": 44,
+          "charger_slack": 16.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            69,
+            76
+          ]
+        },
+        {
+          "step": 107,
+          "action": 1,
+          "battery": 43,
+          "charger_slack": 18.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            70,
+            75
+          ]
+        },
+        {
+          "step": 108,
+          "action": 7,
+          "battery": 42,
+          "charger_slack": 20.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            71,
+            76
+          ]
+        },
+        {
+          "step": 109,
+          "action": 7,
+          "battery": 41,
+          "charger_slack": 18.97,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            72,
+            77
+          ]
+        },
+        {
+          "step": 110,
+          "action": 7,
+          "battery": 40,
+          "charger_slack": 17.97,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            73,
+            78
+          ]
+        },
+        {
+          "step": 111,
+          "action": 7,
+          "battery": 39,
+          "charger_slack": 13.97,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            74,
+            79
+          ]
+        },
+        {
+          "step": 112,
+          "action": 7,
+          "battery": 38,
+          "charger_slack": 6.97,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            80
+          ]
+        },
+        {
+          "step": 113,
+          "action": 7,
+          "battery": 37,
+          "charger_slack": -0.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            81
+          ]
+        },
+        {
+          "step": 114,
+          "action": 7,
+          "battery": 36,
+          "charger_slack": -7.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            82
+          ]
+        },
+        {
+          "step": 115,
+          "action": 7,
+          "battery": 35,
+          "charger_slack": 3.82,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            78,
+            83
+          ]
+        },
+        {
+          "step": 116,
+          "action": 7,
+          "battery": 34,
+          "charger_slack": 2.97,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            79,
+            84
+          ]
+        },
+        {
+          "step": 117,
+          "action": 7,
+          "battery": 33,
+          "charger_slack": 1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            80,
+            85
+          ]
+        },
+        {
+          "step": 118,
+          "action": 5,
+          "battery": 32,
+          "charger_slack": -1.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            79,
+            86
+          ]
+        },
+        {
+          "step": 119,
+          "action": 7,
+          "battery": 31,
+          "charger_slack": -1.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            80,
+            87
+          ]
+        },
+        {
+          "step": 120,
+          "action": 5,
+          "battery": 30,
+          "charger_slack": -1.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            79,
+            88
+          ]
+        },
+        {
+          "step": 121,
+          "action": 7,
+          "battery": 29,
+          "charger_slack": -1.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            80,
+            89
+          ]
+        },
+        {
+          "step": 122,
+          "action": 5,
+          "battery": 28,
+          "charger_slack": -1.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            79,
+            90
+          ]
+        },
+        {
+          "step": 123,
+          "action": 7,
+          "battery": 27,
+          "charger_slack": -1.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            80,
+            91
+          ]
+        },
+        {
+          "step": 124,
+          "action": 7,
+          "battery": 26,
+          "charger_slack": -1.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            81,
+            92
+          ]
+        },
+        {
+          "step": 125,
+          "action": 7,
+          "battery": 25,
+          "charger_slack": -3.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            82,
+            93
+          ]
+        },
+        {
+          "step": 126,
+          "action": 1,
+          "battery": 24,
+          "charger_slack": -5.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            83,
+            92
+          ]
+        },
+        {
+          "step": 127,
+          "action": 7,
+          "battery": 23,
+          "charger_slack": -7.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            84,
+            93
+          ]
+        },
+        {
+          "step": 128,
+          "action": 1,
+          "battery": 22,
+          "charger_slack": -9.03,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            85,
+            92
+          ]
+        },
+        {
+          "step": 129,
+          "action": 7,
+          "battery": 21,
+          "charger_slack": -11.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            86,
+            93
+          ]
+        },
+        {
+          "step": 130,
+          "action": 1,
+          "battery": 20,
+          "charger_slack": -1.12,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            87,
+            92
+          ]
+        },
+        {
+          "step": 131,
+          "action": 7,
+          "battery": 19,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            88,
+            93
+          ]
+        },
+        {
+          "step": 132,
+          "action": 1,
+          "battery": 18,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            89,
+            92
+          ]
+        },
+        {
+          "step": 133,
+          "action": 7,
+          "battery": 17,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            90,
+            93
+          ]
+        },
+        {
+          "step": 134,
+          "action": 1,
+          "battery": 16,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            91,
+            92
+          ]
+        },
+        {
+          "step": 135,
+          "action": 7,
+          "battery": 15,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            92,
+            93
+          ]
+        },
+        {
+          "step": 136,
+          "action": 1,
+          "battery": 14,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            93,
+            92
+          ]
+        },
+        {
+          "step": 137,
+          "action": 7,
+          "battery": 13,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            94,
+            93
+          ]
+        },
+        {
+          "step": 138,
+          "action": 1,
+          "battery": 12,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            95,
+            92
+          ]
+        },
+        {
+          "step": 139,
+          "action": 1,
+          "battery": 11,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            96,
+            91
+          ]
+        },
+        {
+          "step": 140,
+          "action": 1,
+          "battery": 10,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            97,
+            90
+          ]
+        },
+        {
+          "step": 141,
+          "action": 3,
+          "battery": 9,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            96,
+            89
+          ]
+        },
+        {
+          "step": 142,
+          "action": 1,
+          "battery": 8,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            97,
+            88
+          ]
+        },
+        {
+          "step": 143,
+          "action": 3,
+          "battery": 7,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            96,
+            87
+          ]
+        },
+        {
+          "step": 144,
+          "action": 3,
+          "battery": 6,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            95,
+            86
+          ]
+        },
+        {
+          "step": 145,
+          "action": 3,
+          "battery": 5,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            94,
+            85
+          ]
+        },
+        {
+          "step": 146,
+          "action": 3,
+          "battery": 4,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            93,
+            84
+          ]
+        },
+        {
+          "step": 147,
+          "action": 3,
+          "battery": 3,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            92,
+            83
+          ]
+        },
+        {
+          "step": 148,
+          "action": 3,
+          "battery": 2,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            91,
+            82
+          ]
+        },
+        {
+          "step": 149,
+          "action": 5,
+          "battery": 1,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            90,
+            83
+          ]
+        },
+        {
+          "step": 150,
+          "action": 5,
+          "battery": 0,
+          "charger_slack": -1.0,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            89,
+            84
+          ]
+        }
+      ],
+      "evidence_windows": {
+        "first_low_slack_window": [
+          {
+            "step": 109,
+            "action": 7,
+            "battery": 41,
+            "charger_slack": 18.97,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              72,
+              77
+            ]
+          },
+          {
+            "step": 110,
+            "action": 7,
+            "battery": 40,
+            "charger_slack": 17.97,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              73,
+              78
+            ]
+          },
+          {
+            "step": 111,
+            "action": 7,
+            "battery": 39,
+            "charger_slack": 13.97,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              74,
+              79
+            ]
+          },
+          {
+            "step": 112,
+            "action": 7,
+            "battery": 38,
+            "charger_slack": 6.97,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              75,
+              80
+            ]
+          },
+          {
+            "step": 113,
+            "action": 7,
+            "battery": 37,
+            "charger_slack": -0.03,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              76,
+              81
+            ]
+          },
+          {
+            "step": 114,
+            "action": 7,
+            "battery": 36,
+            "charger_slack": -7.03,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              77,
+              82
+            ]
+          },
+          {
+            "step": 115,
+            "action": 7,
+            "battery": 35,
+            "charger_slack": 3.82,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              78,
+              83
+            ]
+          },
+          {
+            "step": 116,
+            "action": 7,
+            "battery": 34,
+            "charger_slack": 2.97,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              79,
+              84
+            ]
+          },
+          {
+            "step": 117,
+            "action": 7,
+            "battery": 33,
+            "charger_slack": 1.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              80,
+              85
+            ]
+          },
+          {
+            "step": 118,
+            "action": 5,
+            "battery": 32,
+            "charger_slack": -1.03,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              79,
+              86
+            ]
+          },
+          {
+            "step": 119,
+            "action": 7,
+            "battery": 31,
+            "charger_slack": -1.03,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              80,
+              87
+            ]
+          }
+        ],
+        "first_should_charge_window": [
+          {
+            "step": 24,
+            "action": 3,
+            "battery": 126,
+            "charger_slack": 51.94,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              39,
+              77
+            ]
+          },
+          {
+            "step": 25,
+            "action": 3,
+            "battery": 125,
+            "charger_slack": 49.94,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              38,
+              76
+            ]
+          },
+          {
+            "step": 26,
+            "action": 3,
+            "battery": 124,
+            "charger_slack": 47.94,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              37,
+              75
+            ]
+          },
+          {
+            "step": 27,
+            "action": 3,
+            "battery": 123,
+            "charger_slack": 50.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              36,
+              74
+            ]
+          },
+          {
+            "step": 28,
+            "action": 3,
+            "battery": 122,
+            "charger_slack": 52.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              35,
+              73
+            ]
+          },
+          {
+            "step": 29,
+            "action": 3,
+            "battery": 121,
+            "charger_slack": 55.5,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              34,
+              72
+            ]
+          },
+          {
+            "step": 30,
+            "action": 3,
+            "battery": 120,
+            "charger_slack": 56.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              33,
+              71
+            ]
+          },
+          {
+            "step": 31,
+            "action": 3,
+            "battery": 119,
+            "charger_slack": 58.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              32,
+              70
+            ]
+          },
+          {
+            "step": 32,
+            "action": 3,
+            "battery": 118,
+            "charger_slack": 56.97,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              31,
+              69
+            ]
+          },
+          {
+            "step": 33,
+            "action": 3,
+            "battery": 117,
+            "charger_slack": 56.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              30,
+              68
+            ]
+          },
+          {
+            "step": 34,
+            "action": 5,
+            "battery": 116,
+            "charger_slack": 54.97,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              29,
+              69
+            ]
+          }
+        ],
+        "first_missed_charge_window": [],
+        "first_loop_window": [
+          {
+            "step": 1,
+            "action": 5,
+            "battery": 149,
+            "charger_slack": 88.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              62,
+              62
+            ]
+          },
+          {
+            "step": 2,
+            "action": 5,
+            "battery": 148,
+            "charger_slack": 86.97,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              61,
+              63
+            ]
+          },
+          {
+            "step": 3,
+            "action": 5,
+            "battery": 147,
+            "charger_slack": 86.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              60,
+              64
+            ]
+          },
+          {
+            "step": 4,
+            "action": 5,
+            "battery": 146,
+            "charger_slack": 84.97,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              59,
+              65
+            ]
+          },
+          {
+            "step": 5,
+            "action": 5,
+            "battery": 145,
+            "charger_slack": 88.94,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              58,
+              66
+            ]
+          },
+          {
+            "step": 6,
+            "action": 5,
+            "battery": 144,
+            "charger_slack": 88.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              57,
+              67
+            ]
+          },
+          {
+            "step": 7,
+            "action": 5,
+            "battery": 143,
+            "charger_slack": 86.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              56,
+              68
+            ]
+          },
+          {
+            "step": 8,
+            "action": 5,
+            "battery": 142,
+            "charger_slack": 84.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              55,
+              69
+            ]
+          },
+          {
+            "step": 9,
+            "action": 5,
+            "battery": 141,
+            "charger_slack": 82.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              54,
+              70
+            ]
+          }
+        ],
+        "last_failure_window": [
+          {
+            "step": 145,
+            "action": 3,
+            "battery": 5,
+            "charger_slack": -1.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              94,
+              85
+            ]
+          },
+          {
+            "step": 146,
+            "action": 3,
+            "battery": 4,
+            "charger_slack": -1.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              93,
+              84
+            ]
+          },
+          {
+            "step": 147,
+            "action": 3,
+            "battery": 3,
+            "charger_slack": -1.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              92,
+              83
+            ]
+          },
+          {
+            "step": 148,
+            "action": 3,
+            "battery": 2,
+            "charger_slack": -1.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              91,
+              82
+            ]
+          },
+          {
+            "step": 149,
+            "action": 5,
+            "battery": 1,
+            "charger_slack": -1.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              90,
+              83
+            ]
+          },
+          {
+            "step": 150,
+            "action": 5,
+            "battery": 0,
+            "charger_slack": -1.0,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              89,
+              84
+            ]
+          }
+        ]
+      },
+      "reward_attribution_lite": {
+        "available": false,
+        "reason": "scalar_reward_only",
+        "total_reward": 16.5982
+      },
+      "anomaly_summary_lite": {
+        "available": true,
+        "low_slack_rate": 0.04,
+        "no_clean_step_rate": 0.0,
+        "revisit_rate": 0.0,
+        "planner_policy_mismatch_rate": 0.0,
+        "npc_near_rate": 0.0,
+        "loop_suspect_rate": 0.4533,
+        "observed_step_counts": {
+          "low_slack_rate": 150,
+          "no_clean_step_rate": 150,
+          "revisit_rate": 150,
+          "planner_policy_mismatch_rate": 150,
+          "npc_near_rate": 150,
+          "loop_suspect_rate": 150
+        },
+        "missing_signals": []
+      }
+    },
+    {
+      "episode_id": "map7_ep01",
+      "map_id": 7,
+      "ep_idx": 1,
+      "result": "completed",
+      "fail_reason": "completed",
+      "done_reason": "completed",
+      "status": "completed",
+      "clean_score": 853.0,
+      "steps": 1000.0,
+      "finished_steps": 1000.0,
+      "max_step": 1000,
+      "battery_max": 150,
+      "robot_count": 4,
+      "charger_count": 3,
+      "charge_count": 10.0,
+      "remaining_charge": 98.0,
+      "total_reward": 205.662,
+      "dirt_cleaned": 853,
+      "total_dirt": 5900,
+      "dirt_ratio": 0.1446,
+      "invalid_move_count": 0,
+      "invalid_move_rate": 0.0,
+      "step_log": "episodes/map7_ep01.jsonl",
+      "field_availability": {
+        "decision_context": true,
+        "outcome_state": true,
+        "missing_signals": true,
+        "policy_top1": false,
+        "planner_top1": false,
+        "battery_delta": false
+      },
+      "missing_signals": [
+        "preprocessor.current_mode",
+        "preprocessor.invalid_move_count"
+      ],
+      "charger_known_first_step": 1,
+      "charger_known_final": true,
+      "known_charger_count_final": 3,
+      "charger_arrived_count": 3,
+      "charger_first_arrival_step": 13,
+      "charger_arrival_steps": [
+        13,
+        247,
+        376
+      ],
+      "first_should_charge_step": 103,
+      "attempted_charge_step_count": 211,
+      "first_return_mode_step": 103,
+      "min_battery": 20,
+      "min_battery_step": 379,
+      "min_charger_slack": 20.0,
+      "max_negative_charger_slack": 0.0,
+      "action_histogram": {
+        "6": 19,
+        "5": 274,
+        "7": 211,
+        "3": 185,
+        "2": 24,
+        "0": 30,
+        "1": 236,
+        "4": 21
+      },
+      "last_actions": [
+        7,
+        6,
+        5,
+        4,
+        5,
+        3,
+        5,
+        5,
+        3,
+        5
+      ],
+      "repeat_action_max_streak": 16,
+      "revisit_ratio": 0.114,
+      "max_revisit_count": 6,
+      "unique_cells_visited": 886,
+      "observed_ratio_final": 0.5593,
+      "final_window": [
+        {
+          "step": 951,
+          "action": 7,
+          "battery": 147,
+          "charger_slack": 145.55,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            27
+          ]
+        },
+        {
+          "step": 952,
+          "action": 7,
+          "battery": 146,
+          "charger_slack": 143.4,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            28
+          ]
+        },
+        {
+          "step": 953,
+          "action": 7,
+          "battery": 145,
+          "charger_slack": 141.25,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            29
+          ]
+        },
+        {
+          "step": 954,
+          "action": 5,
+          "battery": 144,
+          "charger_slack": 139.1,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            30
+          ]
+        },
+        {
+          "step": 955,
+          "action": 5,
+          "battery": 143,
+          "charger_slack": 137.75,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            31
+          ]
+        },
+        {
+          "step": 956,
+          "action": 5,
+          "battery": 142,
+          "charger_slack": 135.69,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            74,
+            32
+          ]
+        },
+        {
+          "step": 957,
+          "action": 5,
+          "battery": 141,
+          "charger_slack": 133.54,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            73,
+            33
+          ]
+        },
+        {
+          "step": 958,
+          "action": 7,
+          "battery": 140,
+          "charger_slack": 131.39,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            74,
+            34
+          ]
+        },
+        {
+          "step": 959,
+          "action": 6,
+          "battery": 139,
+          "charger_slack": 129.69,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            74,
+            35
+          ]
+        },
+        {
+          "step": 960,
+          "action": 5,
+          "battery": 138,
+          "charger_slack": 127.66,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            73,
+            36
+          ]
+        },
+        {
+          "step": 961,
+          "action": 5,
+          "battery": 137,
+          "charger_slack": 125.57,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            72,
+            37
+          ]
+        },
+        {
+          "step": 962,
+          "action": 7,
+          "battery": 136,
+          "charger_slack": 123.57,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            73,
+            38
+          ]
+        },
+        {
+          "step": 963,
+          "action": 7,
+          "battery": 135,
+          "charger_slack": 121.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            74,
+            39
+          ]
+        },
+        {
+          "step": 964,
+          "action": 7,
+          "battery": 134,
+          "charger_slack": 121.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            40
+          ]
+        },
+        {
+          "step": 965,
+          "action": 7,
+          "battery": 133,
+          "charger_slack": 121.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            41
+          ]
+        },
+        {
+          "step": 966,
+          "action": 5,
+          "battery": 132,
+          "charger_slack": 121.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            42
+          ]
+        },
+        {
+          "step": 967,
+          "action": 7,
+          "battery": 131,
+          "charger_slack": 120.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            43
+          ]
+        },
+        {
+          "step": 968,
+          "action": 7,
+          "battery": 130,
+          "charger_slack": 120.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            44
+          ]
+        },
+        {
+          "step": 969,
+          "action": 5,
+          "battery": 129,
+          "charger_slack": 120.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            45
+          ]
+        },
+        {
+          "step": 970,
+          "action": 7,
+          "battery": 128,
+          "charger_slack": 118.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            46
+          ]
+        },
+        {
+          "step": 971,
+          "action": 6,
+          "battery": 127,
+          "charger_slack": 118.97,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            47
+          ]
+        },
+        {
+          "step": 972,
+          "action": 7,
+          "battery": 126,
+          "charger_slack": 118.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            78,
+            48
+          ]
+        },
+        {
+          "step": 973,
+          "action": 7,
+          "battery": 125,
+          "charger_slack": 118.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            79,
+            49
+          ]
+        },
+        {
+          "step": 974,
+          "action": 7,
+          "battery": 124,
+          "charger_slack": 118.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            80,
+            50
+          ]
+        },
+        {
+          "step": 975,
+          "action": 5,
+          "battery": 123,
+          "charger_slack": 118.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            79,
+            51
+          ]
+        },
+        {
+          "step": 976,
+          "action": 5,
+          "battery": 122,
+          "charger_slack": 116.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            78,
+            52
+          ]
+        },
+        {
+          "step": 977,
+          "action": 5,
+          "battery": 121,
+          "charger_slack": 114.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            53
+          ]
+        },
+        {
+          "step": 978,
+          "action": 5,
+          "battery": 120,
+          "charger_slack": 112.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            54
+          ]
+        },
+        {
+          "step": 979,
+          "action": 7,
+          "battery": 119,
+          "charger_slack": 110.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            55
+          ]
+        },
+        {
+          "step": 980,
+          "action": 6,
+          "battery": 118,
+          "charger_slack": 110.0,
+          "target_mode": "dirt",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            56
+          ]
+        },
+        {
+          "step": 981,
+          "action": 5,
+          "battery": 117,
+          "charger_slack": 108.97,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            57
+          ]
+        },
+        {
+          "step": 982,
+          "action": 5,
+          "battery": 116,
+          "charger_slack": 106.97,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            58
+          ]
+        },
+        {
+          "step": 983,
+          "action": 7,
+          "battery": 115,
+          "charger_slack": 104.97,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            59
+          ]
+        },
+        {
+          "step": 984,
+          "action": 5,
+          "battery": 114,
+          "charger_slack": 104.97,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            60
+          ]
+        },
+        {
+          "step": 985,
+          "action": 7,
+          "battery": 113,
+          "charger_slack": 102.97,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            61
+          ]
+        },
+        {
+          "step": 986,
+          "action": 5,
+          "battery": 112,
+          "charger_slack": 102.97,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            62
+          ]
+        },
+        {
+          "step": 987,
+          "action": 6,
+          "battery": 111,
+          "charger_slack": 100.97,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            63
+          ]
+        },
+        {
+          "step": 988,
+          "action": 7,
+          "battery": 110,
+          "charger_slack": 100.0,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            64
+          ]
+        },
+        {
+          "step": 989,
+          "action": 5,
+          "battery": 109,
+          "charger_slack": 98.67,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            65
+          ]
+        },
+        {
+          "step": 990,
+          "action": 7,
+          "battery": 108,
+          "charger_slack": 96.52,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            76,
+            66
+          ]
+        },
+        {
+          "step": 991,
+          "action": 7,
+          "battery": 107,
+          "charger_slack": 94.67,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            77,
+            67
+          ]
+        },
+        {
+          "step": 992,
+          "action": 6,
+          "battery": 106,
+          "charger_slack": 92.67,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 1,
+          "cur_pos": [
+            77,
+            68
+          ]
+        },
+        {
+          "step": 993,
+          "action": 5,
+          "battery": 105,
+          "charger_slack": 90.64,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 1,
+          "cur_pos": [
+            76,
+            69
+          ]
+        },
+        {
+          "step": 994,
+          "action": 4,
+          "battery": 104,
+          "charger_slack": 88.34,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            75,
+            69
+          ]
+        },
+        {
+          "step": 995,
+          "action": 5,
+          "battery": 103,
+          "charger_slack": 86.01,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            74,
+            70
+          ]
+        },
+        {
+          "step": 996,
+          "action": 3,
+          "battery": 102,
+          "charger_slack": 84.0,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            73,
+            69
+          ]
+        },
+        {
+          "step": 997,
+          "action": 5,
+          "battery": 101,
+          "charger_slack": 82.0,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            72,
+            70
+          ]
+        },
+        {
+          "step": 998,
+          "action": 5,
+          "battery": 100,
+          "charger_slack": 82.0,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            71,
+            71
+          ]
+        },
+        {
+          "step": 999,
+          "action": 3,
+          "battery": 99,
+          "charger_slack": 82.0,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            70,
+            70
+          ]
+        },
+        {
+          "step": 1000,
+          "action": 5,
+          "battery": 98,
+          "charger_slack": 80.0,
+          "target_mode": "edge_frontier",
+          "should_charge": false,
+          "on_charger": false,
+          "known_charger_count": 3,
+          "charger_arrived_count": 3,
+          "invalid_move_count": 0,
+          "cur_revisit_count": 0,
+          "cur_pos": [
+            69,
+            71
+          ]
+        }
+      ],
+      "evidence_windows": {
+        "first_low_slack_window": [],
+        "first_should_charge_window": [
+          {
+            "step": 98,
+            "action": 3,
+            "battery": 65,
+            "charger_slack": 40.61,
+            "target_mode": "dirt",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              51,
+              30
+            ]
+          },
+          {
+            "step": 99,
+            "action": 3,
+            "battery": 64,
+            "charger_slack": 38.61,
+            "target_mode": "dirt",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              50,
+              29
+            ]
+          },
+          {
+            "step": 100,
+            "action": 1,
+            "battery": 63,
+            "charger_slack": 36.61,
+            "target_mode": "dirt",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              51,
+              28
+            ]
+          },
+          {
+            "step": 101,
+            "action": 1,
+            "battery": 62,
+            "charger_slack": 36.61,
+            "target_mode": "dirt",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              52,
+              27
+            ]
+          },
+          {
+            "step": 102,
+            "action": 1,
+            "battery": 61,
+            "charger_slack": 34.61,
+            "target_mode": "dirt",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              53,
+              26
+            ]
+          },
+          {
+            "step": 103,
+            "action": 7,
+            "battery": 60,
+            "charger_slack": 32.61,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              54,
+              27
+            ]
+          },
+          {
+            "step": 104,
+            "action": 7,
+            "battery": 59,
+            "charger_slack": 32.61,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              55,
+              28
+            ]
+          },
+          {
+            "step": 105,
+            "action": 7,
+            "battery": 58,
+            "charger_slack": 32.61,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              56,
+              29
+            ]
+          },
+          {
+            "step": 106,
+            "action": 5,
+            "battery": 57,
+            "charger_slack": 32.61,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              55,
+              30
+            ]
+          },
+          {
+            "step": 107,
+            "action": 5,
+            "battery": 56,
+            "charger_slack": 32.61,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              54,
+              31
+            ]
+          },
+          {
+            "step": 108,
+            "action": 7,
+            "battery": 55,
+            "charger_slack": 32.61,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              55,
+              32
+            ]
+          }
+        ],
+        "first_missed_charge_window": [],
+        "first_loop_window": [
+          {
+            "step": 3,
+            "action": 5,
+            "battery": 147,
+            "charger_slack": 139.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              70,
+              15
+            ]
+          },
+          {
+            "step": 4,
+            "action": 5,
+            "battery": 146,
+            "charger_slack": 139.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              69,
+              16
+            ]
+          },
+          {
+            "step": 5,
+            "action": 7,
+            "battery": 145,
+            "charger_slack": 139.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              70,
+              17
+            ]
+          },
+          {
+            "step": 6,
+            "action": 7,
+            "battery": 144,
+            "charger_slack": 139.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              71,
+              18
+            ]
+          },
+          {
+            "step": 7,
+            "action": 7,
+            "battery": 143,
+            "charger_slack": 139.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              72,
+              19
+            ]
+          },
+          {
+            "step": 8,
+            "action": 7,
+            "battery": 142,
+            "charger_slack": 139.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              73,
+              20
+            ]
+          },
+          {
+            "step": 9,
+            "action": 7,
+            "battery": 141,
+            "charger_slack": 139.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              74,
+              21
+            ]
+          },
+          {
+            "step": 10,
+            "action": 7,
+            "battery": 140,
+            "charger_slack": 138.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              75,
+              22
+            ]
+          },
+          {
+            "step": 11,
+            "action": 5,
+            "battery": 139,
+            "charger_slack": 137.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              74,
+              23
+            ]
+          },
+          {
+            "step": 12,
+            "action": 5,
+            "battery": 138,
+            "charger_slack": 137.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              73,
+              24
+            ]
+          },
+          {
+            "step": 13,
+            "action": 5,
+            "battery": 150,
+            "charger_slack": 137.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 1,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              72,
+              25
+            ]
+          }
+        ],
+        "last_failure_window": [
+          {
+            "step": 995,
+            "action": 5,
+            "battery": 103,
+            "charger_slack": 86.01,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 3,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              74,
+              70
+            ]
+          },
+          {
+            "step": 996,
+            "action": 3,
+            "battery": 102,
+            "charger_slack": 84.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 3,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              73,
+              69
+            ]
+          },
+          {
+            "step": 997,
+            "action": 5,
+            "battery": 101,
+            "charger_slack": 82.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 3,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              72,
+              70
+            ]
+          },
+          {
+            "step": 998,
+            "action": 5,
+            "battery": 100,
+            "charger_slack": 82.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 3,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              71,
+              71
+            ]
+          },
+          {
+            "step": 999,
+            "action": 3,
+            "battery": 99,
+            "charger_slack": 82.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 3,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              70,
+              70
+            ]
+          },
+          {
+            "step": 1000,
+            "action": 5,
+            "battery": 98,
+            "charger_slack": 80.0,
+            "target_mode": "edge_frontier",
+            "should_charge": false,
+            "on_charger": false,
+            "known_charger_count": 3,
+            "charger_arrived_count": 3,
+            "invalid_move_count": 0,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              69,
+              71
+            ]
+          }
+        ]
+      },
+      "reward_attribution_lite": {
+        "available": false,
+        "reason": "scalar_reward_only",
+        "total_reward": 205.662
+      },
+      "anomaly_summary_lite": {
+        "available": true,
+        "low_slack_rate": 0.0,
+        "no_clean_step_rate": 0.147,
+        "revisit_rate": 0.114,
+        "planner_policy_mismatch_rate": 0.016,
+        "npc_near_rate": 0.0,
+        "loop_suspect_rate": 0.245,
+        "observed_step_counts": {
+          "low_slack_rate": 1000,
+          "no_clean_step_rate": 1000,
+          "revisit_rate": 1000,
+          "planner_policy_mismatch_rate": 1000,
+          "npc_near_rate": 1000,
+          "loop_suspect_rate": 1000
+        },
+        "missing_signals": []
+      }
+    }
+  ],
+  "execution": {
+    "mode": "single"
+  }
+}

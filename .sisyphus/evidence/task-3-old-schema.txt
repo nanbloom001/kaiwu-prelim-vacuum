@@ -1,0 +1,206 @@
+{
+  "checkpoint": {
+    "checkpoint_id": "model-ckpt-resume",
+    "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+    "requested_relative_path": "code/model.ckpt-resume.pkl",
+    "snapshot": {
+      "exists": true,
+      "mtime_utc": "2026-04-25T01:40:59.739576Z",
+      "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+      "sha256": "A6E2171C34398758A3BA07673A66EDA910B45F90290542D656A1E0BBFDB1A799",
+      "size": 367235
+    },
+    "tracked_artifacts": {
+      "code/latest_model.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T01:40:59.722631Z",
+        "path": "D:\\TcKaiwuFinal\\code\\latest_model.pkl",
+        "sha256": "DA42E11FD94EC1F6E9620785D032570E20BCE20D1478F136B37AE39016A8805B",
+        "size": 367125
+      },
+      "code/model.ckpt-resume.meta.json": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T01:40:59.750542Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.meta.json",
+        "sha256": "6158836C295301CE8E2009A4BFFE2B47925B1E7757732384156E89BA717F37DD",
+        "size": 123
+      },
+      "code/model.ckpt-resume.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T01:40:59.739576Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+        "sha256": "A6E2171C34398758A3BA07673A66EDA910B45F90290542D656A1E0BBFDB1A799",
+        "size": 367235
+      }
+    }
+  },
+  "combined": {
+    "avg_charge_count": 0.0,
+    "avg_clean_per_step": 0.0,
+    "avg_clean_score": 0.0,
+    "avg_finished_steps": 0.0,
+    "avg_remaining_charge": 0.0,
+    "battery_fail_rate": 0.0,
+    "collision_fail_rate": 0.0,
+    "completed_rate": 0.0,
+    "episode_count": 0,
+    "score_p10": 0.0,
+    "score_p50": 0.0,
+    "score_p90": 0.0,
+    "status": "NO_EPISODES"
+  },
+  "decision_inputs": {
+    "checkpoint_id": "model-ckpt-resume",
+    "episodes_per_map": 1,
+    "fixed_config": {
+      "battery_max": 150,
+      "charger_count": 3,
+      "map_random": false,
+      "max_step": 1000,
+      "robot_count": 4
+    },
+    "maps": [
+      4,
+      7
+    ],
+    "planned_episode_count": 2
+  },
+  "episodes_per_map": 1,
+  "failure_classification": {
+    "analyzed_episode_ids": [],
+    "analyzed_failure_count": 0,
+    "categories": {
+      "charger_unknown": {
+        "count": 0,
+        "examples": [],
+        "label": "Charger unknown / first charger not found"
+      },
+      "high_score_battery_death": {
+        "count": 0,
+        "examples": [],
+        "label": "High-score battery death"
+      },
+      "late_battery_death": {
+        "count": 0,
+        "examples": [],
+        "label": "Late or high-step battery death"
+      },
+      "npc_or_path_blocked": {
+        "count": 0,
+        "examples": [],
+        "label": "NPC or path blocked"
+      },
+      "optimistic_route_budget": {
+        "count": 0,
+        "examples": [],
+        "label": "Optimistic route budget / negative slack"
+      },
+      "repeated_invalid_move": {
+        "count": 0,
+        "examples": [],
+        "label": "Repeated invalid move / stuck pattern"
+      },
+      "return_too_late": {
+        "count": 0,
+        "examples": [],
+        "label": "Known charger but return too late"
+      },
+      "unknown": {
+        "count": 0,
+        "examples": [],
+        "label": "Unknown"
+      }
+    },
+    "status": "NO_EPISODES"
+  },
+  "fixed_config": {
+    "battery_max": 150,
+    "charger_count": 3,
+    "map_random": false,
+    "max_step": 1000,
+    "robot_count": 4
+  },
+  "maps": [
+    4,
+    7
+  ],
+  "missing_replay_warnings": [],
+  "next_step": {
+    "evidence_paths": [
+      "D:\\TcKaiwuFinal\\train\\context\\HOLDOUT_BENCHMARK_20260425_0941.json",
+      "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-094137\\schema.json",
+      "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-094137"
+    ],
+    "optimization_level": "infrastructure",
+    "recommendation": "Implement or connect a safe inference-only runtime path, then rerun the fixed 2x10 holdout baseline so real episodes and replay-backed failures exist for diagnosis.",
+    "status": "NEED_MORE_DATA"
+  },
+  "per_map": {
+    "4": {
+      "avg_charge_count": 0.0,
+      "avg_clean_per_step": 0.0,
+      "avg_clean_score": 0.0,
+      "avg_finished_steps": 0.0,
+      "avg_remaining_charge": 0.0,
+      "battery_fail_rate": 0.0,
+      "collision_fail_rate": 0.0,
+      "completed_rate": 0.0,
+      "episode_count": 0,
+      "score_p10": 0.0,
+      "score_p50": 0.0,
+      "score_p90": 0.0,
+      "status": "NO_EPISODES"
+    },
+    "7": {
+      "avg_charge_count": 0.0,
+      "avg_clean_per_step": 0.0,
+      "avg_clean_score": 0.0,
+      "avg_finished_steps": 0.0,
+      "avg_remaining_charge": 0.0,
+      "battery_fail_rate": 0.0,
+      "collision_fail_rate": 0.0,
+      "completed_rate": 0.0,
+      "episode_count": 0,
+      "score_p10": 0.0,
+      "score_p50": 0.0,
+      "score_p90": 0.0,
+      "status": "NO_EPISODES"
+    }
+  },
+  "risks": [
+    {
+      "code": "MODEL_MUTATION_GUARD",
+      "message": "Tracked model artifacts remained unchanged during benchmark setup.",
+      "severity": "info"
+    },
+    {
+      "code": "REAL_EXECUTION_VIA_DOCKER",
+      "message": "Dry-run: no real episodes executed.",
+      "severity": "warning"
+    },
+    {
+      "code": "NO_EPISODES",
+      "message": "Runner output contains no executed episodes yet; decision inputs are contract-only.",
+      "severity": "warning"
+    }
+  ],
+  "run_id": "holdout-benchmark-20260425-094137",
+  "schema_quality": {
+    "field_availability": {
+      "decision_context": false,
+      "evidence_windows": false,
+      "field_availability": false,
+      "outcome_state": false,
+      "step_log": false
+    },
+    "missing_signals": [
+      "step_log",
+      "decision_context",
+      "outcome_state",
+      "evidence_windows",
+      "field_availability"
+    ],
+    "present_signals": [],
+    "status": "NO_EPISODES"
+  }
+}

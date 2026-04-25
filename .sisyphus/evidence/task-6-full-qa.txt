@@ -1,0 +1,16 @@
+Task 6 Full QA Summary
+
+Timestamp: 2026-04-25 11:44
+
+- py_compile (holdout benchmark + analyzer): PASS
+- old-schema analyzer on HOLDOUT_BENCHMARK_20260425_0941.json: PASS, wrote ai-log-old-schema-analysis.md
+- synthetic fixture task-3-new-schema-fixture.json: PASS, wrote ai-log-task-3-new-schema.md
+- synthetic fixture task-4-route-budget-fixture.json: PASS, wrote ai-log-task-4-route-budget.md
+- synthetic fixture task-4-charger-unknown-fixture.json: PASS, wrote ai-log-task-4-charger-unknown.md
+- dry-run benchmark wrapper: PASS, wrote ai-log-dryrun.json
+- task-5 quality evidence: N/A as analyzer input; existing markdown evidence reviewed in-place
+
+Notes:
+- No code fixes were required.
+- No model/checkpoint files were modified.
+- Evidence files were written only under .sisyphus/evidence/.

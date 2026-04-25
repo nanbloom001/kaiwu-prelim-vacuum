@@ -1,0 +1,42 @@
+{
+  "candidate_commit": "abc1234",
+  "baseline": {
+    "combined": {
+      "avg_clean_score": 880.0,
+      "completed_rate": 0.90,
+      "avg_clean_per_step": 0.90,
+      "battery_fail_rate": 0.10,
+      "collision_fail_rate": 0.01
+    },
+    "failure_classification": {
+      "categories": {
+        "high_score_battery_death": {
+          "count": 0
+        }
+      }
+    }
+  },
+  "candidate": {
+    "combined": {
+      "avg_clean_score": 895.0,
+      "completed_rate": 0.88,
+      "avg_clean_per_step": 0.89,
+      "battery_fail_rate": 0.18,
+      "collision_fail_rate": 0.04
+    },
+    "failure_classification": {
+      "categories": {
+        "high_score_battery_death": {
+          "count": 1
+        }
+      }
+    },
+    "risks": [
+      {
+        "code": "MODEL_MUTATION_DETECTED",
+        "severity": "error",
+        "message": "Synthetic mutation guard failure for T6 rejection verification."
+      }
+    ]
+  }
+}

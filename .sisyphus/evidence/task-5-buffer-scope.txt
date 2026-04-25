@@ -1,0 +1,5 @@
+Buffer scope evidence:
+- `COVERAGE_RETURN_BUFFER = 8.0` added next to `BASE_RETURN_MARGIN = 28.0` in `code/agent_ppo/algorithm/algorithm.py`.
+- Buffer is only consumed inside `_select_coverage_target(...)` via `charger_need = self._heuristic_charger_distance(pos) + self.COVERAGE_RETURN_BUFFER`.
+- `BASE_RETURN_MARGIN` remains `28.0` and is still used by `_dynamic_return_margin()` / global return logic.
+- Charge-mode path planning (`_plan_path_to_charger`, `_astar_path`) and `_heuristic_charger_distance(...)` semantics were not changed.

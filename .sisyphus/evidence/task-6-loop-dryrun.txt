@@ -1,0 +1,68 @@
+Command: python -m py_compile "train/run_closed_loop_iteration.py"; Write-Host "EXIT_CODE:$LASTEXITCODE"
+Output:
+EXIT_CODE:0
+
+Command: python "train/run_closed_loop_iteration.py" --dry-run --until-score-gt 900; Write-Host "EXIT_CODE:$LASTEXITCODE"
+Output:
+CLOSED LOOP DRY RUN - no Docker command is executed
+Git anchor: branch=win_YJY head=88ad9c8
+Dirty status snapshot:
+M code/agent_ppo/algorithm/algorithm.py
+ M code/agent_ppo/feature/preprocessor.py
+ M code/agent_ppo/workflow/train_workflow.py
+ M code/latest_model.pkl
+ M code/model.ckpt-resume.meta.json
+ M code/model.ckpt-resume.pkl
+ M train/context/CHANGELOG.md
+?? .sisyphus/
+?? AGENTS.md
+?? code/agent_ppo/AGENTS.md
+?? train/AGENTS.md
+?? train/context/AGENTS.md
+?? train/context/HANDOFF_20260425_WIN_YJY.md
+?? train/context/HOLDOUT_BENCHMARK_dryrun.json
+?? train/holdout_detail_logs/
+?? train/run_closed_loop_iteration.py
+
+Stop condition:
+- Continue until holdout combined avg > 900.0; no fixed max-round stop is allowed.
+
+Training command templates:
+- QUICK 20-minute template:
+  cd train
+  docker compose -p kaiwu-train -f .docker-compose.yaml --profile distributed up -d
+  # observe for 20 minutes, then stop explicitly
+  docker compose -p kaiwu-train -f .docker-compose.yaml --profile distributed down
+- FULL 50-minute template:
+  cd train
+  docker compose -p kaiwu-train -f .docker-compose.yaml --profile distributed up -d
+  # observe for 50 minutes, then stop explicitly
+  docker compose -p kaiwu-train -f .docker-compose.yaml --profile distributed down
+
+Holdout benchmark command template:
+- python train/run_holdout_benchmark.py --maps 4,7 --episodes-per-map 10 --checkpoint code/model.ckpt-resume.pkl --output train/context/HOLDOUT_BENCHMARK_LOOP.json --dry-run
+Analyzer command template:
+- python train/analyze_holdout_benchmark.py --input train/context/HOLDOUT_BENCHMARK_LOOP.json --output-md train/context/HOLDOUT_BENCHMARK_LOOP.md
+Rollback/revert command template:
+- git revert HEAD
+
+Candidate separation requirement:
+- If commits 5d578b9 and 88ad9c8 are both present, benchmark/evaluate them separately before combining effects.
+
+Accept thresholds:
+- ACCEPT if holdout combined avg improves >=20 or exceeds 900, completed rate drop <=0.05, and clean_per_step drop <=2%.
+Reject thresholds:
+- REJECT on battery fail rate increase >0.05, collision fail rate increase >0.02, high-score battery deaths increase, holdout leakage, or eval model mutation.
+
+Optimization escalation ladder:
+- Do not escalate yet: 0/3 consecutive non->900 rounds.
+- 1. pure-positive / low-risk: parameter-only or guard-only adjustments
+- 2. reward add/rewrite: add or reshape targeted reward signals
+- 3. small refactor: local behavior/planner cleanup with bounded blast radius
+- 4. network only last: architecture/model changes after safer levers fail
+EXIT_CODE:0
+
+Diagnostic attempt: lsp_diagnostics on D:\TcKaiwuFinal\train\run_closed_loop_iteration.py
+Output:
+Error: LSP server 'basedpyright' is configured but NOT INSTALLED.
+Command not found: basedpyright-langserver

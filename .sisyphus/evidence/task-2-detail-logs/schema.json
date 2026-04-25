@@ -1,0 +1,51 @@
+{
+  "description": "Per-step holdout detail log schema for AI-friendly analysis.",
+  "notes": {
+    "degrade_gracefully": true,
+    "detail_log_dir": "D:\\TcKaiwuFinal\\.sisyphus\\evidence\\task-2-detail-logs",
+    "jsonl_pattern": "episode_<episode_id>.jsonl"
+  },
+  "required_fields": [
+    "episode_id",
+    "map_id",
+    "step",
+    "action",
+    "planner_mode",
+    "planner_target",
+    "battery",
+    "charger_distance",
+    "return_slack",
+    "reward_components",
+    "fail_reason",
+    "death_replay_path",
+    "checkpoint_id"
+  ],
+  "run_id": "holdout-benchmark-20260425-051907",
+  "sample_record": {
+    "action": {
+      "id": 0,
+      "name": "MOVE_UP"
+    },
+    "battery": 150,
+    "charger_distance": 18,
+    "checkpoint_id": "model-ckpt-resume",
+    "death_replay_path": null,
+    "episode_id": "holdout-benchmark-20260425-051907-map4-ep01",
+    "fail_reason": null,
+    "map_id": 4,
+    "planner_mode": "coverage",
+    "planner_target": {
+      "kind": "cell",
+      "x": 12,
+      "y": 8
+    },
+    "return_slack": 12,
+    "reward_components": {
+      "charge": 0.0,
+      "cleaning": 0.0,
+      "penalty": 0.0
+    },
+    "step": 1
+  },
+  "schema_version": 1
+}

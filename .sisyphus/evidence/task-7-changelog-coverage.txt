@@ -1,0 +1,11 @@
+Commit-to-changelog coverage mapping (T0..T8)
+- a34e9aa -> T0: Adapt LTSPPO charge constraint benchmark design. Covered in CHANGELOG.md entry dated 2026-04-25 07:04.
+- 60a23b1 -> T1: Baseline capture anchored at HEAD a34e9aa; CHANGELOG.md entry 2026-04-25 07:15 documents baseline validation.
+- fb008a3 -> T2: Add fixed holdout benchmark scripts; CHANGELOG.md contains the dry-run/analyzer contract line (2026-04-25 05:15).
+- 6cb42d8 -> T2 docs: Document holdout benchmark contract; CHANGELOG.md references improvements around holdout docs on 2026-04-25 05:58/06:07 timeframe.
+- e468b70 -> T3: Record failed holdout baseline attempt; CHANGELOG.md notes non-dry-run baseline attempt with REAL_EXECUTION_UNSUPPORTED_IN_T2 on 2026-04-25 05:24.
+- e09e540 -> T3 changelog: Update changelog for baseline attempt; see 2026-04-25 entries around 05:24.
+- 538266e -> T8: Add holdout failure diagnostics; covered in train/context/LOG_20260425_holdout_benchmark.md (T8 sections).
+- 37f1fc2 -> T8 docs: Document holdout analyzer diagnostics; also in LOG_20260425_holdout_benchmark.md under T8 sections.
+
+Notes: CHANGELOG.md and train/context/LOG_20260425_holdout_benchmark.md provide surface-level coverage for these commits; T0/T1 entries were added to CHANGELOG.md in this patch.

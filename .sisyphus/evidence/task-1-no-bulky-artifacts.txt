@@ -1,0 +1,20 @@
+Evidence that no bulky runtime artifacts were staged for this baseline task (rechecked after baseline refresh).
+
+Command:
+
+```text
+git diff --cached --name-only
+```
+
+Output:
+
+```text
+(no staged files)
+```
+
+Interpretation:
+
+- The staging area was empty when checked.
+- No `train/log/`, `train/archive/`, `train/backup_model/`, `_package_tmp/`, or Docker image artifact was staged.
+- The tracked model files remain dirty in the worktree, but they were not staged by this baseline task.
+- This remained true after the refreshed baseline capture.

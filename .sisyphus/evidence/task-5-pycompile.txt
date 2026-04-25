@@ -1,0 +1,2 @@
+python -m py_compile code/agent_ppo/algorithm/algorithm.py
+exit=0

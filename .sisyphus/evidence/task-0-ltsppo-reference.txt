@@ -1,0 +1,124 @@
+Task: - [ ] 0. 前置：参考 `linux-LTSPPO-charge-constraint` 构建本地 Benchmark/日志方案
+Date: 2026-04-25
+Working directory: D:\TcKaiwuFinal
+
+Command evidence captured during T0. All git operations used read-only inspection/fetch of a remote-tracking ref; no checkout/merge/reset/rebase/cherry-pick was run.
+
+1) Current branch before reference fetch
+
+Command:
+  GIT_MASTER=1 git branch --show-current
+
+Output:
+  win_YJY
+
+2) Dirty status before reference fetch
+
+Command:
+  GIT_MASTER=1 git status --short
+
+Output summary:
+  - Worktree was already dirty before T0.
+  - Important modified active files included:
+    M code/agent_ppo/algorithm/algorithm.py
+    M code/agent_ppo/conf/train_env_conf.toml
+    M code/agent_ppo/feature/definition.py
+    M code/agent_ppo/feature/expert.py
+    M code/agent_ppo/feature/preprocessor.py
+    M code/agent_ppo/model/model.py
+    M code/agent_ppo/utils/archive_analysis.py
+    M code/agent_ppo/workflow/train_workflow.py
+    M code/latest_model.pkl
+    M code/model.ckpt-resume.meta.json
+    M code/model.ckpt-resume.pkl
+  - There were many additional pre-existing dirty docs/reference files and untracked `.sisyphus/`, `AGENTS.md`, and train/context handoff files.
+
+3) Remote branch existence
+
+Command:
+  GIT_MASTER=1 git ls-remote --heads origin "*linux-LTSPPO-charge-constraint*"
+
+Output:
+  553066cf05d76d5df26890a2cf66b49c73374bf4	refs/heads/linux-LTSPPO-charge-constraint
+
+4) Local tracking ref before fetch
+
+Command:
+  GIT_MASTER=1 git branch -a --list "*linux-LTSPPO-charge-constraint*"
+
+Output:
+  (no output; remote-tracking ref was missing locally)
+
+5) Read-only fetch to remote-tracking ref
+
+Command:
+  GIT_MASTER=1 git fetch origin linux-LTSPPO-charge-constraint:refs/remotes/origin/linux-LTSPPO-charge-constraint
+
+Output:
+  From https://github.com/nanbloom001/kaiwuFinal
+   * [new branch]      linux-LTSPPO-charge-constraint -> origin/linux-LTSPPO-charge-constraint
+
+6) Fetched commit
+
+Command:
+  GIT_MASTER=1 git rev-parse --short origin/linux-LTSPPO-charge-constraint
+
+Output:
+  553066c
+
+7) Relevant files found in origin/linux-LTSPPO-charge-constraint
+
+Command:
+  GIT_MASTER=1 git ls-tree -r --name-only origin/linux-LTSPPO-charge-constraint
+
+Relevant output excerpt:
+  code/agent_ppo/eval/benchmark.py
+  code/agent_ppo/eval/benchmark_parallel.py
+  code/agent_ppo/eval/lite_benchmark_bootstrap.py
+  code/agent_ppo/utils/constraint_utils.py
+  code/agent_ppo/utils/reward_metrics.py
+  code/agent_ppo/utils/container_routing.py
+  code/agent_ppo/utils/model_signer.py
+  code/tests/test_benchmark_parallel.py
+  code/tests/test_ltsppo_contracts.py
+  train/.docker-compose.benchmark.yaml
+  train/compare_benchmarks.py
+  train/run_benchmark.sh
+  train/run_benchmark_parallel.sh
+  train/context/benchmark/BENCHMARK_SYSTEM.md
+  train/context/benchmark/BENCHMARK_PARALLEL_HANDOFF_20260416.md
+  train/eval_results.json
+
+8) Benchmark design inspected without checkout
+
+Commands:
+  GIT_MASTER=1 git show origin/linux-LTSPPO-charge-constraint:code/agent_ppo/eval/benchmark.py
+  GIT_MASTER=1 git show origin/linux-LTSPPO-charge-constraint:code/agent_ppo/eval/benchmark_parallel.py
+  GIT_MASTER=1 git show origin/linux-LTSPPO-charge-constraint:code/agent_ppo/utils/constraint_utils.py
+  GIT_MASTER=1 git show origin/linux-LTSPPO-charge-constraint:code/agent_ppo/utils/reward_metrics.py
+  GIT_MASTER=1 git show origin/linux-LTSPPO-charge-constraint:train/.docker-compose.benchmark.yaml
+  GIT_MASTER=1 git show origin/linux-LTSPPO-charge-constraint:train/compare_benchmarks.py
+
+Findings:
+  - `benchmark.py` describes a standalone evaluation module independent from training: no learner data, no curriculum interference, no episode count pollution.
+  - It supports `KAIWU_BENCHMARK_POLICY_MODE`, `KAIWU_BENCHMARK_CHECKPOINT`, `KAIWU_BENCHMARK_MAPS`, and `KAIWU_BENCHMARK_ROUNDS_JSON`.
+  - It injects per-episode `env_conf` fields: `map=[map_id]`, `map_random=False`, `robot_count`, `charger_count`, `max_step`, `battery_max`.
+  - It writes `manifest.json`, per-episode `episodes/*.jsonl`, `result.json`, aggregate `eval_results.json`, and `ai_summary.json`.
+  - Step records include action, battery, mode, route anchor, target, charger slack, planner guidance, charger candidates, reward breakdown, action/mode/target probabilities, behavior metrics, and anomalies.
+  - Episode results include clean score, fail/result reason, steps, charge count, remaining charge, invalid move rate, late return/contract, return progress/stall, recoverability, mode usage, anomaly summary, reward attribution, evidence windows, and step log path.
+  - `benchmark_parallel.py` adds a file-queue scheduler with pending/claimed/completed tasks, worker heartbeats, stale claim recovery, and final aggregation.
+  - `constraint_utils.py` provides charge need/slack confidence, battery state classification, process cost, battery fail severity, and collision process cost helpers.
+  - `reward_metrics.py` groups positive/negative and charging-specific reward contribution shares.
+  - `train/.docker-compose.benchmark.yaml` passes benchmark env vars into learner/aisrv and disables restarts.
+  - `compare_benchmarks.py` compares benchmark snapshots by win rate, clean score, steps, battery fail, collision fail, and checkpoint/git metadata.
+
+9) Current branch after reference fetch/inspection
+
+Command:
+  GIT_MASTER=1 git branch --show-current
+
+Output:
+  win_YJY
+
+Conclusion:
+  The branch was readable and fetched into `origin/linux-LTSPPO-charge-constraint`; current branch remained `win_YJY`; no checkout/merge occurred.

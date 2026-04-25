@@ -1,0 +1,182 @@
+{
+  "run_id": "task-4-route-budget",
+  "checkpoint": {
+    "path": "synthetic-route-budget.pkl"
+  },
+  "maps": [
+    4
+  ],
+  "episodes_per_map": 1,
+  "contract": {
+    "maps": [
+      4
+    ],
+    "episodes_per_map": 1
+  },
+  "episodes": [
+    {
+      "episode_id": "map4_ep01",
+      "map_id": 4,
+      "ep_idx": 1,
+      "result": "battery",
+      "fail_reason": "battery",
+      "done_reason": "battery",
+      "status": "failed",
+      "clean_score": 812.0,
+      "steps": 742,
+      "finished_steps": 742,
+      "max_step": 1000,
+      "battery_max": 150,
+      "charger_count": 3,
+      "charge_count": 0,
+      "remaining_charge": 0,
+      "invalid_move_count": 6,
+      "invalid_move_rate": 0.08,
+      "charger_known_final": true,
+      "known_charger_count_final": 1,
+      "charger_arrived_count": 0,
+      "charger_first_arrival_step": null,
+      "charger_arrival_steps": [],
+      "first_should_charge_step": 701,
+      "attempted_charge_step_count": 4,
+      "first_return_mode_step": 703,
+      "min_battery": 2,
+      "min_battery_step": 742,
+      "min_charger_slack": -4.2,
+      "max_negative_charger_slack": -4.2,
+      "action_histogram": {
+        "0": 120,
+        "2": 300,
+        "4": 322
+      },
+      "last_actions": [
+        2,
+        2,
+        4,
+        4,
+        4,
+        2
+      ],
+      "repeat_action_max_streak": 3,
+      "revisit_ratio": 0.11,
+      "max_revisit_count": 2,
+      "unique_cells_visited": 401,
+      "observed_ratio_final": 0.42,
+      "final_window": [
+        {
+          "step": 738,
+          "action": 4,
+          "battery": 6,
+          "charger_slack": -2.8,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 1,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 6,
+          "cur_revisit_count": 1,
+          "cur_pos": [
+            40,
+            50
+          ]
+        },
+        {
+          "step": 742,
+          "action": 2,
+          "battery": 2,
+          "charger_slack": -4.2,
+          "target_mode": "charge",
+          "should_charge": true,
+          "on_charger": false,
+          "known_charger_count": 1,
+          "charger_arrived_count": 0,
+          "invalid_move_count": 6,
+          "cur_revisit_count": 2,
+          "cur_pos": [
+            44,
+            51
+          ]
+        }
+      ],
+      "evidence_windows": {
+        "first_low_slack_window": [
+          {
+            "step": 742,
+            "action": 2,
+            "battery": 2,
+            "charger_slack": -4.2,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 1,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 6,
+            "cur_revisit_count": 2,
+            "cur_pos": [
+              44,
+              51
+            ]
+          }
+        ],
+        "first_should_charge_window": [
+          {
+            "step": 701,
+            "action": 2,
+            "battery": 24,
+            "charger_slack": 1.0,
+            "target_mode": "dirt",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 1,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 4,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              35,
+              46
+            ]
+          }
+        ],
+        "first_missed_charge_window": [
+          {
+            "step": 701,
+            "action": 2,
+            "battery": 24,
+            "charger_slack": 1.0,
+            "target_mode": "dirt",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 1,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 4,
+            "cur_revisit_count": 0,
+            "cur_pos": [
+              35,
+              46
+            ]
+          }
+        ],
+        "first_loop_window": [],
+        "last_failure_window": [
+          {
+            "step": 742,
+            "action": 2,
+            "battery": 2,
+            "charger_slack": -4.2,
+            "target_mode": "charge",
+            "should_charge": true,
+            "on_charger": false,
+            "known_charger_count": 1,
+            "charger_arrived_count": 0,
+            "invalid_move_count": 6,
+            "cur_revisit_count": 2,
+            "cur_pos": [
+              44,
+              51
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

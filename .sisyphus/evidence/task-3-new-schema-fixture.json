@@ -1,0 +1,44 @@
+{
+  "run_id": "fixture-new-schema",
+  "checkpoint": {
+    "path": "code/model.ckpt-resume.pkl"
+  },
+  "maps": [
+    1
+  ],
+  "episodes_per_map": 1,
+  "contract": {
+    "maps": [
+      1
+    ],
+    "episodes_per_map": 1,
+    "fixed_config": {}
+  },
+  "episodes": [
+    {
+      "episode_id": "ep-new-1",
+      "map_id": 1,
+      "result": "FAILED",
+      "steps": 123,
+      "clean_score": 456.7,
+      "remaining_charge": 12.5,
+      "charge_count": 2,
+      "invalid_move_rate": 0.1,
+      "decision_context": {
+        "policy": "ppo"
+      },
+      "outcome_state": {
+        "battery": 12.5
+      },
+      "evidence_windows": [
+        {
+          "start": 1,
+          "end": 2
+        }
+      ],
+      "field_availability": {
+        "decision_context": true
+      }
+    }
+  ]
+}

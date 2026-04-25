@@ -1,0 +1,1 @@
+2026-04-25 | benchmark contract now exposes fixed_config alias; decision_context includes step, pos_before, and last_action; py_compile to be verified.

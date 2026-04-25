@@ -1,0 +1,33 @@
+Synthetic input: .sisyphus/evidence/task-6-synthetic-reject.json
+
+Command: python "train/run_closed_loop_iteration.py" --decision-json ".sisyphus/evidence/task-6-synthetic-reject.json" --candidate-commit abc1234 --consecutive-nonwinning-rounds 3; Write-Host "EXIT_CODE:$LASTEXITCODE"
+Output:
+Decision: REJECT
+Reason: eval model mutation reported by benchmark/analyzer risk; battery fail rate increased by 0.0800 > 0.05; collision fail rate increased by 0.0300 > 0.02; high-score battery deaths increased
+Holdout combined avg: 895.0000
+Strict stop condition met: false
+Rollback command: git revert abc1234
+Escalation ladder:
+- Escalate now: 3+ consecutive non->900 rounds reached.
+- 1. pure-positive / low-risk: parameter-only or guard-only adjustments
+- 2. reward add/rewrite: add or reshape targeted reward signals
+- 3. small refactor: local behavior/planner cleanup with bounded blast radius
+- 4. network only last: architecture/model changes after safer levers fail
+EXIT_CODE:2
+
+Synthetic input: .sisyphus/evidence/task-6-synthetic-high-score-bad-stability.json
+
+Command: python "train/run_closed_loop_iteration.py" --decision-json ".sisyphus/evidence/task-6-synthetic-high-score-bad-stability.json" --candidate-commit def5678; Write-Host "EXIT_CODE:$LASTEXITCODE"
+Output:
+Decision: REJECT
+Reason: completed rate dropped by 0.0800 > 0.05; clean_per_step dropped by 4.0000% > 2.0000%
+Holdout combined avg: 925.0000
+Strict stop condition met: true
+Rollback command: git revert def5678
+Escalation ladder:
+- Do not escalate yet: 0/3 consecutive non->900 rounds.
+- 1. pure-positive / low-risk: parameter-only or guard-only adjustments
+- 2. reward add/rewrite: add or reshape targeted reward signals
+- 3. small refactor: local behavior/planner cleanup with bounded blast radius
+- 4. network only last: architecture/model changes after safer levers fail
+EXIT_CODE:2

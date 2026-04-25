@@ -1,0 +1,135 @@
+{
+  "checkpoint": {
+    "path": "code/model.ckpt-resume.pkl"
+  },
+  "combined": {
+    "avg_charge_count": 2.0,
+    "avg_clean_per_step": 3.713008,
+    "avg_clean_score": 456.7,
+    "avg_finished_steps": 123.0,
+    "avg_remaining_charge": 12.5,
+    "battery_fail_rate": 0.0,
+    "collision_fail_rate": 0.0,
+    "completed_rate": 0.0,
+    "episode_count": 1,
+    "score_p10": 456.7,
+    "score_p50": 456.7,
+    "score_p90": 456.7,
+    "status": "OK"
+  },
+  "decision_inputs": {},
+  "episodes_per_map": 1,
+  "failure_classification": {
+    "analyzed_episode_ids": [
+      "ep-new-1"
+    ],
+    "analyzed_failure_count": 1,
+    "categories": {
+      "charger_unknown": {
+        "count": 0,
+        "examples": [],
+        "label": "Charger unknown / first charger not found"
+      },
+      "high_score_battery_death": {
+        "count": 0,
+        "examples": [],
+        "label": "High-score battery death"
+      },
+      "late_battery_death": {
+        "count": 0,
+        "examples": [],
+        "label": "Late or high-step battery death"
+      },
+      "npc_or_path_blocked": {
+        "count": 0,
+        "examples": [],
+        "label": "NPC or path blocked"
+      },
+      "optimistic_route_budget": {
+        "count": 0,
+        "examples": [],
+        "label": "Optimistic route budget / negative slack"
+      },
+      "repeated_invalid_move": {
+        "count": 0,
+        "examples": [],
+        "label": "Repeated invalid move / stuck pattern"
+      },
+      "return_too_late": {
+        "count": 0,
+        "examples": [],
+        "label": "Known charger but return too late"
+      },
+      "unknown": {
+        "count": 1,
+        "examples": [
+          {
+            "charger_arrived_count": 0,
+            "charger_first_arrival_step": -1,
+            "clean_score": 456.7,
+            "death_replay_path": null,
+            "episode_id": "ep-new-1",
+            "fail_reason": "failed",
+            "finished_steps": 123,
+            "invalid_move_rate": 0.1,
+            "map_id": 1,
+            "remaining_charge": 12.5
+          }
+        ],
+        "label": "Unknown"
+      }
+    },
+    "status": "OK"
+  },
+  "fixed_config": {},
+  "maps": [
+    1
+  ],
+  "missing_replay_warnings": [],
+  "next_step": {
+    "evidence_paths": [
+      "D:\\TcKaiwuFinal\\.sisyphus\\evidence\\task-3-new-schema-fixture.json"
+    ],
+    "optimization_level": "data",
+    "recommendation": "Collect additional replay-backed failures and richer death traces because the current evidence does not isolate a single dominant root cause.",
+    "status": "ACTIONABLE"
+  },
+  "per_map": {
+    "1": {
+      "avg_charge_count": 2.0,
+      "avg_clean_per_step": 3.713008,
+      "avg_clean_score": 456.7,
+      "avg_finished_steps": 123.0,
+      "avg_remaining_charge": 12.5,
+      "battery_fail_rate": 0.0,
+      "collision_fail_rate": 0.0,
+      "completed_rate": 0.0,
+      "episode_count": 1,
+      "score_p10": 456.7,
+      "score_p50": 456.7,
+      "score_p90": 456.7,
+      "status": "OK"
+    }
+  },
+  "risks": [],
+  "run_id": "fixture-new-schema",
+  "schema_quality": {
+    "field_availability": {
+      "decision_context": true,
+      "evidence_windows": true,
+      "field_availability": true,
+      "outcome_state": true,
+      "step_log": false
+    },
+    "missing_signals": [
+      "step_log"
+    ],
+    "present_signals": [
+      "decision_context",
+      "outcome_state",
+      "evidence_windows",
+      "field_availability"
+    ],
+    "status": "OK"
+  }
+}

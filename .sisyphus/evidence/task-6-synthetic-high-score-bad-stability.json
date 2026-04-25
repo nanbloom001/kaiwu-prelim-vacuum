@@ -1,0 +1,36 @@
+{
+  "candidate_commit": "def5678",
+  "baseline": {
+    "combined": {
+      "avg_clean_score": 885.0,
+      "completed_rate": 0.95,
+      "avg_clean_per_step": 1.0,
+      "battery_fail_rate": 0.05,
+      "collision_fail_rate": 0.01
+    },
+    "failure_classification": {
+      "categories": {
+        "high_score_battery_death": {
+          "count": 0
+        }
+      }
+    }
+  },
+  "candidate": {
+    "combined": {
+      "avg_clean_score": 925.0,
+      "completed_rate": 0.87,
+      "avg_clean_per_step": 0.96,
+      "battery_fail_rate": 0.05,
+      "collision_fail_rate": 0.01
+    },
+    "failure_classification": {
+      "categories": {
+        "high_score_battery_death": {
+          "count": 0
+        }
+      }
+    },
+    "risks": []
+  }
+}

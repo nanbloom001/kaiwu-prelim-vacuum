@@ -1,0 +1,88 @@
+{
+  "run_id": "task-8-synthetic-holdout",
+  "checkpoint": {
+    "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl"
+  },
+  "contract": {
+    "maps": [
+      4,
+      7
+    ],
+    "episodes_per_map": 3,
+    "fixed_config": {
+      "battery_max": 150,
+      "charger_count": 3,
+      "map_random": false,
+      "max_step": 1000,
+      "robot_count": 4
+    }
+  },
+  "decision_inputs": {
+    "planned_episode_count": 5
+  },
+  "episodes": [
+    {
+      "episode_id": "task8-highscore-missing-replay",
+      "map_id": 4,
+      "fail_reason": "battery_fail",
+      "clean_score": 930,
+      "finished_steps": 760,
+      "remaining_charge": 0,
+      "charger_arrived_count": 1,
+      "charger_first_arrival_step": 120,
+      "invalid_move_rate": 0.03,
+      "max_step": 1000,
+      "death_replay_path": "D:\\TcKaiwuFinal\\.sisyphus\\evidence\\task-8-missing-replay.jsonl"
+    },
+    {
+      "episode_id": "task8-late-battery-death",
+      "map_id": 7,
+      "fail_reason": "out_of_battery",
+      "clean_score": 880,
+      "finished_steps": 980,
+      "remaining_charge": 0,
+      "charger_arrived_count": 1,
+      "charger_first_arrival_step": 140,
+      "invalid_move_rate": 0.01,
+      "max_step": 1000
+    },
+    {
+      "episode_id": "task8-replay-route-budget",
+      "map_id": 4,
+      "fail_reason": "battery_death",
+      "clean_score": 845,
+      "finished_steps": 720,
+      "remaining_charge": 0,
+      "charger_arrived_count": 1,
+      "charger_first_arrival_step": 90,
+      "invalid_move_rate": 0.08,
+      "max_step": 1000,
+      "death_replay_path": "D:\\TcKaiwuFinal\\.sisyphus\\evidence\\task-8-synthetic-death-replay.jsonl"
+    },
+    {
+      "episode_id": "task8-collision-fail",
+      "map_id": 7,
+      "fail_reason": "collision_fail",
+      "clean_score": 410,
+      "finished_steps": 430,
+      "remaining_charge": 38,
+      "charger_arrived_count": 0,
+      "charger_first_arrival_step": -1,
+      "invalid_move_rate": 0.06,
+      "max_step": 1000
+    },
+    {
+      "episode_id": "task8-completed-control",
+      "map_id": 7,
+      "fail_reason": "completed",
+      "clean_score": 960,
+      "finished_steps": 1000,
+      "remaining_charge": 12,
+      "charger_arrived_count": 2,
+      "charger_first_arrival_step": 150,
+      "invalid_move_rate": 0.01,
+      "max_step": 1000
+    }
+  ],
+  "risks": []
+}

@@ -1,0 +1,1 @@
+Static check: `train_workflow.py` now requires `fail_reason == "completed"` before `robust_score` can update `best_robust_score` or set `is_new_best = True`.

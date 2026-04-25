@@ -1,0 +1,20 @@
+F3 mutation guard fix evidence
+
+Source change:
+- Updated train/run_closed_loop_iteration.py so mutation rejection now triggers on (severity == "error" and real_mutation_code) or real_mutation_message.
+- Holdout leakage rejection is preserved.
+- Explicit model_mutation_guard.mutation_detected=true still rejects before risk scanning.
+
+Verification plan:
+- py_compile
+- dry-run decision (must not be REJECT)
+- synthetic explicit mutation_detected=true decision (must REJECT)
+- synthetic warning + "artifacts changed" decision (must REJECT)
+- synthetic informational MODEL_MUTATION_GUARD unchanged-message decision (must not REJECT)
+
+Verification outputs:
+- py_compile: PASS (no output)
+- dry-run decision on f3-holdout-dryrun.json: CONTINUE
+- warning + artifacts changed: REJECT
+- informational MODEL_MUTATION_GUARD unchanged: ACCEPT
+- explicit mutation_detected=true: REJECT

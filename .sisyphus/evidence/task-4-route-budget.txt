@@ -1,0 +1,145 @@
+﻿{
+  "checkpoint": {
+    "path": "synthetic-route-budget.pkl"
+  },
+  "combined": {
+    "avg_charge_count": 0.0,
+    "avg_clean_per_step": 1.09434,
+    "avg_clean_score": 812.0,
+    "avg_finished_steps": 742.0,
+    "avg_remaining_charge": 0.0,
+    "battery_fail_rate": 1.0,
+    "collision_fail_rate": 0.0,
+    "completed_rate": 0.0,
+    "episode_count": 1,
+    "score_p10": 812.0,
+    "score_p50": 812.0,
+    "score_p90": 812.0,
+    "status": "OK"
+  },
+  "decision_inputs": {},
+  "episodes_per_map": 1,
+  "failure_classification": {
+    "analyzed_episode_ids": [
+      "map4_ep01"
+    ],
+    "analyzed_failure_count": 1,
+    "categories": {
+      "charger_unknown": {
+        "count": 0,
+        "examples": [],
+        "label": "Charger unknown / first charger not found"
+      },
+      "high_score_battery_death": {
+        "count": 0,
+        "examples": [],
+        "label": "High-score battery death"
+      },
+      "late_battery_death": {
+        "count": 0,
+        "examples": [],
+        "label": "Late or high-step battery death"
+      },
+      "npc_or_path_blocked": {
+        "count": 0,
+        "examples": [],
+        "label": "NPC or path blocked"
+      },
+      "optimistic_route_budget": {
+        "count": 1,
+        "examples": [
+          {
+            "attempted_charge_step_count": 4,
+            "charger_arrived_count": 0,
+            "charger_first_arrival_step": -1,
+            "charger_known_final": true,
+            "clean_score": 812.0,
+            "death_replay_path": null,
+            "episode_id": "map4_ep01",
+            "fail_reason": "battery",
+            "finished_steps": 742,
+            "invalid_move_rate": 0.08,
+            "map_id": 4,
+            "min_charger_slack": -4.2,
+            "reasons": [
+              "episode min_charger_slack=-4.20"
+            ],
+            "remaining_charge": 0.0,
+            "repeat_action_max_streak": 3,
+            "revisit_ratio": 0.11
+          }
+        ],
+        "label": "Optimistic route budget / negative slack"
+      },
+      "repeated_invalid_move": {
+        "count": 0,
+        "examples": [],
+        "label": "Repeated invalid move / stuck pattern"
+      },
+      "return_too_late": {
+        "count": 0,
+        "examples": [],
+        "label": "Known charger but return too late"
+      },
+      "unknown": {
+        "count": 0,
+        "examples": [],
+        "label": "Unknown"
+      }
+    },
+    "status": "OK"
+  },
+  "fixed_config": {},
+  "maps": [
+    4
+  ],
+  "missing_replay_warnings": [],
+  "next_step": {
+    "evidence_paths": [
+      "D:\\TcKaiwuFinal\\.sisyphus\\evidence\\task-4-route-budget-fixture.json"
+    ],
+    "optimization_level": "targeted",
+    "recommendation": "Prioritize route-budget calibration because episode or replay evidence shows negative charger slack before death.",
+    "status": "ACTIONABLE"
+  },
+  "per_map": {
+    "4": {
+      "avg_charge_count": 0.0,
+      "avg_clean_per_step": 1.09434,
+      "avg_clean_score": 812.0,
+      "avg_finished_steps": 742.0,
+      "avg_remaining_charge": 0.0,
+      "battery_fail_rate": 1.0,
+      "collision_fail_rate": 0.0,
+      "completed_rate": 0.0,
+      "episode_count": 1,
+      "score_p10": 812.0,
+      "score_p50": 812.0,
+      "score_p90": 812.0,
+      "status": "OK"
+    }
+  },
+  "risks": [],
+  "run_id": "task-4-route-budget",
+  "schema_quality": {
+    "field_availability": {
+      "decision_context": false,
+      "evidence_windows": true,
+      "field_availability": false,
+      "final_window": true,
+      "outcome_state": false,
+      "step_log": false
+    },
+    "missing_signals": [
+      "step_log",
+      "decision_context",
+      "outcome_state",
+      "field_availability"
+    ],
+    "present_signals": [
+      "final_window",
+      "evidence_windows"
+    ],
+    "status": "OK"
+  }
+}

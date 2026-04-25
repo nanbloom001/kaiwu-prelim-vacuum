@@ -1,0 +1,15 @@
+# Issues
+
+2026-04-25 - T0: Current worktree was already heavily dirty before reference inspection, including active PPO files and model artifacts. T1 must record baseline branch/commit/diff/checkpoint hash before any benchmark execution or behavior change.
+2026-04-25 - T0: LTSPPO benchmark expects rich fields such as mode/target/route-anchor probabilities and reward component names that may not all exist in `win_YJY`; T2 should degrade gracefully in logs instead of modifying PPO algorithm files to satisfy schema.
+2026-04-25 - T1: Checkpoint/model artifacts drifted during baseline verification (`resume_best.py latest` changed from clean_score 704.0 to 856.0 and model hashes/mtimes updated). Treat the refreshed baseline snapshot as current, and require T2/T3 hash/mtime mutation checks because an active/background writer may be updating artifacts.
+2026-04-25 - T2: Python `lsp_diagnostics` could not provide changed-file diagnostics because the configured `basedpyright-langserver` is missing in this environment; verification had to rely on `py_compile` and CLI smoke tests instead.
+2026-04-25 - T3: Real 2x10 BASELINE holdout could not be executed. `python train/run_holdout_benchmark.py --maps 4,7 --episodes-per-map 10 --checkpoint code/model.ckpt-resume.pkl --output train/context/HOLDOUT_BENCHMARK_BASELINE_20260425_0522.json` exited 3 with `REAL_EXECUTION_UNSUPPORTED_IN_T2`; baseline is blocked until safe runtime execution or inference-only Docker evaluation is added.
+2026-04-25 - T8: Python LSP is still unavailable (`basedpyright-langserver` missing), so analyzer verification remains limited to `py_compile` plus CLI behavior checks.
+2026-04-25 - T8: Failure classification is necessarily heuristic until T3/runtime work yields real replay-backed episodes; current synthetic evidence proves code paths, not production failure prevalence.
+2026-04-25 - T8-fix: Alias drift between producer terms and analyzer exact-match checks caused undercounting/misrouting of battery/collision failures until shared predicates were added.
+2026-04-25 - TASK-7: Pre-existing context/raw artifacts were discovered in train/context (e.g., episodes_raw.txt, episodes_raw2.txt, episodes_raw3.txt). Recommend policy review: relocate raw data away from context or add explicit retention policy; ensure train/context remains lightweight. No code changes required.
+2026-04-25 - T6: Python LSP diagnostics remain unavailable because `basedpyright-langserver` is not installed; T6 verification used `py_compile` plus dry-run/decision CLI checks instead.
+2026-04-25 - T10: Reward-positive and network escalation are blocked by missing real benchmark evidence: T3 non-dry-run still returns `REAL_EXECUTION_UNSUPPORTED_IN_T2`, while analyzer state remains `NO_EPISODES` / `NEED_MORE_DATA`.
+2026-04-25 06:30 | Task 9 NOT_READY gate added; final checkpoint cannot be selected due to NO_EPISODES / NEED_MORE_DATA and lack of >900 holdout evidence.
+2026-04-25 - T6-fix: `MODEL_MUTATION_GUARD` info risks can look mutation-like by code prefix, so decision gates must key off severity plus actual mutation language to avoid false REJECTs.

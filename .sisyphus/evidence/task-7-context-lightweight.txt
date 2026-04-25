@@ -1,0 +1,7 @@
+Context-lightweight evidence (truthful snapshot): The train/context directory currently contains 38 entries, spanning documentation, benchmark artifacts, and episode data. Representative categories:
+- Documentation/planning: multiple .md files including CHANGELOG.md, AGENTS.md, OPT_PLAN_v53_20260414.md, LOG_20260425_holdout_benchmark.md, etc.
+- Episode/holdout data: episodes_final.txt, episodes_new.txt, episodes_raw.txt, episodes_raw2.txt, episodes_raw3.txt, HOLDOUT_BENCHMARK_BASELINE_20260425_0522.json, HOLDOUT_BENCHMARK_dryrun.json, SESSION_LOG_20260409.md, etc.
+- Logs/analysis: LOG_20260412_RESUME_FIX.md, LOG_20260413_entropy_floor_validation.md, LOG_20260413_resume_fix_and_local_training.md, LOG_20260414_v53_training_analysis.md, LOG_20260414_v54_battery_death_diagnosis.md, LOG_20260425_holdout_benchmark.md, LTSPPO_BENCHMARK_ADAPTATION_20260425.md, etc.
+- Metadata: PROMPT_*.md, README.md, SERVER_AI_PROMPT.md, SERVER_SYNC_AND_MONITOR.md, etc.
+- Files that appear to be raw data: episodes_raw.txt, episodes_raw2.txt, episodes_raw3.txt are present and may violate no-raw-logs guideline; they should be reviewed or relocated if not required.
+- Checkpoint/zip/docker artifacts: none detected in train/context.
