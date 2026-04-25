@@ -146,3 +146,32 @@ python train/resume_best.py latest
 - Docker + Docker Compose（含 NVIDIA GPU 支持）
 - Python 3.10+（用于打包脚本和监控面板）
 - 依赖：`tensorboard`（用于 tb_writer.py）
+## Benchmark 标配
+
+当前 holdout benchmark 标配为 `2 x 8` 双重并发：
+
+- `AISRV = 2`
+- `env/gamecore per AISRV = 4`
+- `GAMECORE = 8`
+- `scheduler = dynamic`
+- `maps = 4,7`
+- `episodes_per_map = 8`
+
+标准命令：
+
+```bash
+python train/run_holdout_benchmark.py \
+  --checkpoint code/model.ckpt-resume.pkl \
+  --output train/context/HOLDOUT_BENCHMARK_DYNAMIC_2X8.json
+```
+
+该命令默认会设置并验证：
+
+- `KAIWU_AISRV_NUM=2`
+- `KAIWU_PARALLEL_ENV_PER_AISRV=4`
+- `KAIWU_GAMECORE_NUM=8`
+- `KAIWU_BENCHMARK_PARALLEL_MODE=1`
+- `KAIWU_BENCHMARK_SCHEDULER=dynamic`
+- `aisrv_connect_to_kaiwu_env_count = 4`
+
+真实验证记录：`train/context/HOLDOUT_BENCHMARK_DYNAMIC_2X8.json`，16/16 task completed。注意每个 workflow 进程内 `visible_env_handles=1` 是正常现象；并发来自 Kaiwu 框架启动的多个 helper process，而不是单个 Python workflow 里拿到多个 env 句柄。

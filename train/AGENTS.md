@@ -2,57 +2,79 @@
 
 ## OVERVIEW
 
-Training orchestration, submission packaging, monitoring, and context handoff layer. This repo has no CI/Makefile; operations are Docker Compose + scripts.
-
-## WHERE TO LOOK
-
-| Task | Location | Notes |
-|------|----------|-------|
-| Start/stop training | `.docker-compose.yaml`, `.env` | Use `--profile distributed`, project name `kaiwu-train` |
-| Package/sign submission | `package_and_sign.sh`, `package_model.py`, `backup_model/` | Requires sidecar `kaiwu-train-backup_model-1` |
-| Checkpoint management | `resume_best.py` | `list`, `best`, `latest`, `prepare`, `clean` |
-| Local monitor | `local_monitor_dashboard.py`, `tb_writer.py` | ports 18080/18081; official panel at 11000 |
-| Automation helper | `auto_monitor.sh` | semi-automatic monitor/restart; contains TODO plan switches |
-| Competition memory | `context/` | plans, logs, handoffs, runtime caveats |
+Training orchestration, submission packaging, monitoring, and context handoff layer. No CI/Makefile — Docker Compose + scripts only.
 
 ## COMMANDS
 
 ```bash
-# first-time image load
-docker load -i ../dev/images/kaiwu-images-13.0.1.tar.zst
+# ── First-time image load ──
+docker load -i kaiwu-images-13.0.1.tar.zst   # from train/ directory
 
-# distributed training
-cd train
+# ── Distributed training ──
 docker compose -p kaiwu-train -f .docker-compose.yaml --profile distributed up -d
-
-# stop
 docker compose -p kaiwu-train -f .docker-compose.yaml --profile distributed down
+# Restart requires container removal to clear process_stop.done:
+docker rm kaiwu-train-learner-1 kaiwu-train-aisrv-1
 
-# package and sign
-bash train/package_and_sign.sh code/model.ckpt-resume.pkl 9339
+# ── Logs ──
+docker logs -f kaiwu-train-learner-1
+docker logs -f kaiwu-train-aisrv-1
 
-# local dashboard
-python train/local_monitor_dashboard.py --port 18080
-python train/tb_writer.py
-tensorboard --logdir train/tb_logs --port 18081 --bind_all
+# ── Holdout Benchmark (maps [4,7]) ──
+docker compose -p kaiwu-benchmark \
+  -f .docker-compose.yaml -f .docker-compose.benchmark.yaml \
+  --profile distributed up -d
+# Override: KAIWU_BENCHMARK_MAPS=4,7 KAIWU_BENCHMARK_EPISODES_PER_MAP=10
+
+# ── Package & sign submission (from repo root) ──
+bash train/package_and_sign.sh <pkl_path> <step>
+# Requires sidecar: kaiwu-train-backup_model-1 must be running
+
+# ── Monitoring ──
+python train/local_monitor_dashboard.py --port 18080   # http://127.0.0.1:18080
+python train/tb_writer.py && tensorboard --logdir train/tb_logs --port 18081 --bind_all
+# Official: http://127.0.0.1:11000/p/v5/exp/monitor?domain_id=1&exp_id=1&task_uuid=1&task_id=0&platform=competition_stage
+
+# ── Checkpoints ──
+python train/resume_best.py list
+python train/resume_best.py best
+python train/resume_best.py latest
 ```
+
+## KEY SCRIPTS
+
+| Script | Purpose |
+|--------|---------|
+| `package_and_sign.sh` | One-shot: package → copy to sidecar → wait for signed zip |
+| `package_model.py` | Manual packaging: zip + metadata + sidecar JSON |
+| `resume_best.py` | Checkpoint inspect/prepare/list/clean |
+| `run_holdout_benchmark.py` | Holdout runner with sharding support (maps [4,7]) |
+| `analyze_holdout_benchmark.py` | Post-process holdout results into metrics/reports |
+| `run_closed_loop_iteration.py` | Dry-run closed-loop train/benchmark/analyze/rollback |
+| `local_monitor_dashboard.py` | Custom training dashboard (port 18080) |
+| `tb_writer.py` | Training logs → TensorBoard events |
+| `collect_data.py` | Training log GAMEOVER metric extraction |
+| `auto_monitor.sh` | Semi-auto monitor/restart (uses legacy `docker-compose` command; unreliable) |
 
 ## RUNTIME CONVENTIONS
 
-- `.env` is the primary parameter source for AISRV/gamecore counts, ZMQ/reverb, batch size, dump frequency, and monitor ports.
-- Compose dynamically patches official Kaiwu runtime/config files after startup; do not rely only on static `code/conf/configure_app.toml`.
-- ZMQ mode depends on both env/config and runtime patching; see `context/ZMQ_RUNTIME_OPTIMIZATION_GUIDE.md`.
-- Business logs are primarily in container `/data/projects/robot_vacuum/log/*.log`, locally synchronized under `train/log/`.
+- `.env` is the primary parameter source for AISRV/gamecore counts, buffer type, batch size, dump frequency, and monitor ports
+- Compose dynamically patches framework TOML configs at container startup via `post_init_patch.py`; static `code/conf/configure_app.toml` is overridden
+- ZMQ mode requires both `.env` config (`KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE=zmq`) and runtime patching from `agent_ppo/utils/zmq_patch.py`
+- Business logs: container `/data/projects/robot_vacuum/log/*.log`, synced to `train/log/`
+- Docker image tar at `train/kaiwu-images-13.0.1.tar.zst` (not `dev/images/` — that dir is gitignored)
 
-## SUBMISSION NOTES
+## SUBMISSION FLOW
 
-- `package_and_sign.sh` calls `package_model.py`, copies zip/json into the sidecar, waits for signed zip to appear in `train/backup_model/`.
-- If signing fails, first verify sidecar container is running: `kaiwu-train-backup_model-1`.
-- Official competition page says latest submitted model is automatically run for ranking; do not assume source-only submission.
+1. `bash train/package_and_sign.sh <pkl_path> <step>`
+2. Validates sidecar `kaiwu-train-backup_model-1` is running
+3. Calls `package_model.py` → creates zip + json in `train/_package_tmp/`
+4. Copies both into sidecar, polls for signed zip in `train/backup_model/`
+5. Output filename: `<project>-ppo-<step>-<timestamp>-<version>.zip`
 
 ## ANTI-PATTERNS
 
-- Do not change `server_req_base_url`; keep `http://127.0.0.1:${MONITOR_TRPC_PORT}`.
-- Do not treat `auto_monitor.sh` as complete unattended optimization; its A/B/C/D code-change steps are TODO-like.
-- Do not commit bulky runtime outputs from `log/`, `archive/`, `backup_model/`, `_package_tmp/`, or Docker images.
-- Do not increase AISRV/gamecore blindly; current notes identify CPU-side bottlenecks.
+- Do not change `server_req_base_url` from `http://127.0.0.1:${MONITOR_TRPC_PORT}`
+- Do not treat `auto_monitor.sh` as reliable unattended automation (legacy `docker-compose` cmd, hardcoded Windows paths)
+- Do not commit: `log/`, `archive/`, `backup_model/`, `_package_tmp/`, `_package_submit/`, `_package_test/`, `tb_logs/`, `*.tar.zst`, `*.zip`
+- Do not increase AISRV/gamecore blindly; CPU-side bottlenecks documented
