@@ -15,6 +15,10 @@ PROFILE="distributed"
 CHECKPOINT="${1:-}"
 RESTART="${RESTART:-}"
 POLICY_MODE="${KAIWU_BENCHMARK_POLICY_MODE:-eval}"
+EXTERNAL_BENCHMARK_ROUNDS_JSON="${KAIWU_BENCHMARK_ROUNDS_JSON:-}"
+EXTERNAL_BENCHMARK_MAPS="${KAIWU_BENCHMARK_MAPS:-}"
+EXTERNAL_BENCHMARK_POLICY_MODE="${KAIWU_BENCHMARK_POLICY_MODE:-}"
+EXTERNAL_BENCHMARK_MAX_WAIT="${KAIWU_BENCHMARK_MAX_WAIT:-}"
 
 if [[ "${CHECKPOINT}" == "--policy-mode" ]]; then
     POLICY_MODE="${2:-eval}"
@@ -29,6 +33,18 @@ fi
 
 # Load .env
 set -a; source .env 2>/dev/null || true; set +a
+if [[ -n "${EXTERNAL_BENCHMARK_ROUNDS_JSON}" ]]; then
+    export KAIWU_BENCHMARK_ROUNDS_JSON="${EXTERNAL_BENCHMARK_ROUNDS_JSON}"
+fi
+if [[ -n "${EXTERNAL_BENCHMARK_MAPS}" ]]; then
+    export KAIWU_BENCHMARK_MAPS="${EXTERNAL_BENCHMARK_MAPS}"
+fi
+if [[ -n "${EXTERNAL_BENCHMARK_POLICY_MODE}" ]]; then
+    export KAIWU_BENCHMARK_POLICY_MODE="${EXTERNAL_BENCHMARK_POLICY_MODE}"
+fi
+if [[ -n "${EXTERNAL_BENCHMARK_MAX_WAIT}" ]]; then
+    export KAIWU_BENCHMARK_MAX_WAIT="${EXTERNAL_BENCHMARK_MAX_WAIT}"
+fi
 
 PROJECT_CODE="${KAIWU_PROJECT_CODE:-robot_vacuum}"
 ALGORITHM="${KAIWU_ALGORITHM:-ppo}"
@@ -135,7 +151,7 @@ if ! docker exec kaiwu-train-aisrv-1 test ! -e /workspace/code/.benchmark_done 2
     echo "[ERROR] Benchmark marker still present after stack startup: /workspace/code/.benchmark_done" >&2
     exit 1
 fi
-echo "        (40 episodes on 10 maps x 4 rounds, ~5-10 min)"
+echo "        (episode count follows KAIWU_BENCHMARK_ROUNDS_JSON / selected wrapper profile)"
 
 benchmark_state_host_json() {
     BENCHMARK_EXISTING_SESSIONS="$BENCHMARK_EXISTING_SESSIONS" BENCHMARK_STATE_BASE="./eval_logs" python3 -c '
@@ -357,7 +373,7 @@ print(
 
 # 5. Wait for benchmark to complete
 echo "[5/6] Running benchmark..."
-MAX_WAIT=900  # 15 minutes max (40 episodes can take a while)
+MAX_WAIT="${KAIWU_BENCHMARK_MAX_WAIT:-900}"  # default 15 minutes; override for slow target runs
 ELAPSED=0
 LAST_PROGRESS_LINE=""
 LAST_SESSION_ID=""

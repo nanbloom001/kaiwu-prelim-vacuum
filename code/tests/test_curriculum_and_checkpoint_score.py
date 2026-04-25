@@ -422,6 +422,543 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertEqual(payload["train_phase"], "s1_survival_strong_heuristic_slice2a_v1")
         self.assertEqual(payload["sample_points"]["global_40"]["train_phase"], "s1_survival_strong_heuristic_slice2a_v1")
 
+    def test_episode_sequence_diagnostics_emits_teacher_mask_observability(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner, WINDOW_COMPARISON_METRIC_KEYS
+
+        records = [
+            {
+                "mode": 3,
+                "target": 1,
+                "route_anchor": 1,
+                "charger_slack": 2.0,
+                "future_recoverability_score": 0.1,
+                "anchor_return_dist": 8.0,
+                "is_diag_action": 0.0,
+                "planner_policy_divergence": 0.0,
+                "route_phase_active": 1.0,
+                "route_phase_reliable_active": 1.0,
+                "control_stack_simplify_active": 0.0,
+                "pre_return_readiness_flag": 0.0,
+                "expert_weight_nonzero": 0.0,
+                "pre_return_bias_active": 0.0,
+                "return_bias_active": 0.0,
+                "return_action_teacher_mask": 0.0,
+                "route_phase_action_teacher_mask": 1.0,
+            },
+            {
+                "mode": 4,
+                "target": 1,
+                "route_anchor": 1,
+                "charger_slack": 1.0,
+                "future_recoverability_score": 0.1,
+                "anchor_return_dist": 7.0,
+                "is_diag_action": 1.0,
+                "planner_policy_divergence": 0.0,
+                "route_phase_active": 1.0,
+                "route_phase_reliable_active": 1.0,
+                "control_stack_simplify_active": 0.0,
+                "pre_return_readiness_flag": 0.0,
+                "expert_weight_nonzero": 0.0,
+                "pre_return_bias_active": 0.0,
+                "return_bias_active": 0.0,
+                "return_action_teacher_mask": 0.8,
+                "route_phase_action_teacher_mask": 0.0,
+            },
+            {
+                "mode": 4,
+                "target": 1,
+                "route_anchor": 1,
+                "charger_slack": 1.0,
+                "future_recoverability_score": 0.1,
+                "anchor_return_dist": 6.0,
+                "is_diag_action": 0.0,
+                "planner_policy_divergence": 0.0,
+                "route_phase_active": 1.0,
+                "route_phase_reliable_active": 1.0,
+                "control_stack_simplify_active": 0.0,
+                "pre_return_readiness_flag": 0.0,
+                "expert_weight_nonzero": 0.0,
+                "pre_return_bias_active": 0.0,
+                "return_bias_active": 0.0,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher_mask": 0.5,
+            },
+        ]
+
+        diagnostics = EpisodeRunner._episode_sequence_diagnostics(records)
+
+        self.assertAlmostEqual(float(diagnostics["return_action_teacher_mask_mean"] or 0.0), 0.6, places=6)
+        self.assertAlmostEqual(
+            float(diagnostics["return_action_teacher_mask_nonzero_rate"] or 0.0),
+            2.0 / 3.0,
+            places=6,
+        )
+        self.assertAlmostEqual(float(diagnostics["route_phase_action_teacher_mask_mean"] or 0.0), 0.5, places=6)
+        self.assertAlmostEqual(
+            float(diagnostics["route_phase_action_teacher_mask_nonzero_rate"] or 0.0),
+            2.0 / 3.0,
+            places=6,
+        )
+        self.assertIn("return_action_teacher_mask_mean", WINDOW_COMPARISON_METRIC_KEYS)
+        self.assertIn("route_phase_action_teacher_mask_nonzero_rate", WINDOW_COMPARISON_METRIC_KEYS)
+
+    def test_episode_sequence_diagnostics_emits_teacher_label_quality_buckets(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner, WINDOW_COMPARISON_METRIC_KEYS
+
+        records = [
+            {
+                "mode": 3,
+                "target": 1,
+                "route_anchor": 1,
+                "charger_slack": 2.0,
+                "future_recoverability_score": 0.1,
+                "anchor_return_dist": 8.0,
+                "is_diag_action": 0.0,
+                "planner_policy_divergence": 0.0,
+                "route_phase_active": 1.0,
+                "route_phase_reliable_active": 1.0,
+                "control_stack_simplify_active": 0.0,
+                "pre_return_readiness_flag": 0.0,
+                "expert_weight_nonzero": 0.0,
+                "pre_return_bias_active": 0.0,
+                "return_bias_active": 0.0,
+                "return_action_teacher": 1,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher": 1,
+                "route_phase_action_teacher_mask": 1.0,
+                "teacher_target_stable": 1.0,
+                "teacher_suggested_legal_safe": 1.0,
+                "teacher_action_margin": 0.5,
+            },
+            {
+                "mode": 4,
+                "target": 1,
+                "route_anchor": 1,
+                "charger_slack": 1.0,
+                "future_recoverability_score": 0.1,
+                "anchor_return_dist": 9.0,
+                "is_diag_action": 1.0,
+                "planner_policy_divergence": 1.0,
+                "route_phase_active": 1.0,
+                "route_phase_reliable_active": 1.0,
+                "control_stack_simplify_active": 0.0,
+                "pre_return_readiness_flag": 0.0,
+                "expert_weight_nonzero": 0.0,
+                "pre_return_bias_active": 0.0,
+                "return_bias_active": 0.0,
+                "return_action_teacher": 2,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher": 3,
+                "route_phase_action_teacher_mask": 1.0,
+                "teacher_target_stable": 0.0,
+                "teacher_suggested_legal_safe": 0.0,
+                "teacher_action_margin": 2.0,
+            },
+            {
+                "mode": 4,
+                "target": 1,
+                "route_anchor": 1,
+                "charger_slack": 1.0,
+                "future_recoverability_score": 0.1,
+                "anchor_return_dist": 7.0,
+                "is_diag_action": 0.0,
+                "planner_policy_divergence": 0.0,
+                "route_phase_active": 1.0,
+                "route_phase_reliable_active": 1.0,
+                "control_stack_simplify_active": 0.0,
+                "pre_return_readiness_flag": 0.0,
+                "expert_weight_nonzero": 0.0,
+                "pre_return_bias_active": 0.0,
+                "return_bias_active": 0.0,
+                "return_action_teacher": 4,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher": -1,
+                "route_phase_action_teacher_mask": 0.0,
+                "teacher_target_stable": 1.0,
+                "teacher_suggested_legal_safe": 1.0,
+                "teacher_action_margin": 4.0,
+            },
+        ]
+
+        diagnostics = EpisodeRunner._episode_sequence_diagnostics(records)
+
+        self.assertEqual(float(diagnostics["return_teacher_count"] or 0.0), 3.0)
+        self.assertEqual(float(diagnostics["route_phase_teacher_count"] or 0.0), 2.0)
+        self.assertEqual(float(diagnostics["active_pair_count"] or 0.0), 2.0)
+        self.assertEqual(float(diagnostics["agree_pair_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["disagree_pair_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["missing_route_pair_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["missing_return_pair_count"] or 0.0), 0.0)
+        self.assertEqual(float(diagnostics["return_teacher_target_stable_count"] or 0.0), 2.0)
+        self.assertEqual(float(diagnostics["return_teacher_target_unstable_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_suggested_legal_safe_count"] or 0.0), 2.0)
+        self.assertEqual(float(diagnostics["return_teacher_action_margin_low_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_action_margin_mid_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_action_margin_high_count"] or 0.0), 1.0)
+        self.assertAlmostEqual(float(diagnostics["return_route_teacher_active_pair_rate"] or 0.0), 2.0 / 3.0, places=6)
+        self.assertAlmostEqual(float(diagnostics["return_route_teacher_agreement_rate"] or 0.0), 0.5, places=6)
+        self.assertAlmostEqual(float(diagnostics["return_route_teacher_disagreement_rate"] or 0.0), 0.5, places=6)
+        self.assertAlmostEqual(float(diagnostics["missing_route_pair_rate"] or 0.0), 1.0 / 3.0, places=6)
+        self.assertAlmostEqual(float(diagnostics["missing_return_pair_rate"] or 0.0), 0.0, places=6)
+        self.assertEqual(float(diagnostics["return_teacher_stable_invariant_satisfied_count"] or 0.0), 2.0)
+        self.assertEqual(float(diagnostics["return_teacher_stable_invariant_violated_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_legal_safe_invariant_satisfied_count"] or 0.0), 2.0)
+        self.assertEqual(float(diagnostics["return_teacher_legal_safe_invariant_violated_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_action_margin_invariant_satisfied_count"] or 0.0), 2.0)
+        self.assertEqual(float(diagnostics["return_teacher_action_margin_invariant_violated_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_reliability_invariant_satisfied_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_reliability_invariant_violated_count"] or 0.0), 2.0)
+        self.assertAlmostEqual(
+            float(diagnostics["return_teacher_reliability_invariant_satisfied_rate"] or 0.0),
+            1.0 / 3.0,
+            places=6,
+        )
+        self.assertAlmostEqual(float(diagnostics["return_teacher_target_stable_rate"] or 0.0), 2.0 / 3.0, places=6)
+        self.assertAlmostEqual(
+            float(diagnostics["return_teacher_suggested_legal_safe_rate"] or 0.0), 2.0 / 3.0, places=6
+        )
+        self.assertAlmostEqual(float(diagnostics["return_teacher_action_margin_low_rate"] or 0.0), 1.0 / 3.0, places=6)
+        self.assertAlmostEqual(float(diagnostics["return_teacher_action_margin_mid_rate"] or 0.0), 1.0 / 3.0, places=6)
+        self.assertAlmostEqual(float(diagnostics["return_teacher_action_margin_high_rate"] or 0.0), 1.0 / 3.0, places=6)
+        self.assertAlmostEqual(
+            float(diagnostics["return_teacher_disagree_route_phase_planner_divergence_rate"] or 0.0), 1.0, places=6
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["return_teacher_disagree_route_phase_return_stall_rate"] or 0.0), 1.0, places=6
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["return_teacher_margin_mid_route_phase_planner_divergence_rate"] or 0.0), 1.0, places=6
+        )
+        self.assertIn("return_teacher_count", WINDOW_COMPARISON_METRIC_KEYS)
+        self.assertIn("missing_route_pair_rate", WINDOW_COMPARISON_METRIC_KEYS)
+        self.assertIn("return_teacher_reliability_invariant_violated_rate", WINDOW_COMPARISON_METRIC_KEYS)
+        self.assertIn("return_route_teacher_agreement_rate", WINDOW_COMPARISON_METRIC_KEYS)
+        self.assertIn("return_teacher_margin_high_route_phase_return_stall_rate", WINDOW_COMPARISON_METRIC_KEYS)
+
+    def test_episode_sequence_diagnostics_emits_teacher_source_and_timing_buckets(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner, WINDOW_COMPARISON_METRIC_KEYS
+
+        records = [
+            {
+                "mode": 3,
+                "anchor_return_dist": 8.0,
+                "route_phase_active": 1.0,
+                "return_action_teacher": 1,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher": 1,
+                "route_phase_action_teacher_mask": 1.0,
+                "route_phase_teacher_from_return_reliable": 1.0,
+            },
+            {
+                "mode": 4,
+                "anchor_return_dist": 7.0,
+                "route_phase_active": 1.0,
+                "return_action_teacher": -1,
+                "return_action_teacher_mask": 0.0,
+                "route_phase_action_teacher": 2,
+                "route_phase_action_teacher_mask": 0.8,
+                "route_phase_teacher_from_anchor_or_target": 1.0,
+            },
+            {
+                "mode": 3,
+                "anchor_return_dist": 6.0,
+                "route_phase_active": 1.0,
+                "return_action_teacher": -1,
+                "return_action_teacher_mask": 0.0,
+                "route_phase_action_teacher": 3,
+                "route_phase_action_teacher_mask": 1.0,
+                "route_phase_teacher_from_critical_fallback": 1.0,
+            },
+            {
+                "mode": 1,
+                "anchor_return_dist": 6.0,
+                "route_phase_active": 0.0,
+                "return_action_teacher": 4,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher": -1,
+                "route_phase_action_teacher_mask": 0.0,
+            },
+            {
+                "mode": 5,
+                "anchor_return_dist": 6.0,
+                "route_phase_active": 0.0,
+                "return_action_teacher": 5,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher": -1,
+                "route_phase_action_teacher_mask": 0.0,
+            },
+        ]
+
+        diagnostics = EpisodeRunner._episode_sequence_diagnostics(records)
+
+        self.assertEqual(float(diagnostics["route_phase_teacher_from_return_reliable_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["route_phase_teacher_from_anchor_or_target_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["route_phase_teacher_from_critical_fallback_count"] or 0.0), 1.0)
+        self.assertAlmostEqual(
+            float(diagnostics["route_phase_teacher_from_return_reliable_rate"] or 0.0), 1.0 / 3.0, places=6
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["route_phase_teacher_from_anchor_or_target_rate"] or 0.0), 1.0 / 3.0, places=6
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["route_phase_teacher_from_critical_fallback_rate"] or 0.0), 1.0 / 3.0, places=6
+        )
+        self.assertEqual(float(diagnostics["return_teacher_in_route_phase_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_outside_route_phase_count"] or 0.0), 2.0)
+        self.assertAlmostEqual(float(diagnostics["return_teacher_in_route_phase_rate"] or 0.0), 1.0 / 3.0, places=6)
+        self.assertAlmostEqual(
+            float(diagnostics["return_teacher_outside_route_phase_rate"] or 0.0), 2.0 / 3.0, places=6
+        )
+        self.assertEqual(float(diagnostics["return_teacher_mode_contract_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_mode_expand_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_teacher_mode_evade_count"] or 0.0), 1.0)
+        self.assertAlmostEqual(float(diagnostics["return_teacher_mode_expand_rate"] or 0.0), 1.0 / 3.0, places=6)
+        self.assertIn("route_phase_teacher_from_critical_fallback_rate", WINDOW_COMPARISON_METRIC_KEYS)
+        self.assertIn("return_teacher_outside_route_phase_rate", WINDOW_COMPARISON_METRIC_KEYS)
+        self.assertIn("return_teacher_mode_expand_count", WINDOW_COMPARISON_METRIC_KEYS)
+
+    def test_local_window_aggregation_persists_teacher_mask_observability(self):
+        from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
+
+        records = [
+            {
+                "result": "completed",
+                "clean_score": 100.0,
+                "finished_steps": 100.0,
+                "charge_count": 1.0,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 100.0,
+                "clean_per_charge_when_charged": 100.0,
+                "clean_per_step": 1.0,
+                "expert_weight": 0.0,
+                "return_action_teacher_mask_mean": 0.25,
+                "return_action_teacher_mask_nonzero_rate": 0.50,
+                "route_phase_action_teacher_mask_mean": 0.75,
+                "route_phase_action_teacher_mask_nonzero_rate": 1.00,
+                "return_teacher_count": 3.0,
+                "route_phase_teacher_count": 2.0,
+                "active_pair_count": 1.0,
+                "agree_pair_count": 1.0,
+                "disagree_pair_count": 0.0,
+                "missing_route_pair_count": 2.0,
+                "missing_return_pair_count": 1.0,
+                "route_phase_teacher_from_return_reliable_count": 1.0,
+                "route_phase_teacher_from_anchor_or_target_count": 1.0,
+                "route_phase_teacher_from_critical_fallback_count": 0.0,
+                "return_teacher_in_route_phase_count": 2.0,
+                "return_teacher_outside_route_phase_count": 1.0,
+                "return_teacher_mode_contract_count": 1.0,
+                "return_teacher_mode_return_count": 1.0,
+                "return_teacher_mode_expand_count": 1.0,
+                "return_teacher_target_stable_count": 2.0,
+                "return_teacher_target_unstable_count": 1.0,
+                "return_teacher_suggested_legal_safe_count": 2.0,
+                "return_teacher_action_margin_low_count": 1.0,
+                "return_teacher_action_margin_mid_count": 1.0,
+                "return_teacher_action_margin_high_count": 1.0,
+                "return_teacher_reliability_invariant_satisfied_count": 2.0,
+                "return_teacher_reliability_invariant_violated_count": 1.0,
+                "return_route_teacher_agreement_rate": 0.25,
+                "return_teacher_action_margin_high_rate": 0.40,
+                "return_teacher_margin_high_route_phase_return_stall_rate": 0.10,
+            },
+            {
+                "result": "battery",
+                "clean_score": 80.0,
+                "finished_steps": 80.0,
+                "charge_count": 0.0,
+                "remaining_charge": 0.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 80.0,
+                "clean_per_charge_when_charged": None,
+                "clean_per_step": 1.0,
+                "expert_weight": 0.0,
+                "return_action_teacher_mask_mean": 0.75,
+                "return_action_teacher_mask_nonzero_rate": 1.00,
+                "route_phase_action_teacher_mask_mean": 0.25,
+                "route_phase_action_teacher_mask_nonzero_rate": 0.50,
+                "return_teacher_count": 1.0,
+                "route_phase_teacher_count": 3.0,
+                "active_pair_count": 1.0,
+                "agree_pair_count": 0.0,
+                "disagree_pair_count": 1.0,
+                "missing_route_pair_count": 0.0,
+                "missing_return_pair_count": 2.0,
+                "route_phase_teacher_from_return_reliable_count": 1.0,
+                "route_phase_teacher_from_anchor_or_target_count": 1.0,
+                "route_phase_teacher_from_critical_fallback_count": 1.0,
+                "return_teacher_in_route_phase_count": 1.0,
+                "return_teacher_outside_route_phase_count": 0.0,
+                "return_teacher_mode_return_count": 1.0,
+                "return_teacher_target_stable_count": 1.0,
+                "return_teacher_target_unstable_count": 0.0,
+                "return_teacher_suggested_legal_safe_count": 1.0,
+                "return_teacher_action_margin_low_count": 0.0,
+                "return_teacher_action_margin_mid_count": 1.0,
+                "return_teacher_action_margin_high_count": 0.0,
+                "return_teacher_reliability_invariant_satisfied_count": 1.0,
+                "return_teacher_reliability_invariant_violated_count": 0.0,
+                "return_route_teacher_agreement_rate": 0.75,
+                "return_teacher_action_margin_high_rate": 0.20,
+                "return_teacher_margin_high_route_phase_return_stall_rate": 0.30,
+            },
+        ]
+
+        metrics = _aggregate_episode_records(records, min_episode_count=2)
+
+        self.assertIsNotNone(metrics)
+        assert metrics is not None
+        self.assertAlmostEqual(metrics["return_action_teacher_mask_mean"], 0.50, places=6)
+        self.assertAlmostEqual(metrics["return_action_teacher_mask_nonzero_rate"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["route_phase_action_teacher_mask_mean"], 0.50, places=6)
+        self.assertAlmostEqual(metrics["route_phase_action_teacher_mask_nonzero_rate"], 0.75, places=6)
+        self.assertEqual(metrics["return_teacher_count"], 4.0)
+        self.assertEqual(metrics["route_phase_teacher_count"], 5.0)
+        self.assertEqual(metrics["active_pair_count"], 2.0)
+        self.assertEqual(metrics["agree_pair_count"], 1.0)
+        self.assertEqual(metrics["disagree_pair_count"], 1.0)
+        self.assertEqual(metrics["missing_route_pair_count"], 2.0)
+        self.assertEqual(metrics["missing_return_pair_count"], 3.0)
+        self.assertAlmostEqual(metrics["return_route_teacher_active_pair_rate"], 0.50, places=6)
+        self.assertAlmostEqual(metrics["return_route_teacher_agreement_rate"], 0.50, places=6)
+        self.assertAlmostEqual(metrics["return_route_teacher_disagreement_rate"], 0.50, places=6)
+        self.assertAlmostEqual(metrics["missing_route_pair_rate"], 0.50, places=6)
+        self.assertAlmostEqual(metrics["missing_return_pair_rate"], 0.60, places=6)
+        self.assertAlmostEqual(metrics["route_phase_teacher_from_return_reliable_rate"], 0.40, places=6)
+        self.assertAlmostEqual(metrics["route_phase_teacher_from_anchor_or_target_rate"], 0.40, places=6)
+        self.assertAlmostEqual(metrics["route_phase_teacher_from_critical_fallback_rate"], 0.20, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_in_route_phase_rate"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_outside_route_phase_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_mode_contract_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_mode_return_rate"], 0.50, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_mode_expand_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_target_stable_rate"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_target_unstable_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_suggested_legal_safe_rate"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_action_margin_low_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_action_margin_mid_rate"], 0.50, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_action_margin_high_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_reliability_invariant_satisfied_rate"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_reliability_invariant_violated_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_margin_high_route_phase_return_stall_rate"], 0.20, places=6)
+
+    def test_teacher_label_quality_aggregate_metrics_recompute_count_rates_across_helpers(self):
+        from agent_ppo.workflow.curriculum_state import _aggregate_metrics
+
+        signals = [
+            {
+                "window_metrics": {
+                    "_count": 10,
+                    "return_teacher_count": 4.0,
+                    "route_phase_teacher_count": 6.0,
+                    "active_pair_count": 2.0,
+                    "agree_pair_count": 1.0,
+                    "disagree_pair_count": 1.0,
+                    "missing_route_pair_count": 2.0,
+                    "missing_return_pair_count": 4.0,
+                    "route_phase_teacher_from_return_reliable_count": 3.0,
+                    "route_phase_teacher_from_anchor_or_target_count": 2.0,
+                    "route_phase_teacher_from_critical_fallback_count": 1.0,
+                    "return_teacher_in_route_phase_count": 3.0,
+                    "return_teacher_outside_route_phase_count": 1.0,
+                    "return_teacher_mode_contract_count": 2.0,
+                    "return_teacher_mode_return_count": 1.0,
+                    "return_teacher_mode_expand_count": 1.0,
+                    "return_teacher_target_stable_count": 3.0,
+                    "return_teacher_target_unstable_count": 1.0,
+                    "return_teacher_suggested_legal_safe_count": 2.0,
+                    "return_teacher_action_margin_low_count": 1.0,
+                    "return_teacher_action_margin_mid_count": 2.0,
+                    "return_teacher_action_margin_high_count": 1.0,
+                    "return_teacher_reliability_invariant_satisfied_count": 2.0,
+                    "return_teacher_reliability_invariant_violated_count": 2.0,
+                }
+            },
+            {
+                "window_metrics": {
+                    "_count": 10,
+                    "return_teacher_count": 0.0,
+                    "route_phase_teacher_count": 0.0,
+                    "active_pair_count": 0.0,
+                    "agree_pair_count": 0.0,
+                    "disagree_pair_count": 0.0,
+                    "missing_route_pair_count": 0.0,
+                    "missing_return_pair_count": 0.0,
+                    "route_phase_teacher_from_return_reliable_count": 0.0,
+                    "route_phase_teacher_from_anchor_or_target_count": 0.0,
+                    "route_phase_teacher_from_critical_fallback_count": 0.0,
+                    "return_teacher_in_route_phase_count": 0.0,
+                    "return_teacher_outside_route_phase_count": 0.0,
+                    "return_teacher_reliability_invariant_satisfied_count": 0.0,
+                    "return_teacher_reliability_invariant_violated_count": 0.0,
+                    "return_route_teacher_active_pair_rate": 1.0,
+                    "missing_route_pair_rate": 1.0,
+                }
+            },
+        ]
+
+        metrics = _aggregate_metrics(signals, "window_metrics", 20)
+
+        self.assertIsNotNone(metrics)
+        assert metrics is not None
+        self.assertEqual(metrics["return_teacher_count"], 4.0)
+        self.assertEqual(metrics["route_phase_teacher_count"], 6.0)
+        self.assertAlmostEqual(metrics["return_route_teacher_active_pair_rate"], 0.5, places=6)
+        self.assertAlmostEqual(metrics["missing_route_pair_rate"], 0.5, places=6)
+        self.assertAlmostEqual(metrics["missing_return_pair_rate"], 4.0 / 6.0, places=6)
+        self.assertAlmostEqual(metrics["route_phase_teacher_from_return_reliable_rate"], 0.5, places=6)
+        self.assertAlmostEqual(metrics["route_phase_teacher_from_anchor_or_target_rate"], 2.0 / 6.0, places=6)
+        self.assertAlmostEqual(metrics["route_phase_teacher_from_critical_fallback_rate"], 1.0 / 6.0, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_in_route_phase_rate"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_outside_route_phase_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_mode_contract_rate"], 0.5, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_mode_return_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_mode_expand_rate"], 0.25, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_target_stable_rate"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_action_margin_mid_rate"], 0.5, places=6)
+        self.assertAlmostEqual(metrics["return_teacher_reliability_invariant_violated_rate"], 0.5, places=6)
+
+    def test_teacher_label_quality_count_rates_default_zero_without_denominators(self):
+        from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
+
+        records = [
+            {
+                "result": "completed",
+                "clean_score": 1.0,
+                "finished_steps": 1.0,
+                "charge_count": 1.0,
+                "remaining_charge": 1.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 1.0,
+                "clean_per_charge_when_charged": 1.0,
+                "clean_per_step": 1.0,
+                "expert_weight": 0.0,
+                "return_teacher_count": 0.0,
+                "route_phase_teacher_count": 0.0,
+                "active_pair_count": 0.0,
+                "missing_route_pair_count": 0.0,
+                "missing_return_pair_count": 0.0,
+            }
+        ]
+
+        metrics = _aggregate_episode_records(records, min_episode_count=1)
+
+        self.assertIsNotNone(metrics)
+        assert metrics is not None
+        self.assertEqual(metrics["return_route_teacher_active_pair_rate"], 0.0)
+        self.assertEqual(metrics["return_route_teacher_agreement_rate"], 0.0)
+        self.assertEqual(metrics["missing_route_pair_rate"], 0.0)
+        self.assertEqual(metrics["missing_return_pair_rate"], 0.0)
+        self.assertEqual(metrics["route_phase_teacher_from_return_reliable_rate"], 0.0)
+        self.assertEqual(metrics["route_phase_teacher_from_anchor_or_target_rate"], 0.0)
+        self.assertEqual(metrics["route_phase_teacher_from_critical_fallback_rate"], 0.0)
+        self.assertEqual(metrics["return_teacher_in_route_phase_rate"], 0.0)
+        self.assertEqual(metrics["return_teacher_outside_route_phase_rate"], 0.0)
+        self.assertEqual(metrics["return_teacher_mode_contract_rate"], 0.0)
+        self.assertEqual(metrics["return_teacher_reliability_invariant_satisfied_rate"], 0.0)
+        self.assertEqual(metrics["return_teacher_target_stable_rate"], 0.0)
+
     def test_constraint_utils_compute_confidence_need_and_severity(self):
         from agent_ppo.utils.constraint_utils import (
             classify_battery_fail_severity,

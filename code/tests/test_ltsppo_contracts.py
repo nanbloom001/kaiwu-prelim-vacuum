@@ -1270,6 +1270,179 @@ class LtsppoResumeCompatibleBehaviorTests(unittest.TestCase):
             _, components_dirty = prep.reward_process()
         self.assertAlmostEqual(components_dirty["clean_floor_revisit_penalty"], 0.0, places=6)
 
+    def test_target_reward_alignment_is_opt_in_and_emits_bounded_return_progress(self):
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        prep = Preprocessor()
+        prep.step_no = 2
+        prep.current_mode = prep.MODE_RETURN
+        prep.cleaned_this_step = 0
+        prep.new_explored_cells = 0
+        prep.local_frontier_density = 0.0
+        prep.nearest_npc_dist = 20.0
+        prep.nearest_charger_dist = 4.0
+        prep.last_nearest_charger_dist = 7.0
+        prep.battery = 36
+        prep.battery_max = 200
+        prep.just_charged = 0.0
+        prep.future_recoverability_score = -0.1
+        prep.path_cross_count_50 = 1
+        prep.coverage_efficiency_20 = 0.95
+        prep.same_region_streak = 1
+        prep.recent_unique_cells_20 = 20
+        prep._last_action = 2
+        prep._last_target_distance = 9.0
+        prep.current_target_dist = 6.0
+        prep.anchor_return_dist = 9.0
+        prep.last_charger_slack = -2.0
+        prep.charger_slack = 4.0
+        prep._prev_all_charger_known_path_count = 1.0
+        prep._prev_unknown_on_target_path_ratio = 0.12
+        prep._prev_planner_best_target_route_diversity = 1.0
+        prep._get_guidance = lambda: {
+            "slack": 4.0,
+            "margin": 2.0,
+            "all_charger_known_path_count": 1.0,
+            "planner_topk_reachable_count": 1.0,
+            "unknown_path_ratio": 0.10,
+            "planner_best_target_route_diversity": 1.0,
+            "target_reliable": True,
+            "anchor_reliable": True,
+            "return_action_reliable": True,
+            "on_charger": False,
+            "suggested_action": 2,
+        }
+        prep._get_teacher_guidance = lambda: None
+
+        with patch.object(Config, "TARGET_REWARD_ALIGNMENT_ENABLED", False):
+            _, disabled = prep.reward_process()
+        self.assertAlmostEqual(disabled["safe_return_progress_bonus"], 0.0, places=6)
+
+        prep._last_target_distance = 9.0
+        prep.current_target_dist = 6.0
+        prep.last_charger_slack = -2.0
+        prep.charger_slack = 4.0
+        with patch.object(Config, "TARGET_REWARD_ALIGNMENT_ENABLED", True), \
+            patch.object(Config, "TARGET_SAFE_RETURN_PROGRESS_BONUS_SCALE", 0.12):
+            _, enabled = prep.reward_process()
+
+        self.assertGreater(enabled["safe_return_progress_bonus"], 0.0)
+        self.assertLessEqual(enabled["safe_return_progress_bonus"], 0.12)
+        self.assertGreaterEqual(enabled["reward_total"], -Config.REWARD_TOTAL_CLIP)
+        self.assertLessEqual(enabled["reward_total"], Config.REWARD_TOTAL_CLIP)
+
+    def test_target_reward_alignment_emits_bounded_charge_arrival_and_clean_efficiency(self):
+        from agent_ppo.feature.preprocessor import Preprocessor
+
+        charge_prep = Preprocessor()
+        charge_prep.step_no = 2
+        charge_prep.current_mode = charge_prep.MODE_RETURN
+        charge_prep.cleaned_this_step = 0
+        charge_prep.nearest_npc_dist = 20.0
+        charge_prep.battery = 120
+        charge_prep.battery_max = 200
+        charge_prep.pre_charge_battery = 40
+        charge_prep.just_charged = 1.0
+        charge_prep.future_recoverability_score = 0.3
+        charge_prep.path_cross_count_50 = 0
+        charge_prep.coverage_efficiency_20 = 1.0
+        charge_prep.same_region_streak = 1
+        charge_prep.recent_unique_cells_20 = 20
+        charge_prep._last_action = 0
+        charge_prep._last_target_distance = 4.0
+        charge_prep.current_target_dist = 4.0
+        charge_prep.anchor_return_dist = 4.0
+        charge_prep.last_charger_slack = -3.0
+        charge_prep.charger_slack = 10.0
+        charge_prep._prev_charge_need_score = 0.8
+        charge_prep._prev_all_charger_known_path_count = 1.0
+        charge_prep._prev_unknown_on_target_path_ratio = 0.05
+        charge_prep._prev_planner_best_target_route_diversity = 1.0
+        charge_prep._get_guidance = lambda: {
+            "slack": 10.0,
+            "margin": 10.0,
+            "all_charger_known_path_count": 1.0,
+            "planner_topk_reachable_count": 1.0,
+            "unknown_path_ratio": 0.05,
+            "planner_best_target_route_diversity": 1.0,
+            "target_reliable": True,
+            "anchor_reliable": True,
+            "on_charger": True,
+            "suggested_action": 0,
+        }
+        charge_prep._get_teacher_guidance = lambda: None
+
+        clean_prep = Preprocessor()
+        clean_prep.step_no = 2
+        clean_prep.current_mode = clean_prep.MODE_HARVEST
+        clean_prep.cleaned_this_step = 2
+        clean_prep.new_explored_cells = 2
+        clean_prep.local_frontier_density = 0.10
+        clean_prep.nearest_npc_dist = 20.0
+        clean_prep.battery = 160
+        clean_prep.battery_max = 200
+        clean_prep.just_charged = 0.0
+        clean_prep.future_recoverability_score = 0.8
+        clean_prep.path_cross_count_50 = 1
+        clean_prep.coverage_efficiency_20 = 0.95
+        clean_prep.same_region_streak = 1
+        clean_prep.recent_unique_cells_20 = 20
+        clean_prep.cur_visit_count = 1
+        clean_prep.dirty_adjacent = 1
+        clean_prep._last_action = 0
+        clean_prep._prev_all_charger_known_path_count = 1.0
+        clean_prep._prev_unknown_on_target_path_ratio = 0.05
+        clean_prep._prev_planner_best_target_route_diversity = 1.0
+        clean_prep.cur_pos = (20, 20)
+        clean_prep.explored_map[20, 20] = 1.0
+        clean_prep.passable_map[20, 20] = 1.0
+        clean_prep.dirty_memory[20, 20] = 1.0
+        clean_prep._get_guidance = lambda: {
+            "slack": 25.0,
+            "margin": 25.0,
+            "all_charger_known_path_count": 1.0,
+            "planner_topk_reachable_count": 1.0,
+            "unknown_path_ratio": 0.05,
+            "planner_best_target_route_diversity": 1.0,
+            "target_reliable": True,
+            "anchor_reliable": True,
+            "on_charger": False,
+            "suggested_action": 0,
+        }
+        clean_prep._get_teacher_guidance = lambda: None
+
+        with patch.object(Config, "TARGET_REWARD_ALIGNMENT_ENABLED", True), \
+            patch.object(Config, "TARGET_CHARGER_ARRIVAL_BONUS_SCALE", 0.20), \
+            patch.object(Config, "TARGET_CLEAN_PER_STEP_EFFICIENCY_BONUS_SCALE", 0.08), \
+            patch.object(Config, "TARGET_CLEAN_PER_STEP_EFFICIENCY_BASELINE", 0.68):
+            _, charge_components = charge_prep.reward_process()
+            _, clean_components = clean_prep.reward_process()
+
+        self.assertGreater(charge_components["charger_progress_arrival_bonus"], 0.0)
+        self.assertLessEqual(charge_components["charger_progress_arrival_bonus"], 0.20)
+        self.assertGreater(clean_components["clean_per_step_efficiency_bonus"], 0.0)
+        self.assertLessEqual(clean_components["clean_per_step_efficiency_bonus"], 0.08)
+        self.assertLessEqual(charge_components["safe_return_progress_bonus"], 0.12)
+
+    def test_target_reward_alignment_components_are_visible_in_contribution_payload(self):
+        from agent_ppo.utils.reward_metrics import compute_reward_contribution_payload
+
+        payload = compute_reward_contribution_payload(
+            {
+                "charger_progress_arrival_bonus": 0.10,
+                "safe_return_progress_bonus": 0.05,
+                "clean_per_step_efficiency_bonus": 0.05,
+                "cleaning": 0.20,
+            }
+        )
+
+        self.assertAlmostEqual(payload["reward_positive_total"], 0.40, places=6)
+        self.assertGreater(payload["reward_positive_share_charger_progress_arrival_bonus"], 0.0)
+        self.assertGreater(payload["reward_positive_share_safe_return_progress_bonus"], 0.0)
+        self.assertGreater(payload["reward_positive_share_clean_per_step_efficiency_bonus"], 0.0)
+        self.assertGreater(payload["reward_charging_positive_share_charger_progress_arrival_bonus"], 0.0)
+        self.assertGreater(payload["reward_charging_positive_share_safe_return_progress_bonus"], 0.0)
+
     def test_route_anchor_switches_when_better_target_is_compelling(self):
         from agent_ppo.feature.preprocessor import Preprocessor
 

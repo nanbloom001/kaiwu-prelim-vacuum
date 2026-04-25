@@ -1,0 +1,40 @@
+{
+  "authoritative_for": "latest_f1_remediation_return_teacher_w006",
+  "baseline_session_id": "20260421-134719",
+  "comparison_report": ".sisyphus/evidence/benchmark-900/compare-20260425-221249-return-teacher-w006.json",
+  "continuation_allowed_past_global_40": false,
+  "convergence_report": ".sisyphus/evidence/benchmark-900/convergence-20260425-221249-return-teacher-w006.json",
+  "decision": "revert",
+  "docker_cleanup": {
+    "clean": true,
+    "down_ran": true,
+    "running_kaiwu_train_containers": []
+  },
+  "evidence_report": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-221249-return-teacher-w006-report.json",
+  "final_runtime_global_episode_count": 43,
+  "global_40_metrics": {
+    "avg_clean_per_step": 0.3789103339565918,
+    "battery_fail_rate": 0.7,
+    "invalid_for_promotion": true,
+    "planner_policy_divergence_rate": 0.8682564106504275,
+    "reliable_planner_divergence_rate": 0.0,
+    "return_action_teacher_mask_mean": 0.05332400974747313,
+    "return_action_teacher_mask_nonzero_rate": 0.05332400974747313,
+    "route_phase_action_teacher_mask_mean": 0.13513324152022615,
+    "route_phase_action_teacher_mask_nonzero_rate": 0.136841784233794,
+    "route_phase_planner_divergence_rate": 0.7609456128601357,
+    "route_phase_return_stall_rate": 0.4552131843592903,
+    "win_rate": 0.25,
+    "zero_charge_battery_fail_rate": 0.6
+  },
+  "next_action": "Do not promote or benchmark; revert this w006 phase and diagnose why stronger return-action teacher worsened survival/return-stall versus baseline.",
+  "phase": "s1_survival_return_teacher_w006_v1",
+  "promotion_allowed": false,
+  "run_session_id": "20260425-221249",
+  "sample_points_reached": [
+    "bootstrap_10",
+    "bootstrap_20",
+    "global_40"
+  ],
+  "updated_at": "2026-04-25T14:29:54.666054+00:00"
+}

@@ -555,12 +555,19 @@ class ExpertPolicy:
                 self.return_mode = False
                 self._last_emergency_reason = None
 
+        reachable = bool(signal.get("reachable", False)) or bool(signal.get("charger_path"))
+        unsafe_slack = bool(reachable and slack < self.EMERGENCY_SLACK_MARGIN)
+        suggested_action_valid = bool(
+            suggested_action is not None
+            and 0 <= int(suggested_action) < len(legal_action)
+            and legal_action[int(suggested_action)]
+        )
         should_trigger = (
             not on_charger
-            and suggested_action is not None
-            and legal_action[suggested_action]
+            and suggested_action_valid
             and (
-                (battery_ratio <= self.EMERGENCY_RATIO and slack <= self.EMERGENCY_SLACK_MARGIN)
+                unsafe_slack
+                or (battery_ratio <= self.EMERGENCY_RATIO and slack <= self.EMERGENCY_SLACK_MARGIN)
                 or (battery_ratio <= self.EMERGENCY_RATIO * 0.8)
                 or (np.isfinite(charger_dist) and prep.battery <= charger_dist + self.EMERGENCY_PATH_MARGIN)
             )
@@ -568,16 +575,19 @@ class ExpertPolicy:
 
         if should_trigger:
             self.return_mode = True
-            if battery_ratio <= self.EMERGENCY_RATIO and slack <= self.EMERGENCY_SLACK_MARGIN:
+            if unsafe_slack:
+                reason = "unsafe_slack_return"
+            elif battery_ratio <= self.EMERGENCY_RATIO and slack <= self.EMERGENCY_SLACK_MARGIN:
                 reason = "battery_and_slack_critical"
             elif battery_ratio <= self.EMERGENCY_RATIO * 0.8:
                 reason = "battery_ratio_critical"
             else:
                 reason = "path_margin_critical"
+            fallback_action = self._return_stall_fallback_action(prep, legal_action, int(suggested_action), signal)
             self._last_emergency_reason = reason
             return {
                 "active": True,
-                "action": suggested_action,
+                "action": fallback_action,
                 "reason": reason,
                 "signal": signal,
             }
@@ -588,6 +598,36 @@ class ExpertPolicy:
             "reason": self._last_emergency_reason,
             "signal": signal,
         }
+
+    def _return_stall_fallback_action(self, prep, legal_action, suggested_action, signal):
+        """Pick an alternate legal return action when the direct return step stalls."""
+        if int(getattr(prep, "stuck_steps", 0)) < 2:
+            return suggested_action
+        if suggested_action is None or not (0 <= int(suggested_action) < len(legal_action)):
+            return suggested_action
+
+        hx, hz = getattr(prep, "cur_pos", (0, 0))
+        target = signal.get("charger_target")
+        if target is None:
+            return suggested_action
+        tx, tz = tuple(target)
+        current_dist = max(abs(int(hx) - int(tx)), abs(int(hz) - int(tz)))
+        scored = []
+        for idx, (dx, dz) in enumerate(self.DELTAS):
+            if not legal_action[idx]:
+                continue
+            nx, nz = int(hx) + dx, int(hz) + dz
+            new_dist = max(abs(nx - int(tx)), abs(nz - int(tz)))
+            progress = current_dist - new_dist
+            repeat_penalty = 1.0 if idx == int(suggested_action) else 0.0
+            scored.append((progress, -repeat_penalty, idx))
+        if not scored:
+            return suggested_action
+        scored.sort(reverse=True)
+        best_progress, _, best_idx = scored[0]
+        if best_progress > 0:
+            return int(best_idx)
+        return suggested_action
 
     # ------------------------------------------------------------------
     # Legacy-compatible interfaces used by runtime

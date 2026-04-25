@@ -161,6 +161,58 @@ bash run_benchmark_parallel.sh saved_models/v53-robust3450/model.ckpt-resume.pkl
 - AI 摘要：`train/eval_parallel_logs/<session>/ai_summary.json`
 - 最新汇总：`train/eval_parallel_results.json`
 
+#### 固定目标 benchmark：1000 步 / 150 电量 / 3 桩 / 4 官方机器人
+
+如果需要使用 canonical 成功口径，不要手写 `KAIWU_BENCHMARK_ROUNDS_JSON`，直接使用封装入口。默认 `--profile target` 是串行 30 局（maps 1-10 × 3），这是最终是否达成 900+ 的唯一 canonical 口径：
+
+```bash
+# 从仓库根目录执行
+bash train/run_target_benchmark_900.sh --runner serial
+```
+
+该入口固定使用：
+
+- 官方地图 `1-10`
+- 每张地图 `3` 轮，共 `30 episodes`
+- `max_step=1000`
+- `battery_max=150`
+- `charger_count=3`
+- `robot_count=4`
+- runner 默认 `serial`，serial-30 是 canonical 成功语义
+- policy mode 默认 `eval`
+
+常用检查：
+
+```bash
+# 只生成 manifest，不启动 Docker
+bash train/run_target_benchmark_900.sh --dry-run --runner serial
+
+# 校验 dry-run manifest 是否符合固定口径
+python3 train/tools/validate_target_benchmark_manifest.py \
+  .sisyphus/evidence/benchmark-900/task-1-dry-run-manifest.json \
+  --episodes 30 \
+  --rounds-per-map 3 \
+  --maps 1,2,3,4,5,6,7,8,9,10 \
+  --charger-count 3 \
+  --robot-count 4 \
+  --max-step 1000 \
+  --battery-max 150
+```
+
+如果需要复用现有 4×10 并行拓扑做 operational/diagnostic 回归，必须显式选择非 canonical profile：
+
+```bash
+bash train/run_target_benchmark_900.sh --profile target-parallel --runner parallel --max-wait 1800
+```
+
+该模式使用 maps 1-10 × 4 = 40 episodes，只用于加速诊断/回归观察；没有 serial-30 确认时不能作为最终 900+ 成功声明。
+
+注意：
+
+- 这个 benchmark 会复用 `kaiwu-train` compose project，不能和训练栈同时运行。
+- parallel operational 模式结束后会复制结果到 `train/eval_parallel_logs/<session>/` 并清理 `kaiwu-train-*` 容器。
+- `result.json` 和 `ai_summary.json` 当前使用 schema `5`，包含 `phase_events`、`charge_timing_summary`、`diagnosis_cards` 和奖励冲突指标，优先用于 AI 诊断训练/策略问题。
+
 ### 5. 查看 benchmark 结果
 
 ```bash
@@ -368,6 +420,9 @@ cd train && bash run_benchmark.sh saved_models/v53-robust3450/model.ckpt-resume.
 
 # 并行 benchmark（推荐）
 cd train && bash run_benchmark_parallel.sh --workers 4 --envs-per-worker 10 --max-wait 1800
+
+# canonical 固定目标 benchmark：1000步 / 150电量 / 3桩 / 4官方机器人 / 每图3轮
+cd /home/user/TcKaiwuFinal && bash train/run_target_benchmark_900.sh --runner serial
 
 # 查看最新 benchmark 对比
 cd train && python3 compare_benchmarks.py latest

@@ -1,0 +1,26 @@
+{
+  "authoritative_run_session_id": "20260425-212733",
+  "baseline_run": "20260421-134719",
+  "checkpoint_count": 0,
+  "checkpoint_files_visible": [],
+  "classification": "baseline_backed_revert_no_promotion",
+  "comparison": ".sisyphus/evidence/benchmark-900/compare-20260425-212733-return-teacher-v1.json",
+  "continuation_allowed_past_global_40": false,
+  "convergence_gate": ".sisyphus/evidence/benchmark-900/convergence-20260425-212733-return-teacher-v1.json",
+  "decision": "revert",
+  "docker_cleaned_down": true,
+  "evidence": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-212733-return-teacher-v1-report.json",
+  "global_40_metrics": {
+    "avg_clean_per_step": 0.4116744857746891,
+    "battery_fail_rate": 0.95,
+    "invalid_for_promotion": true,
+    "route_phase_return_stall_rate": 0.5559102157385867,
+    "win_rate": 0.05,
+    "zero_charge_battery_fail_rate": 0.8
+  },
+  "next_action": "Do not promote or benchmark; revert this phase and investigate return-teacher readiness/action signal because global_40 regressed survival and return-stall metrics.",
+  "phase": "s1_survival_return_teacher_v1",
+  "promotion_allowed": false,
+  "schema_version": 1,
+  "updated_at": "2026-04-25T13:35:14.196616+00:00"
+}

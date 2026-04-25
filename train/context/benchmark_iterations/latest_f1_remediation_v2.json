@@ -1,0 +1,28 @@
+{
+  "authoritative_run_session_id": "20260425-200217",
+  "baseline_run": "20260421-134719",
+  "classification": "baseline_backed_revert_no_promotion_v2",
+  "compare_output": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-200217-compare.json",
+  "continuation_allowed_past_global_40": false,
+  "convergence_gate": ".sisyphus/evidence/benchmark-900/convergence-20260425-200217.json",
+  "decision": "revert",
+  "evidence": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-200217-v2-report.json",
+  "global_40_metrics": {
+    "avg_clean_per_step": 0.40006818317698095,
+    "battery_fail_rate": 0.95,
+    "invalid_for_promotion": true,
+    "route_phase_return_stall_rate": 0.5155140534120477,
+    "win_rate": 0.05,
+    "zero_charge_battery_fail_rate": 0.875
+  },
+  "next_action": "Do not promote. Revert v2; run targeted diagnosis/selector focused on persistent battery depletion and route return-stall before any further training/benchmark.",
+  "phase": "s1_survival_target_reward_v2",
+  "promotion_allowed": false,
+  "regressed_metric_names": [
+    "avg_clean_per_step",
+    "battery_fail_rate",
+    "zero_charge_battery_fail_rate",
+    "route_phase_return_stall_rate"
+  ],
+  "updated_at": "2026-04-25T12:08:22.895670+00:00"
+}

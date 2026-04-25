@@ -48,6 +48,16 @@ def _env_flag(name: str, default: bool) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _fallback_allowed_for_action(fallback, use_hard_override=False):
+    """Gate eval-only safety fallbacks before they replace policy actions."""
+    if not fallback.get("active") or fallback.get("action") is None:
+        return False
+    reason = str(fallback.get("reason") or "")
+    if reason == "unsafe_slack_return" and not use_hard_override:
+        return False
+    return True
+
+
 _RUNTIME_PROBE_ENV_KEYS = (
     "CUDA_VISIBLE_DEVICES",
     "NVIDIA_VISIBLE_DEVICES",
@@ -294,6 +304,7 @@ class Agent(BaseAgent):
         self._last_pre_return_bias_active = 0.0
         self._last_return_bias_active = 0.0
         self._last_fallback_active = 0.0
+        self.reset_eval_override_summary()
         self.current_model_ref = {
             "path": None,
             "id": None,
@@ -371,6 +382,7 @@ class Agent(BaseAgent):
         self._last_pre_return_bias_active = 0.0
         self._last_return_bias_active = 0.0
         self._last_fallback_active = 0.0
+        self.reset_eval_override_summary()
 
     def observation_process(self, env_obs):
         """Convert raw env_obs to ObsData (enhanced feature vector + legal action mask).
@@ -471,15 +483,23 @@ class Agent(BaseAgent):
             filtered_legal,
             last_action=self.last_action,
         )
-        if fallback.get("active") and fallback.get("action") is not None:
+        fallback_action_allowed = _fallback_allowed_for_action(fallback, use_hard_override=use_hard_override)
+        if fallback_action_allowed:
             self._last_fallback_active = 1.0
+            self._last_eval_override_reason = str(fallback.get("reason") or "fallback")
             self._last_expert_weight = 0.0
             self._last_pre_return_bias_active = 0.0
             self._last_return_bias_active = 0.0
+        else:
+            self._last_eval_override_reason = None
 
         if use_hard_override:
-            if fallback.get("active") and fallback.get("action") is not None:
-                expert_action = int(fallback["action"])
+            self._eval_decision_count += 1
+            if fallback_action_allowed:
+                expert_action = int(fallback.get("action", 0))
+                reason = str(fallback.get("reason") or "fallback")
+                self._eval_override_count += 1
+                self._eval_override_reason_counts[reason] = self._eval_override_reason_counts.get(reason, 0) + 1
                 return [
                     self._build_act_data(
                         action=expert_action,
@@ -497,7 +517,7 @@ class Agent(BaseAgent):
                     )
                 ]
 
-        if self.preprocessor.stuck_steps >= 10 and not fallback.get("active"):
+        if self.preprocessor.stuck_steps >= 10 and not fallback_action_allowed:
             legal_indices = [i for i, l in enumerate(filtered_legal) if l]
             if legal_indices:
                 random_action = int(np.random.choice(legal_indices))
@@ -519,8 +539,8 @@ class Agent(BaseAgent):
                     )
                 ]
 
-        if fallback.get("active") and fallback.get("action") is not None:
-            action = int(fallback["action"])
+        if fallback_action_allowed:
+            action = int(fallback.get("action", 0))
             d_action = action
         else:
             sampled = safe_sample_action(clean_prob, filtered_legal, use_max=False)
@@ -704,7 +724,25 @@ class Agent(BaseAgent):
             "last_expert_weight": self._last_expert_weight,
             "last_pre_return_bias_active": self._last_pre_return_bias_active,
             "last_return_bias_active": self._last_return_bias_active,
+            "eval_override_count": self._eval_override_count,
+            "eval_override_rate": self._eval_override_count / max(self._eval_decision_count, 1),
+            "eval_override_reason_counts": dict(self._eval_override_reason_counts),
         }
+
+    def get_eval_override_summary(self):
+        return {
+            "eval_decision_count": int(self._eval_decision_count),
+            "eval_override_count": int(self._eval_override_count),
+            "eval_override_rate": round(self._eval_override_count / max(self._eval_decision_count, 1), 6),
+            "eval_override_reason_counts": dict(self._eval_override_reason_counts),
+            "last_eval_override_reason": self._last_eval_override_reason,
+        }
+
+    def reset_eval_override_summary(self):
+        self._last_eval_override_reason = None
+        self._eval_decision_count = 0
+        self._eval_override_count = 0
+        self._eval_override_reason_counts = {}
 
     def _get_model_mtime_ns(self, model_path: Path):
         try:

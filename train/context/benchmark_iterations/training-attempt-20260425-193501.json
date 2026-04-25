@@ -1,0 +1,70 @@
+{
+  "convergence_gate": {
+    "baseline_run": "20260421-134719",
+    "continuation_allowed_past_global_40": false,
+    "decision": "revert",
+    "improved_metrics": [],
+    "input": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-193501-compare.json",
+    "output": ".sisyphus/evidence/benchmark-900/convergence-20260425-193501.json",
+    "reason": "global_40 worsened at least two configured metrics beyond thresholds",
+    "regressed_metrics": [
+      {
+        "baseline": 0.588277,
+        "delta": -0.158938,
+        "direction": "higher_is_better",
+        "metric": "avg_clean_per_step",
+        "target": 0.429339,
+        "threshold": 0.05,
+        "threshold_rule": "local CPS must not drop more than 0.05 at the main global_40 judgment point"
+      },
+      {
+        "baseline": 0.05,
+        "delta": 0.85,
+        "direction": "lower_is_better",
+        "metric": "battery_fail_rate",
+        "target": 0.9,
+        "threshold": 0.05,
+        "threshold_rule": "battery failure rate must not rise more than 5 percentage points"
+      },
+      {
+        "baseline": 0.0,
+        "delta": 0.7,
+        "direction": "lower_is_better",
+        "metric": "zero_charge_battery_fail_rate",
+        "target": 0.7,
+        "threshold": 0.05,
+        "threshold_rule": "zero-charge battery failures are a primary survival regression signal"
+      },
+      {
+        "baseline": 0.317825,
+        "delta": 0.200931,
+        "direction": "lower_is_better",
+        "metric": "route_phase_return_stall_rate",
+        "target": 0.518756,
+        "threshold": 0.05,
+        "threshold_rule": "route-phase return stall must not worsen materially in the local window"
+      }
+    ],
+    "target_run": "20260425-193501"
+  },
+  "decision": "revert",
+  "evidence_report": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-193501-report.json",
+  "generated_at": "2026-04-25T11:44:51.681566+00:00",
+  "iteration_id": "training-attempt-20260425-193501",
+  "next_action": "Do not promote. Treat s1_survival_target_reward_v1 as rejected/revert at global_40 unless a deliberate targeted follow-up addresses battery failure and return-stall regressions.",
+  "phase": "s1_survival_target_reward_v1",
+  "promotion_allowed": false,
+  "run_session_id": "20260425-193501",
+  "sample_points_reached": {
+    "bootstrap_10": true,
+    "bootstrap_20": true,
+    "checkpoint": true,
+    "global_120": false,
+    "global_160": false,
+    "global_200": false,
+    "global_40": true,
+    "global_80": false,
+    "note": "Stopped after current runtime state showed global_episode_count=42; later nodes were not intentionally pursued in this bounded attempt."
+  },
+  "schema_version": 1
+}

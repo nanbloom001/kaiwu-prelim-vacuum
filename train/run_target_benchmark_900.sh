@@ -16,6 +16,9 @@ PROFILE="target"
 POLICY_MODE="eval"
 RUNNER="serial"
 CHECKPOINT=""
+WORKERS=4
+ENVS_PER_WORKER=10
+MAX_WAIT=1800
 
 usage() {
     cat <<'USAGE'
@@ -23,10 +26,16 @@ Usage: bash train/run_target_benchmark_900.sh [options] [checkpoint]
 
 Options:
   --dry-run              Print planned JSON/manifest and do not start Docker.
-  --profile target|dev   Select 30-episode target or 10-episode dev profile.
+  --profile target|target-parallel|dev
+                         Select canonical serial-30 target, explicit
+                         operational/noncanonical parallel-40 target, or
+                         10-episode dev profile.
   --policy-mode eval     Policy mode passed through to benchmark runner.
   --runner serial|parallel
-                         Runner metadata/path; serial is canonical.
+                         Runner metadata/path; serial target is canonical.
+  --workers N            Parallel runner AISRV count. Default: 4.
+  --envs-per-worker N    Parallel runner gamecores per AISRV. Default: 10.
+  --max-wait SECONDS     Parallel runner timeout. Default: 1800.
   -h, --help             Show this help.
 USAGE
 }
@@ -47,6 +56,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --runner)
             RUNNER="${2:-}"
+            shift 2
+            ;;
+        --workers)
+            WORKERS="${2:-}"
+            shift 2
+            ;;
+        --envs-per-worker)
+            ENVS_PER_WORKER="${2:-}"
+            shift 2
+            ;;
+        --max-wait)
+            MAX_WAIT="${2:-}"
             shift 2
             ;;
         -h|--help)
@@ -75,12 +96,16 @@ case "${PROFILE}" in
         PROFILE_PATH="${SCRIPT_DIR}/benchmark_profiles/target_3c4r_1000_150_30.json"
         MANIFEST_PATH="${REPO_ROOT}/.sisyphus/evidence/benchmark-900/task-1-dry-run-manifest.json"
         ;;
+    target-parallel)
+        PROFILE_PATH="${SCRIPT_DIR}/benchmark_profiles/target_3c4r_1000_150_40.json"
+        MANIFEST_PATH="${REPO_ROOT}/.sisyphus/evidence/benchmark-900/task-1-parallel-operational-dry-run-manifest.json"
+        ;;
     dev)
         PROFILE_PATH="${SCRIPT_DIR}/benchmark_profiles/dev_3c4r_1000_150_10.json"
         MANIFEST_PATH="${REPO_ROOT}/.sisyphus/evidence/benchmark-900/task-1-dev-dry-run-manifest.json"
         ;;
     *)
-        echo "profile must be 'target' or 'dev'" >&2
+        echo "profile must be 'target', 'target-parallel', or 'dev'" >&2
         exit 1
         ;;
 esac
@@ -95,6 +120,21 @@ if [[ "${RUNNER}" != "serial" && "${RUNNER}" != "parallel" ]]; then
     exit 1
 fi
 
+if ! [[ "${WORKERS}" =~ ^[0-9]+$ ]] || [[ "${WORKERS}" -lt 1 ]]; then
+    echo "workers must be a positive integer" >&2
+    exit 1
+fi
+
+if ! [[ "${ENVS_PER_WORKER}" =~ ^[0-9]+$ ]] || [[ "${ENVS_PER_WORKER}" -lt 1 ]]; then
+    echo "envs-per-worker must be a positive integer" >&2
+    exit 1
+fi
+
+if ! [[ "${MAX_WAIT}" =~ ^[0-9]+$ ]] || [[ "${MAX_WAIT}" -lt 1 ]]; then
+    echo "max-wait must be a positive integer" >&2
+    exit 1
+fi
+
 if [[ ! -f "${PROFILE_PATH}" ]]; then
     echo "Missing benchmark profile: ${PROFILE_PATH}" >&2
     exit 1
@@ -102,6 +142,7 @@ fi
 
 MANIFEST_JSON=$(REPO_ROOT="${REPO_ROOT}" PROFILE_PATH="${PROFILE_PATH}" CHECKPOINT="${CHECKPOINT}" \
     POLICY_MODE="${POLICY_MODE}" RUNNER="${RUNNER}" DRY_RUN="${DRY_RUN}" \
+    WORKERS="${WORKERS}" ENVS_PER_WORKER="${ENVS_PER_WORKER}" MAX_WAIT="${MAX_WAIT}" \
     MANIFEST_PATH="${MANIFEST_PATH}" python3 - <<'PY'
 import hashlib
 import json
@@ -169,6 +210,12 @@ manifest = {
     "checkpoint_sha256": sha256_file(checkpoint_path) if checkpoint_path is not None and checkpoint_path.is_file() else None,
     "policy_mode": os.environ["POLICY_MODE"],
     "runner": runner,
+    "parallel": {
+        "workers": int(os.environ["WORKERS"]),
+        "envs_per_worker": int(os.environ["ENVS_PER_WORKER"]),
+        "gamecores": int(os.environ["WORKERS"]) * int(os.environ["ENVS_PER_WORKER"]),
+        "max_wait": int(os.environ["MAX_WAIT"]),
+    },
     "dry_run": os.environ["DRY_RUN"] == "1",
     "start_time": now,
     "end_time": now if os.environ["DRY_RUN"] == "1" else None,
@@ -224,6 +271,14 @@ if [[ "${RUNNER}" == "serial" ]]; then
 fi
 
 if [[ -n "${CHECKPOINT}" ]]; then
-    exec bash run_benchmark_parallel.sh "${CHECKPOINT}" --policy-mode "${POLICY_MODE}"
+    exec bash run_benchmark_parallel.sh "${CHECKPOINT}" \
+        --policy-mode "${POLICY_MODE}" \
+        --workers "${WORKERS}" \
+        --envs-per-worker "${ENVS_PER_WORKER}" \
+        --max-wait "${MAX_WAIT}"
 fi
-exec bash run_benchmark_parallel.sh --policy-mode "${POLICY_MODE}"
+exec bash run_benchmark_parallel.sh \
+    --policy-mode "${POLICY_MODE}" \
+    --workers "${WORKERS}" \
+    --envs-per-worker "${ENVS_PER_WORKER}" \
+    --max-wait "${MAX_WAIT}"

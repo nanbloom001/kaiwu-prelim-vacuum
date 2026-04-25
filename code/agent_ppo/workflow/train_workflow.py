@@ -17,6 +17,7 @@ import time
 from collections import deque
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -176,6 +177,9 @@ REWARD_COMPONENT_KEYS = (
     "risk_release_reward",
     "risk_release_from_progress",
     "risk_release_from_charge_event",
+    "charger_progress_arrival_bonus",
+    "safe_return_progress_bonus",
+    "clean_per_step_efficiency_bonus",
     "risk_growth_while_clean_penalty",
     "route_phase_risk_growth_penalty",
     "charge_opportunity_cost_penalty",
@@ -213,6 +217,9 @@ REWARD_COMPONENT_MONITOR_KEYS = (
     "risk_release_reward",
     "risk_release_from_progress",
     "risk_release_from_charge_event",
+    "charger_progress_arrival_bonus",
+    "safe_return_progress_bonus",
+    "clean_per_step_efficiency_bonus",
     "risk_growth_while_clean_penalty",
     "route_phase_risk_growth_penalty",
     "charge_opportunity_cost_penalty",
@@ -249,6 +256,161 @@ CONSTRAINT_TRACE_KEYS = (
     "battery_state_idx",
 )
 
+TEACHER_LABEL_QUALITY_COUNT_KEYS = (
+    "return_teacher_count",
+    "route_phase_teacher_count",
+    "active_pair_count",
+    "agree_pair_count",
+    "disagree_pair_count",
+    "missing_route_pair_count",
+    "missing_return_pair_count",
+    "route_phase_teacher_from_return_reliable_count",
+    "route_phase_teacher_from_anchor_or_target_count",
+    "route_phase_teacher_from_critical_fallback_count",
+    "return_teacher_in_route_phase_count",
+    "return_teacher_outside_route_phase_count",
+    "return_teacher_mode_depart_count",
+    "return_teacher_mode_expand_count",
+    "return_teacher_mode_harvest_count",
+    "return_teacher_mode_contract_count",
+    "return_teacher_mode_return_count",
+    "return_teacher_mode_evade_count",
+    "return_teacher_mode_other_count",
+    "return_teacher_target_stable_count",
+    "return_teacher_target_unstable_count",
+    "return_teacher_suggested_legal_safe_count",
+    "return_teacher_action_margin_low_count",
+    "return_teacher_action_margin_mid_count",
+    "return_teacher_action_margin_high_count",
+    "return_teacher_stable_invariant_satisfied_count",
+    "return_teacher_stable_invariant_violated_count",
+    "return_teacher_legal_safe_invariant_satisfied_count",
+    "return_teacher_legal_safe_invariant_violated_count",
+    "return_teacher_action_margin_invariant_satisfied_count",
+    "return_teacher_action_margin_invariant_violated_count",
+    "return_teacher_reliability_invariant_satisfied_count",
+    "return_teacher_reliability_invariant_violated_count",
+)
+TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS = (
+    "return_route_teacher_active_pair_rate",
+    "return_route_teacher_agreement_rate",
+    "return_route_teacher_disagreement_rate",
+    "missing_route_pair_rate",
+    "missing_return_pair_rate",
+    "route_phase_teacher_from_return_reliable_rate",
+    "route_phase_teacher_from_anchor_or_target_rate",
+    "route_phase_teacher_from_critical_fallback_rate",
+    "return_teacher_in_route_phase_rate",
+    "return_teacher_outside_route_phase_rate",
+    "return_teacher_mode_depart_rate",
+    "return_teacher_mode_expand_rate",
+    "return_teacher_mode_harvest_rate",
+    "return_teacher_mode_contract_rate",
+    "return_teacher_mode_return_rate",
+    "return_teacher_mode_evade_rate",
+    "return_teacher_mode_other_rate",
+    "return_teacher_stable_invariant_satisfied_rate",
+    "return_teacher_stable_invariant_violated_rate",
+    "return_teacher_legal_safe_invariant_satisfied_rate",
+    "return_teacher_legal_safe_invariant_violated_rate",
+    "return_teacher_action_margin_invariant_satisfied_rate",
+    "return_teacher_action_margin_invariant_violated_rate",
+    "return_teacher_reliability_invariant_satisfied_rate",
+    "return_teacher_reliability_invariant_violated_rate",
+)
+TEACHER_LABEL_QUALITY_METRIC_KEYS = (
+    *TEACHER_LABEL_QUALITY_COUNT_KEYS,
+    *TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS,
+    "return_teacher_target_stable_rate",
+    "return_teacher_target_unstable_rate",
+    "return_teacher_suggested_legal_safe_rate",
+    "return_teacher_action_margin_low_rate",
+    "return_teacher_action_margin_mid_rate",
+    "return_teacher_action_margin_high_rate",
+    "return_teacher_agree_route_phase_planner_divergence_rate",
+    "return_teacher_disagree_route_phase_planner_divergence_rate",
+    "return_teacher_agree_route_phase_return_stall_rate",
+    "return_teacher_disagree_route_phase_return_stall_rate",
+    "return_teacher_margin_low_route_phase_planner_divergence_rate",
+    "return_teacher_margin_mid_route_phase_planner_divergence_rate",
+    "return_teacher_margin_high_route_phase_planner_divergence_rate",
+    "return_teacher_margin_low_route_phase_return_stall_rate",
+    "return_teacher_margin_mid_route_phase_return_stall_rate",
+    "return_teacher_margin_high_route_phase_return_stall_rate",
+)
+
+
+def _apply_teacher_label_quality_count_rates(payload: dict[str, Any]) -> dict[str, Any]:
+    def _ratio(num_key: str, den_key: str) -> float:
+        denominator = float(payload.get(den_key, 0.0) or 0.0)
+        if denominator <= 0.0:
+            return 0.0
+        return float(payload.get(num_key, 0.0) or 0.0) / denominator
+
+    payload["return_route_teacher_active_pair_rate"] = _ratio("active_pair_count", "return_teacher_count")
+    payload["return_route_teacher_agreement_rate"] = _ratio("agree_pair_count", "active_pair_count")
+    payload["return_route_teacher_disagreement_rate"] = _ratio("disagree_pair_count", "active_pair_count")
+    payload["missing_route_pair_rate"] = _ratio("missing_route_pair_count", "return_teacher_count")
+    payload["missing_return_pair_rate"] = _ratio("missing_return_pair_count", "route_phase_teacher_count")
+    payload["route_phase_teacher_from_return_reliable_rate"] = _ratio(
+        "route_phase_teacher_from_return_reliable_count", "route_phase_teacher_count"
+    )
+    payload["route_phase_teacher_from_anchor_or_target_rate"] = _ratio(
+        "route_phase_teacher_from_anchor_or_target_count", "route_phase_teacher_count"
+    )
+    payload["route_phase_teacher_from_critical_fallback_rate"] = _ratio(
+        "route_phase_teacher_from_critical_fallback_count", "route_phase_teacher_count"
+    )
+    payload["return_teacher_in_route_phase_rate"] = _ratio(
+        "return_teacher_in_route_phase_count", "return_teacher_count"
+    )
+    payload["return_teacher_outside_route_phase_rate"] = _ratio(
+        "return_teacher_outside_route_phase_count", "return_teacher_count"
+    )
+    for mode_name in ("depart", "expand", "harvest", "contract", "return", "evade", "other"):
+        payload[f"return_teacher_mode_{mode_name}_rate"] = _ratio(
+            f"return_teacher_mode_{mode_name}_count", "return_teacher_count"
+        )
+    payload["return_teacher_target_stable_rate"] = _ratio("return_teacher_target_stable_count", "return_teacher_count")
+    payload["return_teacher_target_unstable_rate"] = _ratio("return_teacher_target_unstable_count", "return_teacher_count")
+    payload["return_teacher_suggested_legal_safe_rate"] = _ratio(
+        "return_teacher_suggested_legal_safe_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_low_rate"] = _ratio(
+        "return_teacher_action_margin_low_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_mid_rate"] = _ratio(
+        "return_teacher_action_margin_mid_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_high_rate"] = _ratio(
+        "return_teacher_action_margin_high_count", "return_teacher_count"
+    )
+    payload["return_teacher_stable_invariant_satisfied_rate"] = _ratio(
+        "return_teacher_stable_invariant_satisfied_count", "return_teacher_count"
+    )
+    payload["return_teacher_stable_invariant_violated_rate"] = _ratio(
+        "return_teacher_stable_invariant_violated_count", "return_teacher_count"
+    )
+    payload["return_teacher_legal_safe_invariant_satisfied_rate"] = _ratio(
+        "return_teacher_legal_safe_invariant_satisfied_count", "return_teacher_count"
+    )
+    payload["return_teacher_legal_safe_invariant_violated_rate"] = _ratio(
+        "return_teacher_legal_safe_invariant_violated_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_invariant_satisfied_rate"] = _ratio(
+        "return_teacher_action_margin_invariant_satisfied_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_invariant_violated_rate"] = _ratio(
+        "return_teacher_action_margin_invariant_violated_count", "return_teacher_count"
+    )
+    payload["return_teacher_reliability_invariant_satisfied_rate"] = _ratio(
+        "return_teacher_reliability_invariant_satisfied_count", "return_teacher_count"
+    )
+    payload["return_teacher_reliability_invariant_violated_rate"] = _ratio(
+        "return_teacher_reliability_invariant_violated_count", "return_teacher_count"
+    )
+    return payload
+
 _LEARNER_LOG_FLOAT_PATTERNS = {
     "battery_process_cost_mean": re.compile(r"battery_process_cost_mean:\s*(-?\d+(?:\.\d+)?)"),
     "collision_process_cost_mean": re.compile(r"collision_process_cost_mean:\s*(-?\d+(?:\.\d+)?)"),
@@ -266,6 +428,11 @@ WINDOW_COMPARISON_METRIC_KEYS = (
     "expert_weight_nonzero_rate",
     "pre_return_bias_active_rate",
     "return_bias_active_rate",
+    "return_action_teacher_mask_mean",
+    "return_action_teacher_mask_nonzero_rate",
+    "route_phase_action_teacher_mask_mean",
+    "route_phase_action_teacher_mask_nonzero_rate",
+    *TEACHER_LABEL_QUALITY_METRIC_KEYS,
     "return_entry_count",
     "readiness_supported_return_entry_count",
     "pre_return_readiness_hit_rate",
@@ -286,6 +453,9 @@ WINDOW_COMPARISON_METRIC_KEYS = (
     "reward_positive_share_streak",
     "reward_positive_share_explore",
     "reward_positive_share_risk_release_reward",
+    "reward_positive_share_charger_progress_arrival_bonus",
+    "reward_positive_share_safe_return_progress_bonus",
+    "reward_positive_share_clean_per_step_efficiency_bonus",
     "reward_positive_share_charge_route_progress_bonus",
     "reward_positive_share_necessary_charge_bonus",
     "reward_positive_share_frontier",
@@ -305,6 +475,8 @@ WINDOW_COMPARISON_METRIC_KEYS = (
     "reward_negative_share_npc",
     "reward_negative_share_coverage_tangle_penalty",
     "reward_charging_positive_share_risk_release_reward",
+    "reward_charging_positive_share_charger_progress_arrival_bonus",
+    "reward_charging_positive_share_safe_return_progress_bonus",
     "reward_charging_positive_share_charge_route_progress_bonus",
     "reward_charging_positive_share_necessary_charge_bonus",
     "reward_charging_positive_share_charger_access_discovery_bonus",
@@ -347,7 +519,7 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         from agent_ppo.eval.benchmark_parallel import run_parallel_benchmark
 
         usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
-        run_parallel_benchmark(envs, agents, usr_conf, logger)
+        run_parallel_benchmark(envs, agents, usr_conf, logger, process_index=kwargs.get("process_index"))
         return
 
     # Benchmark mode: run fixed eval scenarios, save results, exit
@@ -1281,6 +1453,27 @@ class EpisodeRunner:
             "expert_weight_nonzero_rate": sum(ep.get("expert_weight_nonzero_rate", 0.0) for ep in buf) / n,
             "pre_return_bias_active_rate": sum(ep.get("pre_return_bias_active_rate", 0.0) for ep in buf) / n,
             "return_bias_active_rate": sum(ep.get("return_bias_active_rate", 0.0) for ep in buf) / n,
+            "return_action_teacher_mask_mean": sum(
+                ep.get("return_action_teacher_mask_mean", 0.0) for ep in buf
+            ) / n,
+            "return_action_teacher_mask_nonzero_rate": sum(
+                ep.get("return_action_teacher_mask_nonzero_rate", 0.0) for ep in buf
+            ) / n,
+            "route_phase_action_teacher_mask_mean": sum(
+                ep.get("route_phase_action_teacher_mask_mean", 0.0) for ep in buf
+            ) / n,
+            "route_phase_action_teacher_mask_nonzero_rate": sum(
+                ep.get("route_phase_action_teacher_mask_nonzero_rate", 0.0) for ep in buf
+            ) / n,
+            **{
+                key: sum(ep.get(key, 0.0) for ep in buf)
+                for key in TEACHER_LABEL_QUALITY_COUNT_KEYS
+            },
+            **{
+                key: sum(ep.get(key, 0.0) for ep in buf) / n
+                for key in TEACHER_LABEL_QUALITY_METRIC_KEYS
+                if key not in TEACHER_LABEL_QUALITY_COUNT_KEYS
+            },
             "late_return_rate": sum(ep.get("late_return_rate", 0.0) for ep in buf) / n,
             "late_contract_rate": sum(ep.get("late_contract_rate", 0.0) for ep in buf) / n,
             "anchor_switch_rate": sum(ep.get("anchor_switch_rate", 0.0) for ep in buf) / n,
@@ -1380,6 +1573,7 @@ class EpisodeRunner:
             "broad_win_rate": self._profile_win_rate(buf, ["broad", "broad_eval"]),
         }
         payload.update(contribution_metrics)
+        _apply_teacher_label_quality_count_rates(payload)
         return payload
 
     @staticmethod
@@ -1891,6 +2085,18 @@ class EpisodeRunner:
                         "return_action_teacher_mask": float(reward_payload["return_action_teacher_mask"]),
                         "route_phase_action_teacher": int(reward_payload["route_phase_action_teacher"]),
                         "route_phase_action_teacher_mask": float(reward_payload["route_phase_action_teacher_mask"]),
+                        "route_phase_teacher_from_return_reliable": float(
+                            reward_payload.get("route_phase_teacher_from_return_reliable", 0.0)
+                        ),
+                        "route_phase_teacher_from_anchor_or_target": float(
+                            reward_payload.get("route_phase_teacher_from_anchor_or_target", 0.0)
+                        ),
+                        "route_phase_teacher_from_critical_fallback": float(
+                            reward_payload.get("route_phase_teacher_from_critical_fallback", 0.0)
+                        ),
+                        "teacher_target_stable": 1.0 if bool(guidance.get("target_stable", False)) else 0.0,
+                        "teacher_suggested_legal_safe": 1.0 if bool(guidance.get("suggested_action_legal", False)) else 0.0,
+                        "teacher_action_margin": float(guidance.get("action_margin", 0.0)),
                         "battery_risk_label": float(reward_payload["battery_risk_label"]),
                         "collision_risk_label": float(reward_payload["collision_risk_label"]),
                         "fallback_mask": float(reward_payload["fallback_mask"]),
@@ -2176,6 +2382,11 @@ class EpisodeRunner:
             "expert_weight_nonzero_rate": diagnostics["expert_weight_nonzero_rate"],
             "pre_return_bias_active_rate": diagnostics["pre_return_bias_active_rate"],
             "return_bias_active_rate": diagnostics["return_bias_active_rate"],
+            "return_action_teacher_mask_mean": diagnostics["return_action_teacher_mask_mean"],
+            "return_action_teacher_mask_nonzero_rate": diagnostics["return_action_teacher_mask_nonzero_rate"],
+            "route_phase_action_teacher_mask_mean": diagnostics["route_phase_action_teacher_mask_mean"],
+            "route_phase_action_teacher_mask_nonzero_rate": diagnostics["route_phase_action_teacher_mask_nonzero_rate"],
+            **{key: diagnostics[key] for key in TEACHER_LABEL_QUALITY_METRIC_KEYS},
             "battery_fail_type": battery_fail_type,
             "battery_fail_severity": float(battery_fail_severity),
             "scheduled_battery_fail_task_reward_scale": float(
@@ -2509,6 +2720,18 @@ class EpisodeRunner:
                 "return_action_teacher_mask": float(reward.get("return_action_teacher_mask", 0.0)),
                 "route_phase_action_teacher": int(reward.get("route_phase_action_teacher", -1)),
                 "route_phase_action_teacher_mask": float(reward.get("route_phase_action_teacher_mask", 0.0)),
+                "route_phase_teacher_from_return_reliable": float(
+                    reward.get("route_phase_teacher_from_return_reliable", 0.0)
+                ),
+                "route_phase_teacher_from_anchor_or_target": float(
+                    reward.get("route_phase_teacher_from_anchor_or_target", 0.0)
+                ),
+                "route_phase_teacher_from_critical_fallback": float(
+                    reward.get("route_phase_teacher_from_critical_fallback", 0.0)
+                ),
+                "teacher_target_stable": float(reward.get("teacher_target_stable", 0.0)),
+                "teacher_suggested_legal_safe": float(reward.get("teacher_suggested_legal_safe", 0.0)),
+                "teacher_action_margin": float(reward.get("teacher_action_margin", 0.0)),
                 "battery_risk_label": float(reward.get("battery_risk_label", 0.0)),
                 "collision_risk_label": float(reward.get("collision_risk_label", 0.0)),
                 "fallback_mask": float(reward.get("fallback_mask", 0.0)),
@@ -2536,6 +2759,12 @@ class EpisodeRunner:
             "return_action_teacher_mask": 0.0,
             "route_phase_action_teacher": -1,
             "route_phase_action_teacher_mask": 0.0,
+            "route_phase_teacher_from_return_reliable": 0.0,
+            "route_phase_teacher_from_anchor_or_target": 0.0,
+            "route_phase_teacher_from_critical_fallback": 0.0,
+            "teacher_target_stable": 0.0,
+            "teacher_suggested_legal_safe": 0.0,
+            "teacher_action_margin": 0.0,
             "battery_risk_label": 0.0,
             "collision_risk_label": 0.0,
             "fallback_mask": 0.0,
@@ -2601,6 +2830,11 @@ class EpisodeRunner:
                 "expert_weight_nonzero_rate": 0.0,
                 "pre_return_bias_active_rate": 0.0,
                 "return_bias_active_rate": 0.0,
+                "return_action_teacher_mask_mean": 0.0,
+                "return_action_teacher_mask_nonzero_rate": 0.0,
+                "route_phase_action_teacher_mask_mean": 0.0,
+                "route_phase_action_teacher_mask_nonzero_rate": 0.0,
+                **{key: 0.0 for key in TEACHER_LABEL_QUALITY_METRIC_KEYS},
                 "mode_usage_depart": 0.0,
                 "mode_usage_expand": 0.0,
                 "mode_usage_harvest": 0.0,
@@ -2625,7 +2859,35 @@ class EpisodeRunner:
         expert_weight_nonzero_flags = [float(rec.get("expert_weight_nonzero", 0.0)) for rec in step_records]
         pre_return_bias_flags = [float(rec.get("pre_return_bias_active", 0.0)) for rec in step_records]
         return_bias_flags = [float(rec.get("return_bias_active", 0.0)) for rec in step_records]
+        return_action_teacher_masks = [float(rec.get("return_action_teacher_mask", 0.0)) for rec in step_records]
+        route_phase_action_teacher_masks = [
+            float(rec.get("route_phase_action_teacher_mask", 0.0)) for rec in step_records
+        ]
+        route_phase_teacher_from_return_reliable_flags = [
+            float(rec.get("route_phase_teacher_from_return_reliable", 0.0)) for rec in step_records
+        ]
+        route_phase_teacher_from_anchor_or_target_flags = [
+            float(rec.get("route_phase_teacher_from_anchor_or_target", 0.0)) for rec in step_records
+        ]
+        route_phase_teacher_from_critical_fallback_flags = [
+            float(rec.get("route_phase_teacher_from_critical_fallback", 0.0)) for rec in step_records
+        ]
+        return_action_teachers = [int(rec.get("return_action_teacher", -1)) for rec in step_records]
+        route_phase_action_teachers = [int(rec.get("route_phase_action_teacher", -1)) for rec in step_records]
+        teacher_target_stable_flags = [float(rec.get("teacher_target_stable", 0.0)) for rec in step_records]
+        teacher_suggested_legal_safe_flags = [
+            float(rec.get("teacher_suggested_legal_safe", 0.0)) for rec in step_records
+        ]
+        teacher_action_margins = [float(rec.get("teacher_action_margin", 0.0)) for rec in step_records]
         total = float(len(step_records))
+
+        def _rate(indices, values):
+            selected = [float(values[idx]) for idx in indices]
+            return float(sum(selected) / max(len(selected), 1))
+
+        def _mean_flag(indices, predicate):
+            selected = [1.0 for idx in indices if predicate(idx)]
+            return float(sum(selected) / max(len(indices), 1))
 
         target_steps = [t for t in targets if t > 0]
         target_switches = sum(1 for a, b in zip(target_steps, target_steps[1:]) if a != b)
@@ -2651,6 +2913,7 @@ class EpisodeRunner:
         progress_deltas = []
         stall_count = 0
         route_phase_stall_count = 0
+        route_phase_stall_flags = [0.0 for _ in step_records]
         for prev_idx, cur_idx in zip(route_phase_steps, route_phase_steps[1:]):
             progress = anchor_dists[prev_idx] - anchor_dists[cur_idx]
             progress_deltas.append(progress)
@@ -2658,6 +2921,7 @@ class EpisodeRunner:
                 stall_count += 1
                 if route_phase_masks[cur_idx] > 0.0:
                     route_phase_stall_count += 1
+                    route_phase_stall_flags[cur_idx] = 1.0
         return_progress_per_step = float(sum(progress_deltas) / max(len(progress_deltas), 1))
         return_efficiency_ratio = float(
             (anchor_dists[route_phase_steps[0]] / max(len(route_phase_steps), 1))
@@ -2692,6 +2956,157 @@ class EpisodeRunner:
         expert_weight_nonzero_rate = float(sum(expert_weight_nonzero_flags) / total)
         pre_return_bias_active_rate = float(sum(pre_return_bias_flags) / total)
         return_bias_active_rate = float(sum(return_bias_flags) / total)
+        return_action_teacher_mask_mean = float(sum(return_action_teacher_masks) / total)
+        route_phase_action_teacher_mask_mean = float(sum(route_phase_action_teacher_masks) / total)
+        return_action_teacher_mask_nonzero_rate = float(
+            sum(1.0 for mask in return_action_teacher_masks if mask > 0.0) / total
+        )
+        route_phase_action_teacher_mask_nonzero_rate = float(
+            sum(1.0 for mask in route_phase_action_teacher_masks if mask > 0.0) / total
+        )
+        return_teacher_indices = [
+            idx
+            for idx, mask in enumerate(return_action_teacher_masks)
+            if mask > 0.0 and return_action_teachers[idx] >= 0
+        ]
+        route_phase_teacher_indices = [
+            idx
+            for idx, mask in enumerate(route_phase_action_teacher_masks)
+            if mask > 0.0 and route_phase_action_teachers[idx] >= 0
+        ]
+        active_pair_indices = [
+            idx
+            for idx in return_teacher_indices
+            if route_phase_action_teacher_masks[idx] > 0.0 and route_phase_action_teachers[idx] >= 0
+        ]
+        active_pair_index_set = set(active_pair_indices)
+        missing_route_pair_indices = [idx for idx in return_teacher_indices if idx not in active_pair_index_set]
+        return_teacher_index_set = set(return_teacher_indices)
+        missing_return_pair_indices = [idx for idx in route_phase_teacher_indices if idx not in return_teacher_index_set]
+        agree_indices = [
+            idx for idx in active_pair_indices
+            if return_action_teachers[idx] == route_phase_action_teachers[idx]
+        ]
+        agree_index_set = set(agree_indices)
+        disagree_indices = [idx for idx in active_pair_indices if idx not in agree_index_set]
+        return_action_margin_min = float(getattr(Config, "TEACHER_RETURN_ACTION_MARGIN_MIN", 1.0))
+        stable_invariant_satisfied_indices = [idx for idx in return_teacher_indices if teacher_target_stable_flags[idx] > 0.0]
+        stable_invariant_violated_indices = [idx for idx in return_teacher_indices if teacher_target_stable_flags[idx] <= 0.0]
+        legal_safe_invariant_satisfied_indices = [idx for idx in return_teacher_indices if teacher_suggested_legal_safe_flags[idx] > 0.0]
+        legal_safe_invariant_violated_indices = [idx for idx in return_teacher_indices if teacher_suggested_legal_safe_flags[idx] <= 0.0]
+        action_margin_invariant_satisfied_indices = [
+            idx for idx in return_teacher_indices if teacher_action_margins[idx] >= return_action_margin_min
+        ]
+        action_margin_invariant_violated_indices = [
+            idx for idx in return_teacher_indices if teacher_action_margins[idx] < return_action_margin_min
+        ]
+        reliability_invariant_satisfied_indices = [
+            idx
+            for idx in return_teacher_indices
+            if (
+                teacher_target_stable_flags[idx] > 0.0
+                and teacher_suggested_legal_safe_flags[idx] > 0.0
+                and teacher_action_margins[idx] >= return_action_margin_min
+            )
+        ]
+        reliability_invariant_satisfied_set = set(reliability_invariant_satisfied_indices)
+        reliability_invariant_violated_indices = [
+            idx for idx in return_teacher_indices if idx not in reliability_invariant_satisfied_set
+        ]
+        low_margin_indices = [idx for idx in return_teacher_indices if teacher_action_margins[idx] < 1.0]
+        mid_margin_indices = [idx for idx in return_teacher_indices if 1.0 <= teacher_action_margins[idx] < 3.0]
+        high_margin_indices = [idx for idx in return_teacher_indices if teacher_action_margins[idx] >= 3.0]
+        return_teacher_count = len(return_teacher_indices)
+        route_phase_teacher_count = len(route_phase_teacher_indices)
+        active_pair_count = len(active_pair_indices)
+        agree_pair_count = len(agree_indices)
+        disagree_pair_count = len(disagree_indices)
+        missing_route_pair_count = len(missing_route_pair_indices)
+        missing_return_pair_count = len(missing_return_pair_indices)
+        route_phase_teacher_from_return_reliable_count = sum(
+            1 for idx in route_phase_teacher_indices if route_phase_teacher_from_return_reliable_flags[idx] > 0.0
+        )
+        route_phase_teacher_from_anchor_or_target_count = sum(
+            1 for idx in route_phase_teacher_indices if route_phase_teacher_from_anchor_or_target_flags[idx] > 0.0
+        )
+        route_phase_teacher_from_critical_fallback_count = sum(
+            1 for idx in route_phase_teacher_indices if route_phase_teacher_from_critical_fallback_flags[idx] > 0.0
+        )
+        return_teacher_in_route_phase_count = sum(1 for idx in return_teacher_indices if modes[idx] in (3, 4))
+        return_teacher_outside_route_phase_count = return_teacher_count - return_teacher_in_route_phase_count
+        return_teacher_mode_counts = {
+            "depart": sum(1 for idx in return_teacher_indices if modes[idx] == 0),
+            "expand": sum(1 for idx in return_teacher_indices if modes[idx] == 1),
+            "harvest": sum(1 for idx in return_teacher_indices if modes[idx] == 2),
+            "contract": sum(1 for idx in return_teacher_indices if modes[idx] == 3),
+            "return": sum(1 for idx in return_teacher_indices if modes[idx] == 4),
+            "evade": sum(1 for idx in return_teacher_indices if modes[idx] == 5),
+        }
+        return_teacher_mode_counts["other"] = return_teacher_count - sum(return_teacher_mode_counts.values())
+        return_route_teacher_active_pair_rate = float(active_pair_count / max(return_teacher_count, 1))
+        return_route_teacher_agreement_rate = float(agree_pair_count / max(active_pair_count, 1))
+        return_route_teacher_disagreement_rate = float(disagree_pair_count / max(active_pair_count, 1))
+        missing_route_pair_rate = float(missing_route_pair_count / max(return_teacher_count, 1))
+        missing_return_pair_rate = float(missing_return_pair_count / max(route_phase_teacher_count, 1))
+        route_phase_teacher_from_return_reliable_rate = float(
+            route_phase_teacher_from_return_reliable_count / max(route_phase_teacher_count, 1)
+        )
+        route_phase_teacher_from_anchor_or_target_rate = float(
+            route_phase_teacher_from_anchor_or_target_count / max(route_phase_teacher_count, 1)
+        )
+        route_phase_teacher_from_critical_fallback_rate = float(
+            route_phase_teacher_from_critical_fallback_count / max(route_phase_teacher_count, 1)
+        )
+        return_teacher_in_route_phase_rate = float(return_teacher_in_route_phase_count / max(return_teacher_count, 1))
+        return_teacher_outside_route_phase_rate = float(
+            return_teacher_outside_route_phase_count / max(return_teacher_count, 1)
+        )
+        return_teacher_mode_rates = {
+            mode_name: float(count / max(return_teacher_count, 1))
+            for mode_name, count in return_teacher_mode_counts.items()
+        }
+        return_teacher_stable_invariant_satisfied_rate = float(
+            len(stable_invariant_satisfied_indices) / max(return_teacher_count, 1)
+        )
+        return_teacher_stable_invariant_violated_rate = float(
+            len(stable_invariant_violated_indices) / max(return_teacher_count, 1)
+        )
+        return_teacher_legal_safe_invariant_satisfied_rate = float(
+            len(legal_safe_invariant_satisfied_indices) / max(return_teacher_count, 1)
+        )
+        return_teacher_legal_safe_invariant_violated_rate = float(
+            len(legal_safe_invariant_violated_indices) / max(return_teacher_count, 1)
+        )
+        return_teacher_action_margin_invariant_satisfied_rate = float(
+            len(action_margin_invariant_satisfied_indices) / max(return_teacher_count, 1)
+        )
+        return_teacher_action_margin_invariant_violated_rate = float(
+            len(action_margin_invariant_violated_indices) / max(return_teacher_count, 1)
+        )
+        return_teacher_reliability_invariant_satisfied_rate = float(
+            len(reliability_invariant_satisfied_indices) / max(return_teacher_count, 1)
+        )
+        return_teacher_reliability_invariant_violated_rate = float(
+            len(reliability_invariant_violated_indices) / max(return_teacher_count, 1)
+        )
+        return_teacher_target_stable_rate = _rate(return_teacher_indices, teacher_target_stable_flags)
+        return_teacher_target_unstable_rate = _mean_flag(
+            return_teacher_indices, lambda idx: teacher_target_stable_flags[idx] <= 0.0
+        )
+        return_teacher_suggested_legal_safe_rate = _rate(return_teacher_indices, teacher_suggested_legal_safe_flags)
+        return_teacher_action_margin_low_rate = float(len(low_margin_indices) / max(len(return_teacher_indices), 1))
+        return_teacher_action_margin_mid_rate = float(len(mid_margin_indices) / max(len(return_teacher_indices), 1))
+        return_teacher_action_margin_high_rate = float(len(high_margin_indices) / max(len(return_teacher_indices), 1))
+        return_teacher_agree_route_phase_planner_divergence_rate = _rate(agree_indices, planner_divergence_flags)
+        return_teacher_disagree_route_phase_planner_divergence_rate = _rate(disagree_indices, planner_divergence_flags)
+        return_teacher_agree_route_phase_return_stall_rate = _rate(agree_indices, route_phase_stall_flags)
+        return_teacher_disagree_route_phase_return_stall_rate = _rate(disagree_indices, route_phase_stall_flags)
+        return_teacher_margin_low_route_phase_planner_divergence_rate = _rate(low_margin_indices, planner_divergence_flags)
+        return_teacher_margin_mid_route_phase_planner_divergence_rate = _rate(mid_margin_indices, planner_divergence_flags)
+        return_teacher_margin_high_route_phase_planner_divergence_rate = _rate(high_margin_indices, planner_divergence_flags)
+        return_teacher_margin_low_route_phase_return_stall_rate = _rate(low_margin_indices, route_phase_stall_flags)
+        return_teacher_margin_mid_route_phase_return_stall_rate = _rate(mid_margin_indices, route_phase_stall_flags)
+        return_teacher_margin_high_route_phase_return_stall_rate = _rate(high_margin_indices, route_phase_stall_flags)
         suboptimal_target_hold_rate = float(
             sum(float(rec.get("suboptimal_target_hold", 0.0)) for rec in step_records) / total
         )
@@ -2761,6 +3176,84 @@ class EpisodeRunner:
             "expert_weight_nonzero_rate": expert_weight_nonzero_rate,
             "pre_return_bias_active_rate": pre_return_bias_active_rate,
             "return_bias_active_rate": return_bias_active_rate,
+            "return_action_teacher_mask_mean": return_action_teacher_mask_mean,
+            "return_action_teacher_mask_nonzero_rate": return_action_teacher_mask_nonzero_rate,
+            "route_phase_action_teacher_mask_mean": route_phase_action_teacher_mask_mean,
+            "route_phase_action_teacher_mask_nonzero_rate": route_phase_action_teacher_mask_nonzero_rate,
+            "return_teacher_count": float(return_teacher_count),
+            "route_phase_teacher_count": float(route_phase_teacher_count),
+            "active_pair_count": float(active_pair_count),
+            "agree_pair_count": float(agree_pair_count),
+            "disagree_pair_count": float(disagree_pair_count),
+            "missing_route_pair_count": float(missing_route_pair_count),
+            "missing_return_pair_count": float(missing_return_pair_count),
+            "route_phase_teacher_from_return_reliable_count": float(route_phase_teacher_from_return_reliable_count),
+            "route_phase_teacher_from_anchor_or_target_count": float(route_phase_teacher_from_anchor_or_target_count),
+            "route_phase_teacher_from_critical_fallback_count": float(route_phase_teacher_from_critical_fallback_count),
+            "return_teacher_in_route_phase_count": float(return_teacher_in_route_phase_count),
+            "return_teacher_outside_route_phase_count": float(return_teacher_outside_route_phase_count),
+            "return_teacher_mode_depart_count": float(return_teacher_mode_counts["depart"]),
+            "return_teacher_mode_expand_count": float(return_teacher_mode_counts["expand"]),
+            "return_teacher_mode_harvest_count": float(return_teacher_mode_counts["harvest"]),
+            "return_teacher_mode_contract_count": float(return_teacher_mode_counts["contract"]),
+            "return_teacher_mode_return_count": float(return_teacher_mode_counts["return"]),
+            "return_teacher_mode_evade_count": float(return_teacher_mode_counts["evade"]),
+            "return_teacher_mode_other_count": float(return_teacher_mode_counts["other"]),
+            "return_teacher_target_stable_count": float(len(stable_invariant_satisfied_indices)),
+            "return_teacher_target_unstable_count": float(len(stable_invariant_violated_indices)),
+            "return_teacher_suggested_legal_safe_count": float(len(legal_safe_invariant_satisfied_indices)),
+            "return_teacher_action_margin_low_count": float(len(low_margin_indices)),
+            "return_teacher_action_margin_mid_count": float(len(mid_margin_indices)),
+            "return_teacher_action_margin_high_count": float(len(high_margin_indices)),
+            "return_teacher_stable_invariant_satisfied_count": float(len(stable_invariant_satisfied_indices)),
+            "return_teacher_stable_invariant_violated_count": float(len(stable_invariant_violated_indices)),
+            "return_teacher_legal_safe_invariant_satisfied_count": float(len(legal_safe_invariant_satisfied_indices)),
+            "return_teacher_legal_safe_invariant_violated_count": float(len(legal_safe_invariant_violated_indices)),
+            "return_teacher_action_margin_invariant_satisfied_count": float(len(action_margin_invariant_satisfied_indices)),
+            "return_teacher_action_margin_invariant_violated_count": float(len(action_margin_invariant_violated_indices)),
+            "return_teacher_reliability_invariant_satisfied_count": float(len(reliability_invariant_satisfied_indices)),
+            "return_teacher_reliability_invariant_violated_count": float(len(reliability_invariant_violated_indices)),
+            "return_route_teacher_active_pair_rate": return_route_teacher_active_pair_rate,
+            "return_route_teacher_agreement_rate": return_route_teacher_agreement_rate,
+            "return_route_teacher_disagreement_rate": return_route_teacher_disagreement_rate,
+            "missing_route_pair_rate": missing_route_pair_rate,
+            "missing_return_pair_rate": missing_return_pair_rate,
+            "route_phase_teacher_from_return_reliable_rate": route_phase_teacher_from_return_reliable_rate,
+            "route_phase_teacher_from_anchor_or_target_rate": route_phase_teacher_from_anchor_or_target_rate,
+            "route_phase_teacher_from_critical_fallback_rate": route_phase_teacher_from_critical_fallback_rate,
+            "return_teacher_in_route_phase_rate": return_teacher_in_route_phase_rate,
+            "return_teacher_outside_route_phase_rate": return_teacher_outside_route_phase_rate,
+            "return_teacher_mode_depart_rate": return_teacher_mode_rates["depart"],
+            "return_teacher_mode_expand_rate": return_teacher_mode_rates["expand"],
+            "return_teacher_mode_harvest_rate": return_teacher_mode_rates["harvest"],
+            "return_teacher_mode_contract_rate": return_teacher_mode_rates["contract"],
+            "return_teacher_mode_return_rate": return_teacher_mode_rates["return"],
+            "return_teacher_mode_evade_rate": return_teacher_mode_rates["evade"],
+            "return_teacher_mode_other_rate": return_teacher_mode_rates["other"],
+            "return_teacher_stable_invariant_satisfied_rate": return_teacher_stable_invariant_satisfied_rate,
+            "return_teacher_stable_invariant_violated_rate": return_teacher_stable_invariant_violated_rate,
+            "return_teacher_legal_safe_invariant_satisfied_rate": return_teacher_legal_safe_invariant_satisfied_rate,
+            "return_teacher_legal_safe_invariant_violated_rate": return_teacher_legal_safe_invariant_violated_rate,
+            "return_teacher_action_margin_invariant_satisfied_rate": return_teacher_action_margin_invariant_satisfied_rate,
+            "return_teacher_action_margin_invariant_violated_rate": return_teacher_action_margin_invariant_violated_rate,
+            "return_teacher_reliability_invariant_satisfied_rate": return_teacher_reliability_invariant_satisfied_rate,
+            "return_teacher_reliability_invariant_violated_rate": return_teacher_reliability_invariant_violated_rate,
+            "return_teacher_target_stable_rate": return_teacher_target_stable_rate,
+            "return_teacher_target_unstable_rate": return_teacher_target_unstable_rate,
+            "return_teacher_suggested_legal_safe_rate": return_teacher_suggested_legal_safe_rate,
+            "return_teacher_action_margin_low_rate": return_teacher_action_margin_low_rate,
+            "return_teacher_action_margin_mid_rate": return_teacher_action_margin_mid_rate,
+            "return_teacher_action_margin_high_rate": return_teacher_action_margin_high_rate,
+            "return_teacher_agree_route_phase_planner_divergence_rate": return_teacher_agree_route_phase_planner_divergence_rate,
+            "return_teacher_disagree_route_phase_planner_divergence_rate": return_teacher_disagree_route_phase_planner_divergence_rate,
+            "return_teacher_agree_route_phase_return_stall_rate": return_teacher_agree_route_phase_return_stall_rate,
+            "return_teacher_disagree_route_phase_return_stall_rate": return_teacher_disagree_route_phase_return_stall_rate,
+            "return_teacher_margin_low_route_phase_planner_divergence_rate": return_teacher_margin_low_route_phase_planner_divergence_rate,
+            "return_teacher_margin_mid_route_phase_planner_divergence_rate": return_teacher_margin_mid_route_phase_planner_divergence_rate,
+            "return_teacher_margin_high_route_phase_planner_divergence_rate": return_teacher_margin_high_route_phase_planner_divergence_rate,
+            "return_teacher_margin_low_route_phase_return_stall_rate": return_teacher_margin_low_route_phase_return_stall_rate,
+            "return_teacher_margin_mid_route_phase_return_stall_rate": return_teacher_margin_mid_route_phase_return_stall_rate,
+            "return_teacher_margin_high_route_phase_return_stall_rate": return_teacher_margin_high_route_phase_return_stall_rate,
             "suboptimal_target_hold_rate": suboptimal_target_hold_rate,
             "planner_policy_divergence_rate": planner_policy_divergence_rate,
             "route_phase_planner_divergence_rate": route_phase_planner_divergence_rate,
@@ -2922,10 +3415,10 @@ class EpisodeRunner:
             "mode_usage_contract": round(m["mode_usage_contract"], 4),
             "mode_usage_return": round(m["mode_usage_return"], 4),
             "mode_usage_evade": round(m["mode_usage_evade"], 4),
-            **{
-                f"avg_reward_{key}": round(m[f"avg_reward_{key}"], 4)
-                for key in REWARD_COMPONENT_MONITOR_KEYS
-            },
+        **{
+            f"avg_reward_{key}": round(float(m.get(f"avg_reward_{key}", 0.0) or 0.0), 4)
+            for key in REWARD_COMPONENT_MONITOR_KEYS
+        },
             **{
                 key: round(float(value), 4)
                 for key in WINDOW_COMPARISON_METRIC_KEYS

@@ -1,0 +1,264 @@
+{
+  "allowed_modification_classes": [
+    "P0_observe_only",
+    "P1_information_additive",
+    "P2_eval_only_safety",
+    "R1_small_threshold",
+    "R2_reward_positive",
+    "R3_reward_penalty",
+    "R4_light_refactor",
+    "R5_architecture"
+  ],
+  "baseline": {
+    "avg_clean_score": 386.4,
+    "checkpoint": "/workspace/code/runtime_state/preload_cache/model.ckpt-734599.pkl",
+    "failure_buckets": {
+      "battery depletion": 7,
+      "collision/stuck loop": 33
+    },
+    "per_map_count": 10,
+    "readme_parallel_40_baseline_note": "Task 4 accepted operational baseline is README parallel-40: maps 1-10 x4, 3 chargers, 4 robots, 1000 steps, 150 battery, policy eval.",
+    "session_id": "20260425-155300",
+    "win_rate": 0.7,
+    "wins": null
+  },
+  "candidate_statuses": [],
+  "command_templates": {
+    "dev_slice": "bash train/run_target_benchmark_900.sh --profile dev <checkpoint> --policy-mode eval --runner serial",
+    "full_benchmark": "bash train/run_target_benchmark_900.sh --profile target <checkpoint> --policy-mode eval --runner parallel",
+    "full_benchmark_default_without_parallel_40_note": "bash train/run_target_benchmark_900.sh --profile target <checkpoint> --policy-mode eval --runner serial",
+    "training": "python3 train/run_training_phase.py s1_survival --seed-label <iteration_id>"
+  },
+  "dry_run": true,
+  "guards": {
+    "modification_order": "R1+ classes require all available P0/P1/P2 candidates terminal",
+    "numeric_only": "exactly one failure bucket and one fixed-observation diff required",
+    "sweep": "one lever, at most two values"
+  },
+  "iterations": [
+    {
+      "analyzer_summary": null,
+      "benchmark_commands": {
+        "dev_slice": "bash train/run_target_benchmark_900.sh --profile dev <checkpoint> --policy-mode eval --runner serial",
+        "full": "bash train/run_target_benchmark_900.sh --profile target <checkpoint> --policy-mode eval --runner parallel"
+      },
+      "candidate": {
+        "changed_files": [],
+        "failure_buckets": [],
+        "fixed_observation_diffs": [],
+        "hypothesis": "TBD by candidate selector; controller reserves state-machine fields only.",
+        "id": "benchmark-attribution-first",
+        "modification_class": "P0_observe_only",
+        "numeric_only": false,
+        "source": "wave0_audit",
+        "status": "planned",
+        "sweep": null,
+        "title": "Use existing issue-index and failure taxonomy before changing policy"
+      },
+      "changed_files": [],
+      "checkpoint": "<checkpoint>",
+      "comparator_result": null,
+      "convergence_gate_result": null,
+      "dev_slice_result": null,
+      "full_benchmark_result": null,
+      "hypothesis": "TBD by candidate selector; controller reserves state-machine fields only.",
+      "iteration_id": "iteration-0001",
+      "keep_revert_decision": null,
+      "next_action": "await_candidate_selector",
+      "sample_points": [
+        "bootstrap_10",
+        "bootstrap_20",
+        "global_40",
+        "global_80",
+        "global_120",
+        "global_160",
+        "global_200"
+      ],
+      "state": "planned",
+      "training_command": "python3 train/run_training_phase.py s1_survival --seed-label iteration-0001"
+    },
+    {
+      "analyzer_summary": null,
+      "benchmark_commands": {
+        "dev_slice": "bash train/run_target_benchmark_900.sh --profile dev <checkpoint> --policy-mode eval --runner serial",
+        "full": "bash train/run_target_benchmark_900.sh --profile target <checkpoint> --policy-mode eval --runner parallel"
+      },
+      "candidate": {
+        "changed_files": [],
+        "failure_buckets": [],
+        "fixed_observation_diffs": [],
+        "hypothesis": "TBD by candidate selector; controller reserves state-machine fields only.",
+        "id": "no-preaudit-behavior-diff-guard",
+        "modification_class": "P0_observe_only",
+        "numeric_only": false,
+        "source": "wave0_audit",
+        "status": "planned",
+        "sweep": null,
+        "title": "Record git diff guard for code/agent_ppo and train/phases before audit completion"
+      },
+      "changed_files": [],
+      "checkpoint": "<checkpoint>",
+      "comparator_result": null,
+      "convergence_gate_result": null,
+      "dev_slice_result": null,
+      "full_benchmark_result": null,
+      "hypothesis": "TBD by candidate selector; controller reserves state-machine fields only.",
+      "iteration_id": "iteration-0002",
+      "keep_revert_decision": null,
+      "next_action": "await_candidate_selector",
+      "sample_points": [
+        "bootstrap_10",
+        "bootstrap_20",
+        "global_40",
+        "global_80",
+        "global_120",
+        "global_160",
+        "global_200"
+      ],
+      "state": "planned",
+      "training_command": "python3 train/run_training_phase.py s1_survival --seed-label iteration-0002"
+    }
+  ],
+  "latest_f1_remediation": {
+    "authoritative_run_session_id": "20260425-193501",
+    "baseline_run": "20260421-134719",
+    "classification": "baseline_backed_revert_no_promotion",
+    "continuation_allowed_past_global_40": false,
+    "convergence_gate": ".sisyphus/evidence/benchmark-900/convergence-20260425-193501.json",
+    "decision": "revert",
+    "evidence": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-193501-report.json",
+    "global_40_metrics": {
+      "avg_clean_per_step": 0.417121878658613,
+      "battery_fail_rate": 0.95,
+      "route_phase_return_stall_rate": 0.533772896222562,
+      "zero_charge_battery_fail_rate": 0.8
+    },
+    "historical_adopted_session_evidence": {
+      "preserved_convergence_gate": ".sisyphus/evidence/benchmark-900/f1-remediation-training-20260425-194430-convergence.json",
+      "preserved_report": ".sisyphus/evidence/benchmark-900/f1-remediation-training-20260425-194430.json"
+    },
+    "next_action": "Do not promote this checkpoint. Treat run 20260425-193501 as rejected/revert at global_40; preserve the later 194430 adopted-session evidence as historical only because it lacked baseline metrics.",
+    "promotion_allowed": false,
+    "updated_at": "2026-04-25T11:44:51.681566+00:00"
+  },
+  "latest_f1_remediation_return_teacher_labelquality": {
+    "baseline_run": "20260421-134719",
+    "compare_path": ".sisyphus/evidence/benchmark-900/compare-20260425-224353-return-teacher-labelquality.json",
+    "continuation_allowed_past_global_40": false,
+    "convergence_path": ".sisyphus/evidence/benchmark-900/convergence-20260425-224353-return-teacher-labelquality.json",
+    "decision": "revert",
+    "global_40_metrics": {
+      "avg_clean_per_step": 0.4037572574524481,
+      "battery_fail_rate": 0.95,
+      "invalid_for_promotion": true,
+      "reliable_planner_divergence_rate": 0.075,
+      "route_phase_planner_divergence_rate": 0.8387070493744181,
+      "route_phase_return_stall_rate": 0.5400142843734241,
+      "win_rate": 0.05,
+      "zero_charge_battery_fail_rate": 0.75
+    },
+    "invalid_for_promotion": true,
+    "label_quality_bucket_metrics": {
+      "return_route_teacher_active_pair_rate": 0.05714285714285714,
+      "return_route_teacher_agreement_rate": 0.1,
+      "return_route_teacher_disagreement_rate": 0.0,
+      "return_teacher_action_margin_high_rate": 0.0,
+      "return_teacher_action_margin_low_rate": 0.0,
+      "return_teacher_action_margin_mid_rate": 0.5,
+      "return_teacher_agree_route_phase_planner_divergence_rate": 0.075,
+      "return_teacher_agree_route_phase_return_stall_rate": 0.008333333333333333,
+      "return_teacher_disagree_route_phase_planner_divergence_rate": 0.0,
+      "return_teacher_disagree_route_phase_return_stall_rate": 0.0,
+      "return_teacher_margin_high_route_phase_planner_divergence_rate": 0.0,
+      "return_teacher_margin_high_route_phase_return_stall_rate": 0.0,
+      "return_teacher_margin_low_route_phase_planner_divergence_rate": 0.0,
+      "return_teacher_margin_low_route_phase_return_stall_rate": 0.0,
+      "return_teacher_margin_mid_route_phase_planner_divergence_rate": 0.4021923121233374,
+      "return_teacher_margin_mid_route_phase_return_stall_rate": 0.008333333333333333,
+      "return_teacher_suggested_legal_safe_rate": 0.5,
+      "return_teacher_target_stable_rate": 0.5,
+      "return_teacher_target_unstable_rate": 0.0
+    },
+    "next_action": "Do not promote or benchmark; revert this diagnostic run and use label-quality evidence for targeted return-teacher label sparsity/source-level diagnosis before any further weight or reward change.",
+    "phase": "s1_survival_return_teacher_v1",
+    "promotion_allowed": false,
+    "report_path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-224353-return-teacher-labelquality-report.json",
+    "run_session_id": "20260425-224353",
+    "sample_points_reached": [
+      "bootstrap_10",
+      "bootstrap_20",
+      "global_40"
+    ],
+    "schema": "latest_f1_remediation_return_teacher_labelquality_v1",
+    "seed_label": "benchmark900-return-teacher-labelquality",
+    "teacher_mask_metrics": {
+      "return_action_teacher_mask_mean": 0.03285961448863267,
+      "return_action_teacher_mask_nonzero_rate": 0.03285961448863267,
+      "route_phase_action_teacher_mask_mean": 0.15402619868509018,
+      "route_phase_action_teacher_mask_nonzero_rate": 0.16248260304282278
+    },
+    "updated_at": "2026-04-25T14:51:43.184017+00:00"
+  },
+  "latest_f1_remediation_return_teacher_maskobs": {
+    "authoritative_for": "latest_f1_remediation_return_teacher_maskobs",
+    "baseline_session_id": "20260421-134719",
+    "comparison_report": ".sisyphus/evidence/benchmark-900/compare-20260425-214802-return-teacher-maskobs.json",
+    "continuation_allowed_past_global_40": false,
+    "convergence_report": ".sisyphus/evidence/benchmark-900/convergence-20260425-214802-return-teacher-maskobs.json",
+    "decision": "revert",
+    "docker_cleanup": {
+      "clean": true,
+      "down_ran": true,
+      "running_kaiwu_train_containers": []
+    },
+    "evidence_report": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-214802-return-teacher-maskobs-report.json",
+    "final_runtime_global_episode_count": 41,
+    "global_40_metrics": {
+      "avg_clean_per_step": 0.335047,
+      "battery_fail_rate": 0.6,
+      "invalid_for_promotion": true,
+      "return_action_teacher_mask_mean": 0.06965865030538894,
+      "return_action_teacher_mask_nonzero_rate": 0.06965865030538894,
+      "route_phase_action_teacher_mask_mean": 0.1301692774397507,
+      "route_phase_action_teacher_mask_nonzero_rate": 0.135552584779643,
+      "route_phase_return_stall_rate": 0.40715,
+      "win_rate": 0.325,
+      "zero_charge_battery_fail_rate": 0.45
+    },
+    "monitor_trigger_global_episode_count": 40,
+    "next_action": "Do not promote or benchmark; mask metrics are nonzero/present, so shift from observability gap to return readiness/control diagnosis.",
+    "phase": "s1_survival_return_teacher_v1",
+    "promotion_allowed": false,
+    "run_session_id": "20260425-214802",
+    "updated_at": "2026-04-25T14:04:02.438302+00:00"
+  },
+  "latest_f1_remediation_return_teacher_v1": {
+    "authoritative_run_session_id": "20260425-212733",
+    "baseline_run": "20260421-134719",
+    "checkpoint_count": 0,
+    "checkpoint_files_visible": [],
+    "classification": "baseline_backed_revert_no_promotion",
+    "comparison": ".sisyphus/evidence/benchmark-900/compare-20260425-212733-return-teacher-v1.json",
+    "continuation_allowed_past_global_40": false,
+    "convergence_gate": ".sisyphus/evidence/benchmark-900/convergence-20260425-212733-return-teacher-v1.json",
+    "decision": "revert",
+    "docker_cleaned_down": true,
+    "evidence": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-212733-return-teacher-v1-report.json",
+    "global_40_metrics": {
+      "avg_clean_per_step": 0.4116744857746891,
+      "battery_fail_rate": 0.95,
+      "invalid_for_promotion": true,
+      "route_phase_return_stall_rate": 0.5559102157385867,
+      "win_rate": 0.05,
+      "zero_charge_battery_fail_rate": 0.8
+    },
+    "next_action": "Do not promote or benchmark; revert this phase and investigate return-teacher readiness/action signal because global_40 regressed survival and return-stall metrics.",
+    "phase": "s1_survival_return_teacher_v1",
+    "promotion_allowed": false,
+    "schema_version": 1,
+    "updated_at": "2026-04-25T13:35:14.196616+00:00"
+  },
+  "schema_version": 1,
+  "state_dir": "train/context/benchmark_iterations",
+  "success": false
+}

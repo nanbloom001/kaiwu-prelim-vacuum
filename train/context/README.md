@@ -21,6 +21,7 @@ benchmark 设计、使用方式、并行化交接。
 
 - `benchmark/BENCHMARK_SYSTEM.md`
 - `benchmark/BENCHMARK_PARALLEL_HANDOFF_20260416.md`
+- `benchmark/BENCHMARK_TARGET_3C4R_20260425_NOTES.md`
 
 ### `data/`
 

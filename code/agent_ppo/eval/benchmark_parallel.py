@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import socket
 import threading
 import time
 from copy import deepcopy
@@ -86,11 +88,19 @@ def _rounds_and_maps():
         return DEFAULT_ROUNDS, DEFAULT_ALL_MAPS
 
 
-def run_parallel_benchmark(envs, agents, usr_conf, logger):
+def run_parallel_benchmark(envs, agents, usr_conf, logger, process_index=None):
     """Run fixed benchmark scenarios with multiple aisrv workers."""
-    requested_slots = _env_int("KAIWU_BENCHMARK_ENVS_PER_WORKER", 1)
-    worker_count = _env_int("KAIWU_BENCHMARK_WORKER_COUNT", _env_int("KAIWU_AISRV_NUM", 1))
-    worker_id = os.getenv("KAIWU_AISRV_INDEX", "").strip() or "1"
+    configured_envs_per_aisrv = _env_int("KAIWU_BENCHMARK_ENVS_PER_WORKER", 1)
+    aisrv_worker_count = _env_int("KAIWU_BENCHMARK_WORKER_COUNT", _env_int("KAIWU_AISRV_NUM", 1))
+    aisrv_worker_id = _resolve_benchmark_aisrv_worker_id(aisrv_worker_count)
+    normalized_process_index = _normalize_process_index(process_index)
+    logical_worker_count = max(aisrv_worker_count, 1) * max(configured_envs_per_aisrv, 1)
+    logical_worker_id = _logical_worker_id(
+        aisrv_worker_id,
+        normalized_process_index,
+        configured_envs_per_aisrv,
+    )
+    worker_id = str(logical_worker_id)
     scheduler = os.getenv("KAIWU_BENCHMARK_SCHEDULER", "dynamic").strip() or "dynamic"
     checkpoint = resolve_benchmark_checkpoint(
         Path("/workspace/code"),
@@ -107,17 +117,22 @@ def run_parallel_benchmark(envs, agents, usr_conf, logger):
     rounds, maps = _rounds_and_maps()
     total_episodes = len(rounds) * len(maps)
 
-    slot_count = determine_effective_slot_count(requested_slots, envs, agents)
-    coordinator = worker_id == "1"
+    visible_env_handles = len(envs or [])
+    visible_agent_handles = len(agents or [])
+    effective_envs_per_aisrv = _effective_env_processes_per_aisrv(configured_envs_per_aisrv)
+    slot_count = determine_effective_slot_count(configured_envs_per_aisrv, envs, agents)
+    coordinator = _is_parallel_benchmark_coordinator(aisrv_worker_id, normalized_process_index)
 
     logger.info("[PBENCH] ========== Parallel Evaluation Start ==========")
     logger.info(
-        f"[PBENCH] session={session_id} worker={worker_id}/{worker_count} "
+        f"[PBENCH] session={session_id} logical_worker={logical_worker_id}/{logical_worker_count} "
+        f"aisrv_worker={aisrv_worker_id}/{aisrv_worker_count} process_index={normalized_process_index} "
         f"scheduler={scheduler} checkpoint={checkpoint} "
-        f"requested_slots={requested_slots} effective_slots={slot_count}"
+        f"configured_envs_per_aisrv={configured_envs_per_aisrv} effective_slots_per_process={slot_count}"
     )
     logger.info(
-        f"[PBENCH] available_env_handles={len(envs)} available_agent_handles={len(agents)} "
+        f"[PBENCH] visible_env_handles_per_process={visible_env_handles} "
+        f"visible_agent_handles_per_process={visible_agent_handles} "
         f"total_episodes={total_episodes} runtime_dir={runtime_dir}"
     )
 
@@ -135,11 +150,16 @@ def run_parallel_benchmark(envs, agents, usr_conf, logger):
             runtime_dir=runtime_dir,
             session_id=session_id,
             checkpoint=checkpoint,
-            worker_count=worker_count,
-            requested_slots=requested_slots,
-            effective_slots=slot_count,
-            available_env_handles=len(envs),
-            available_agent_handles=len(agents),
+            aisrv_worker_count=aisrv_worker_count,
+            configured_envs_per_aisrv=configured_envs_per_aisrv,
+            logical_worker_count=logical_worker_count,
+            logical_worker_id=logical_worker_id,
+            aisrv_worker_id=aisrv_worker_id,
+            process_index=normalized_process_index,
+            effective_envs_per_aisrv=effective_envs_per_aisrv,
+            effective_slots_per_process=slot_count,
+            visible_env_handles_per_process=visible_env_handles,
+            visible_agent_handles_per_process=visible_agent_handles,
             scheduler=scheduler,
             base_env_conf=base_env_conf,
         )
@@ -149,7 +169,20 @@ def run_parallel_benchmark(envs, agents, usr_conf, logger):
     stop_event = threading.Event()
     heartbeat_thread = threading.Thread(
         target=_heartbeat_loop,
-        args=(runtime_dir, worker_id, slot_count, stop_event),
+        args=(
+            runtime_dir,
+            worker_id,
+            slot_count,
+            stop_event,
+            {
+                "logical_worker_id": logical_worker_id,
+                "aisrv_worker_id": aisrv_worker_id,
+                "process_index": normalized_process_index,
+                "visible_env_handles_per_process": visible_env_handles,
+                "visible_agent_handles_per_process": visible_agent_handles,
+                "effective_slots_per_process": slot_count,
+            },
+        ),
         daemon=True,
     )
     heartbeat_thread.start()
@@ -185,9 +218,14 @@ def run_parallel_benchmark(envs, agents, usr_conf, logger):
                     runtime_dir=runtime_dir,
                     session_id=session_id,
                     checkpoint=checkpoint,
-                    worker_count=worker_count,
-                    requested_slots=requested_slots,
-                    effective_slots=slot_count,
+                    aisrv_worker_count=aisrv_worker_count,
+                    configured_envs_per_aisrv=configured_envs_per_aisrv,
+                    logical_worker_count=logical_worker_count,
+                    logical_worker_id=logical_worker_id,
+                    aisrv_worker_id=aisrv_worker_id,
+                    process_index=normalized_process_index,
+                    effective_envs_per_aisrv=effective_envs_per_aisrv,
+                    effective_slots_per_process=slot_count,
                     scheduler=scheduler,
                     total_episodes=total_episodes,
                     results_file=results_file,
@@ -227,6 +265,87 @@ def determine_effective_slot_count(requested_slots, envs, agents):
     available_envs = len(envs or [])
     available_agents = len(agents or [])
     return max(1, min(int(requested_slots), available_envs, available_agents))
+
+
+def _logical_worker_id(aisrv_worker_id: int, process_index: int, configured_envs_per_aisrv: int) -> int:
+    """Map an AISRV container and helper process to a unique logical worker id."""
+    return (int(aisrv_worker_id) - 1) * max(int(configured_envs_per_aisrv), 1) + int(process_index) + 1
+
+
+def _is_parallel_benchmark_coordinator(aisrv_worker_id: int, process_index: int) -> bool:
+    return int(aisrv_worker_id) == 1 and int(process_index) == 0
+
+
+def _effective_env_processes_per_aisrv(configured_envs_per_aisrv: int) -> int:
+    return max(int(configured_envs_per_aisrv), 1)
+
+
+def _normalize_process_index(process_index) -> int:
+    try:
+        normalized = int(process_index)
+    except (TypeError, ValueError):
+        normalized = 0
+    return max(normalized, 0)
+
+
+def _resolve_benchmark_aisrv_worker_id(worker_count: int) -> int:
+    aisrv_index = _resolve_benchmark_aisrv_index()
+    try:
+        return max(int(aisrv_index), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _resolve_benchmark_aisrv_index() -> str:
+    aisrv_index = str(os.getenv("KAIWU_AISRV_INDEX", "") or "").strip()
+    if aisrv_index:
+        return aisrv_index
+
+    current_name = str(os.getenv("HOSTNAME", "") or "").strip()
+    if not current_name:
+        try:
+            current_name = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    match = re.search(r"(?:^|[-_])aisrv[-_](\d+)$", current_name)
+    if match:
+        return match.group(1)
+
+    current_ip = _resolve_local_ip(current_name)
+    if not current_ip:
+        return ""
+
+    project_name = str(os.getenv("COMPOSE_PROJECT_NAME", "kaiwu-train") or "kaiwu-train").strip() or "kaiwu-train"
+    service_count = max(_env_int("KAIWU_BENCHMARK_WORKER_COUNT", _env_int("KAIWU_AISRV_NUM", 16)), 1)
+    for index in range(1, service_count + 1):
+        service_ip = _resolve_local_ip(
+            f"{project_name}-aisrv-{index}",
+            f"{project_name}_aisrv_{index}",
+        )
+        if service_ip and service_ip == current_ip:
+            return str(index)
+
+    return ""
+
+
+def _resolve_local_ip(*names) -> str | None:
+    original_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(1.0)
+    try:
+        for name in names:
+            candidate = str(name or "").strip()
+            if not candidate:
+                continue
+            try:
+                _, _, addresses = socket.gethostbyname_ex(candidate)
+            except (OSError, socket.timeout):
+                continue
+            if addresses:
+                return addresses[0]
+        return None
+    finally:
+        socket.setdefaulttimeout(original_timeout)
 
 
 def build_parallel_tasks():
@@ -283,11 +402,16 @@ def _initialize_session(
     runtime_dir: Path,
     session_id: str,
     checkpoint: str,
-    worker_count: int,
-    requested_slots: int,
-    effective_slots: int,
-    available_env_handles: int,
-    available_agent_handles: int,
+    aisrv_worker_count: int,
+    configured_envs_per_aisrv: int,
+    logical_worker_count: int,
+    logical_worker_id: int,
+    aisrv_worker_id: int,
+    process_index: int,
+    effective_envs_per_aisrv: int,
+    effective_slots_per_process: int,
+    visible_env_handles_per_process: int,
+    visible_agent_handles_per_process: int,
     scheduler: str,
     base_env_conf,
 ):
@@ -317,13 +441,24 @@ def _initialize_session(
         "total_episodes": len(tasks),
         "execution": {
             "mode": "parallel",
-            "worker_count": worker_count,
+            "worker_count": aisrv_worker_count,
+            "aisrv_worker_count": aisrv_worker_count,
+            "configured_envs_per_aisrv": configured_envs_per_aisrv,
+            "logical_worker_count": logical_worker_count,
+            "logical_worker_id": logical_worker_id,
+            "aisrv_worker_id": aisrv_worker_id,
+            "process_index": process_index,
             "scheduler": scheduler,
-            "requested_envs_per_worker": requested_slots,
-            "effective_envs_per_worker": effective_slots,
+            "requested_envs_per_worker": configured_envs_per_aisrv,
+            "effective_envs_per_worker": effective_envs_per_aisrv,
+            "effective_envs_per_aisrv": effective_envs_per_aisrv,
+            "effective_env_processes_per_worker": effective_envs_per_aisrv,
+            "effective_slots_per_process": effective_slots_per_process,
             "policy_mode": policy_mode,
-            "available_env_handles": available_env_handles,
-            "available_agent_handles": available_agent_handles,
+            "available_env_handles": visible_env_handles_per_process,
+            "available_agent_handles": visible_agent_handles_per_process,
+            "visible_env_handles_per_process": visible_env_handles_per_process,
+            "visible_agent_handles_per_process": visible_agent_handles_per_process,
             "compose_project": os.getenv("COMPOSE_PROJECT_NAME", ""),
             "runtime_dir": str(runtime_dir),
         },
@@ -399,9 +534,14 @@ def _finalize_parallel_benchmark(
     runtime_dir: Path,
     session_id: str,
     checkpoint: str,
-    worker_count: int,
-    requested_slots: int,
-    effective_slots: int,
+    aisrv_worker_count: int,
+    configured_envs_per_aisrv: int,
+    logical_worker_count: int,
+    logical_worker_id: int,
+    aisrv_worker_id: int,
+    process_index: int,
+    effective_envs_per_aisrv: int,
+    effective_slots_per_process: int,
     scheduler: str,
     total_episodes: int,
     results_file: Path,
@@ -432,11 +572,24 @@ def _finalize_parallel_benchmark(
         "episodes": episode_results,
         "execution": {
             "mode": "parallel",
-            "worker_count": worker_count,
+            "worker_count": aisrv_worker_count,
+            "aisrv_worker_count": aisrv_worker_count,
+            "configured_envs_per_aisrv": configured_envs_per_aisrv,
+            "logical_worker_count": logical_worker_count,
+            "logical_worker_id": logical_worker_id,
+            "aisrv_worker_id": aisrv_worker_id,
+            "process_index": process_index,
             "scheduler": scheduler,
-            "requested_envs_per_worker": requested_slots,
-            "effective_envs_per_worker": effective_slots,
+            "requested_envs_per_worker": configured_envs_per_aisrv,
+            "effective_envs_per_worker": effective_envs_per_aisrv,
+            "effective_envs_per_aisrv": effective_envs_per_aisrv,
+            "effective_env_processes_per_worker": effective_envs_per_aisrv,
+            "effective_slots_per_process": effective_slots_per_process,
             "policy_mode": manifest.get("policy_mode", benchmark_mod._benchmark_policy_mode()),
+            "available_env_handles": manifest.get("execution", {}).get("available_env_handles"),
+            "available_agent_handles": manifest.get("execution", {}).get("available_agent_handles"),
+            "visible_env_handles_per_process": manifest.get("execution", {}).get("visible_env_handles_per_process"),
+            "visible_agent_handles_per_process": manifest.get("execution", {}).get("visible_agent_handles_per_process"),
             "compose_project": os.getenv("COMPOSE_PROJECT_NAME", ""),
             "completed_task_count": len(episode_results),
             "total_episodes": total_episodes,
@@ -505,7 +658,13 @@ def _release_claim(runtime_dir: Path, worker_id: str, task_payload, error: str):
         pass
 
 
-def _heartbeat_loop(runtime_dir: Path, worker_id: str, slot_count: int, stop_event: threading.Event):
+def _heartbeat_loop(
+    runtime_dir: Path,
+    worker_id: str,
+    slot_count: int,
+    stop_event: threading.Event,
+    worker_metadata=None,
+):
     worker_path = runtime_dir / "workers" / f"{worker_id}.json"
     while not stop_event.is_set():
         payload = {
@@ -515,6 +674,8 @@ def _heartbeat_loop(runtime_dir: Path, worker_id: str, slot_count: int, stop_eve
             "hostname": os.getenv("HOSTNAME", ""),
             "pid": os.getpid(),
         }
+        if worker_metadata:
+            payload.update(worker_metadata)
         _atomic_write_json(worker_path, payload)
         stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
 

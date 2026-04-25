@@ -15,7 +15,7 @@ BASE_COMPOSE=".docker-compose.yaml"
 BENCHMARK_COMPOSE=".docker-compose.benchmark.yaml"
 CHECKPOINT=""
 WORKERS=4
-ENVS_PER_WORKER=1
+ENVS_PER_WORKER=10
 MAX_WAIT=1800
 POLICY_MODE="${KAIWU_BENCHMARK_POLICY_MODE:-eval}"
 ALLOW_CONCURRENT="${ALLOW_CONCURRENT:-0}"
@@ -125,6 +125,40 @@ cleanup_stack() {
     docker network rm "${COMPOSE_PROJECT_NAME}_default" >/dev/null 2>&1 || true
 }
 
+assert_container_env() {
+    local name="$1"
+    local expected="$2"
+    local actual
+    actual="$(docker exec "${AISRV_CONTAINER}" printenv "${name}" 2>/dev/null || true)"
+    if [[ "${actual}" != "${expected}" ]]; then
+        echo "[ERROR] ${name} not propagated to ${AISRV_CONTAINER} (expected: '${expected}', got: '${actual}')" >&2
+        exit 1
+    fi
+}
+
+assert_toml_key() {
+    local key="$1"
+    local expected="$2"
+    local target="/data/projects/${KAIWU_PROJECT_CODE:-robot_vacuum}/kaiwudrl/conf/kaiwudrl/configure.toml"
+    local actual=""
+    local attempt
+
+    for attempt in $(seq 1 30); do
+        actual="$(
+            docker exec "${AISRV_CONTAINER}" sh -lc \
+                "awk -F= -v key='${key}' '\$1 ~ \"^[[:space:]]*\" key \"[[:space:]]*$\" {gsub(/[ \\\"\\r]/, \"\", \$2); value=\$2} END {print value}' '${target}'" \
+                2>/dev/null || true
+        )"
+        if [[ "${actual}" == "${expected}" ]]; then
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo "[ERROR] ${key} not written to ${target} in ${AISRV_CONTAINER} (expected: '${expected}', got: '${actual}')" >&2
+    exit 1
+}
+
 trap cleanup_stack EXIT
 
 mkdir -p \
@@ -185,7 +219,16 @@ if [[ "${BM_MODE}" != "1" ]]; then
     echo "       Recreating benchmark stack..."
     compose_cmd up -d --force-recreate \
         pushgateway backup_model gamecore learner aisrv 2>&1 | tail -5
+    sleep 5
 fi
+
+assert_container_env "KAIWU_BENCHMARK_PARALLEL_MODE" "1"
+assert_container_env "KAIWU_AISRV_NUM" "${WORKERS}"
+assert_container_env "KAIWU_GAMECORE_NUM" "${GAMECORES}"
+assert_container_env "KAIWU_PARALLEL_ENV_PER_AISRV" "${ENVS_PER_WORKER}"
+assert_container_env "KAIWU_BENCHMARK_WORKER_COUNT" "${WORKERS}"
+assert_container_env "KAIWU_BENCHMARK_ENVS_PER_WORKER" "${ENVS_PER_WORKER}"
+assert_toml_key "aisrv_connect_to_kaiwu_env_count" "${ENVS_PER_WORKER}"
 
 echo "[5/6] Running benchmark..."
 ELAPSED=0

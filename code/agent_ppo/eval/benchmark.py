@@ -74,7 +74,7 @@ ROUNDS = [
 # Log output base directory (inside container)
 EVAL_LOG_BASE = Path("/workspace/code/eval_logs")
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 TOPK = 2
 EVIDENCE_RADIUS = 5
 REWARD_COMPONENT_KEYS = (
@@ -82,6 +82,9 @@ REWARD_COMPONENT_KEYS = (
     "streak",
     "explore",
     "frontier",
+    "charger_progress_arrival_bonus",
+    "safe_return_progress_bonus",
+    "clean_per_step_efficiency_bonus",
     "recoverability",
     "charge",
     "npc",
@@ -230,6 +233,20 @@ ISSUE_INDEX_CONFIG = {
         ],
         "primary_attribution_key": "reward_attribution.battery_fail_trajectory",
     },
+}
+ISSUE_EVIDENCE_WINDOW_KEY = {
+    "wall_hugging": "first_wall_hugging_window",
+    "corner_loop": "first_corner_loop_window",
+    "loop": "first_loop_window",
+    "low_value_revisit": "first_low_value_revisit_window",
+    "narrow_unknown_commit": "first_narrow_unknown_commit_window",
+    "missed_charge_opportunity": "first_missed_charge_window",
+    "late_return": "first_late_return_window",
+    "late_contract": "first_late_return_window",
+    "return_stall": "first_return_stall_window",
+    "target_selection": "first_suboptimal_target_window",
+    "charger_contested": "first_charger_contested_window",
+    "battery_fail": "last_battery_fail_window",
 }
 
 
@@ -428,6 +445,9 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
         }
 
     agent.reset(env_obs)
+    reset_override_summary = getattr(agent, "reset_eval_override_summary", None)
+    if reset_override_summary is not None:
+        reset_override_summary()
     obs_data, _ = agent.observation_process(env_obs)
 
     ep_log_path = session_dir / "episodes" / f"{round_name}_map{map_id}.jsonl"
@@ -543,6 +563,9 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
         narrow_passage_flag = 1.0 if 0 < local_passage_width <= 2 else 0.0
         nearest_charger_dist = float(getattr(fm, "nearest_charger_dist", 0.0))
         charge_margin_now = round(float(charger_slack), 4)
+        battery_max = max(float(getattr(fm, "battery_max", 1.0)), 1.0)
+        battery_ratio = round(float(getattr(fm, "battery", 0.0)) / battery_max, 4)
+        just_charged = 1.0 if bool(getattr(fm, "just_charged", False)) else 0.0
         reserve = max(8.0, 0.04 * max(float(getattr(fm, "battery_max", 1)), 1.0))
         min_margin_any_charger = 0.0
         if getattr(fm, "sorted_charger_candidates", None):
@@ -557,6 +580,11 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             nearest_charger_dist <= 2.0
             and float(getattr(fm, "battery", 0.0)) <= 0.25 * max(float(getattr(fm, "battery_max", 1.0)), 1.0)
             and not bool(getattr(fm, "just_charged", False))
+        )
+        risk_worsening_while_cleaning = (
+            int(getattr(fm, "current_mode", -1)) in (0, 1, 2)
+            and charger_slack_delta < 0.0
+            and charger_slack <= float(Config.PREPARE_RETURN_SLACK_THRESHOLD)
         )
         target_selection_gap = 0.0
         selected_target_rank = int(decision_target)
@@ -582,6 +610,8 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
         mode_probs = _to_prob_array(getattr(act_data, "mode_prob", []))
         target_probs = _to_prob_array(getattr(act_data, "target_prob", []))
         anchor_probs = _to_prob_array(getattr(act_data, "route_anchor_prob", []))
+        eval_override_reason = getattr(agent, "_last_eval_override_reason", None)
+        eval_override_active = 1.0 if eval_override_reason else 0.0
         action_topk = _topk_summary(action_probs, TOPK)
         mode_topk = _topk_summary(mode_probs, TOPK)
         target_topk = _topk_summary(target_probs, TOPK)
@@ -623,18 +653,23 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             "action": selected_action,
             "sampled_action": action_idx,
             "greedy_action": int(np.asarray(getattr(act_data, "d_action", [selected_action])).reshape(-1)[0]),
+            "eval_override_active": eval_override_active,
+            "eval_override_reason": eval_override_reason or "",
             "reward": round(reward_scalar, 4),
             "total_reward": round(total_reward, 4),
             "battery": int(fm.battery),
             "battery_max": int(fm.battery_max),
+            "battery_ratio": battery_ratio,
             "dirt_cleaned": int(fm.dirt_cleaned),
             "total_dirt": int(fm.total_dirt),
             "mode": int(fm.current_mode),
             "route_anchor": decision_route_anchor,
             "target": decision_target,
             "charger_slack": charger_slack,
+            "charge_need_zone": _charge_need_zone(battery_ratio=battery_ratio, charger_slack=charger_slack),
             "future_recoverability_score": future_recoverability,
             "anchor_return_dist": anchor_return_dist,
+            "just_charged": just_charged,
             "is_diag_action": 1.0 if selected_action in (1, 3, 5, 7) else 0.0,
             "nearest_npc_dist": round(float(fm.nearest_npc_dist), 1),
             "invalid_move_count": int(fm.invalid_move_count),
@@ -676,6 +711,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             "nearest_charger_dist": round(nearest_charger_dist, 4),
             "missed_charge_opportunity": 1.0 if missed_charge_opportunity else 0.0,
             "charger_nearby_not_charged": 1.0 if charger_nearby_not_charged else 0.0,
+            "risk_worsening_while_cleaning": 1.0 if risk_worsening_while_cleaning else 0.0,
             "target_selection_gap": target_selection_gap,
             "selected_target_rank": selected_target_rank,
             "best_astar_charger_idx": best_astar_charger_idx,
@@ -732,7 +768,9 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             "state": {
                 "battery": int(fm.battery),
                 "battery_max": int(fm.battery_max),
+                "battery_ratio": battery_ratio,
                 "charger_slack": charger_slack,
+                "charge_need_zone": _charge_need_zone(battery_ratio=battery_ratio, charger_slack=charger_slack),
                 "future_recoverability_score": future_recoverability,
                 "anchor_return_dist": anchor_return_dist,
                 "nearest_npc_dist": round(float(fm.nearest_npc_dist), 1),
@@ -751,6 +789,8 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             "decision": {
                 "action": selected_action,
                 "policy_mode": policy_mode,
+                "eval_override_active": eval_override_active,
+                "eval_override_reason": eval_override_reason or "",
                 "mode": int(fm.current_mode),
                 "route_anchor": decision_route_anchor,
                 "target": decision_target,
@@ -801,6 +841,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
                 "target_progress_delta": target_progress_delta,
                 "recoverability_delta": recoverability_delta,
                 "charger_slack_delta": charger_slack_delta,
+                "risk_worsening_while_cleaning": 1.0 if risk_worsening_while_cleaning else 0.0,
                 "local_passage_width": local_passage_width,
                 "narrow_passage_flag": narrow_passage_flag,
                 "target_charger_robot_count": target_charger_robot_count,
@@ -843,7 +884,11 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
     charge_count = float(env_info.get("charge_count", 0))
     remaining_charge = float(env_info.get("remaining_charge", hero.get("battery", 0)))
     diagnostics = _sequence_diagnostics(step_records)
+    override_summary_getter = getattr(agent, "get_eval_override_summary", None)
+    eval_override_summary = override_summary_getter() if override_summary_getter is not None else {}
     anomaly_summary = _anomaly_summary(step_records)
+    phase_events = _phase_event_summary(step_records)
+    charge_timing_summary = _charge_timing_summary(step_records)
     reward_attribution = _reward_attribution(step_records)
     evidence_windows = _extract_evidence_windows(step_records)
     episode_id = f"{round_name}_map{map_id}"
@@ -890,6 +935,11 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             "total_reward": round(total_reward, 3),
         },
         "diagnostics": diagnostics,
+        "eval_override_summary": eval_override_summary,
+        "eval_override_rate": float(eval_override_summary.get("eval_override_rate", 0.0) or 0.0),
+        "eval_override_reason_counts": dict(eval_override_summary.get("eval_override_reason_counts", {}) or {}),
+        "phase_events": phase_events,
+        "charge_timing_summary": charge_timing_summary,
         "anomaly_summary": anomaly_summary,
         "reward_attribution": reward_attribution,
         "evidence_windows": evidence_windows,
@@ -1205,6 +1255,107 @@ def _sequence_diagnostics(step_records):
         "mode_usage_contract": sum(1 for mode in modes if mode == 3) / total,
         "mode_usage_return": sum(1 for mode in modes if mode == 4) / total,
         "mode_usage_evade": sum(1 for mode in modes if mode == 5) / total,
+    }
+
+
+def _charge_need_zone(*, battery_ratio, charger_slack):
+    """Human-readable diagnostic bucket for charge timing analysis only."""
+    return_slack = float(getattr(Config, "RETURN_SLACK_THRESHOLD", 4.0))
+    prepare_slack = float(getattr(Config, "PREPARE_RETURN_SLACK_THRESHOLD", 6.0))
+    battery_ratio = float(battery_ratio)
+    charger_slack = float(charger_slack)
+    if charger_slack <= return_slack or battery_ratio <= 0.12:
+        return "critical"
+    if charger_slack <= prepare_slack or battery_ratio <= 0.25:
+        return "urgent"
+    if charger_slack <= prepare_slack * 2.0 or battery_ratio <= 0.35:
+        return "prepare"
+    return "safe"
+
+
+def _phase_event_summary(step_records):
+    def _first_step(predicate):
+        for rec in step_records:
+            if predicate(rec):
+                return int(rec.get("step", 0))
+        return None
+
+    def _last_step(predicate):
+        for rec in reversed(step_records):
+            if predicate(rec):
+                return int(rec.get("step", 0))
+        return None
+
+    first_negative_slack = _first_step(lambda rec: float(rec.get("charger_slack", 0.0)) < 0.0)
+    first_return = _first_step(lambda rec: int(rec.get("mode", -1)) == 4)
+    return_delay = None
+    if first_negative_slack is not None and first_return is not None:
+        return_delay = max(int(first_return) - int(first_negative_slack), 0)
+
+    return {
+        "first_contract_step": _first_step(lambda rec: int(rec.get("mode", -1)) in (3, 4)),
+        "first_return_step": first_return,
+        "first_negative_slack_step": first_negative_slack,
+        "first_low_recoverability_step": _first_step(lambda rec: float(rec.get("future_recoverability_score", 0.0)) < 0.0),
+        "first_charge_step": _first_step(lambda rec: float(rec.get("just_charged", 0.0)) > 0.0),
+        "last_charge_step": _last_step(lambda rec: float(rec.get("just_charged", 0.0)) > 0.0),
+        "first_missed_charge_step": _first_step(
+            lambda rec: float(rec.get("missed_charge_opportunity", rec.get("anomalies", {}).get("missed_charge_opportunity", 0.0)))
+            > 0.0
+        ),
+        "first_low_value_revisit_step": _first_step(
+            lambda rec: float(rec.get("anomalies", {}).get("low_value_revisit", 0.0)) > 0.0
+        ),
+        "first_wall_hugging_step": _first_step(
+            lambda rec: float(rec.get("anomalies", {}).get("wall_hugging_clean_floor", 0.0)) > 0.0
+        ),
+        "first_planner_divergence_step": _first_step(
+            lambda rec: float(rec.get("anomalies", {}).get("planner_policy_divergence", 0.0)) > 0.0
+        ),
+        "return_after_negative_slack_delay": return_delay,
+    }
+
+
+def _charge_timing_summary(step_records):
+    total = max(len(step_records), 1)
+    slacks = [float(rec.get("charger_slack", 0.0)) for rec in step_records]
+    first_charge_idx = next(
+        (idx for idx, rec in enumerate(step_records) if float(rec.get("just_charged", 0.0)) > 0.0),
+        None,
+    )
+    pre_charge_records = step_records if first_charge_idx is None else step_records[:first_charge_idx]
+    late_return_before_charge = any(
+        float(rec.get("risk_worsening_while_cleaning", 0.0)) > 0.0
+        or float(rec.get("missed_charge_opportunity", rec.get("anomalies", {}).get("missed_charge_opportunity", 0.0))) > 0.0
+        or (
+            int(rec.get("mode", -1)) in (0, 1, 2)
+            and float(rec.get("charger_slack", 0.0)) <= float(getattr(Config, "RETURN_SLACK_THRESHOLD", 4.0))
+        )
+        for rec in pre_charge_records
+    )
+
+    return {
+        "min_charger_slack": round(min(slacks), 4) if slacks else 0.0,
+        "negative_slack_rate": round(sum(1 for value in slacks if value < 0.0) / total, 4),
+        "charge_event_count_logged": int(sum(1 for rec in step_records if float(rec.get("just_charged", 0.0)) > 0.0)),
+        "risk_worsening_while_cleaning_rate": round(
+            sum(float(rec.get("risk_worsening_while_cleaning", 0.0)) for rec in step_records) / total,
+            4,
+        ),
+        "missed_charge_opportunity_rate": round(
+            sum(float(rec.get("missed_charge_opportunity", rec.get("anomalies", {}).get("missed_charge_opportunity", 0.0))) for rec in step_records)
+            / total,
+            4,
+        ),
+        "charger_nearby_not_charged_rate": round(
+            sum(
+                float(rec.get("charger_nearby_not_charged", rec.get("anomalies", {}).get("charger_nearby_not_charged", 0.0)))
+                for rec in step_records
+            )
+            / total,
+            4,
+        ),
+        "late_return_before_charge": bool(late_return_before_charge),
     }
 
 
@@ -1528,6 +1679,10 @@ def _subset_reward_attribution(step_records, predicate):
             "reward_total_mean": 0.0,
             "reward_clean_mean": 0.0,
             "reward_survive_mean": 0.0,
+            "positive_reward_sum_mean": 0.0,
+            "negative_reward_sum_mean": 0.0,
+            "positive_total_reward_rate": 0.0,
+            "conflict_score": 0.0,
             "top_positive_reward_terms": [],
             "top_negative_reward_terms": [],
             "avg_mode_distribution": {},
@@ -1539,6 +1694,16 @@ def _subset_reward_attribution(step_records, predicate):
     component_means = {}
     for key in REWARD_COMPONENT_KEYS:
         component_means[f"reward_{key}"] = float(sum(rec.get(f"reward_{key}", 0.0) for rec in subset) / len(subset))
+    positive_sums = [
+        sum(float(rec.get(f"reward_{key}", 0.0)) for key in REWARD_COMPONENT_KEYS if float(rec.get(f"reward_{key}", 0.0)) > 0.0)
+        for rec in subset
+    ]
+    negative_sums = [
+        sum(float(rec.get(f"reward_{key}", 0.0)) for key in REWARD_COMPONENT_KEYS if float(rec.get(f"reward_{key}", 0.0)) < 0.0)
+        for rec in subset
+    ]
+    positive_reward_sum_mean = float(sum(positive_sums) / len(subset))
+    negative_reward_sum_mean = float(sum(negative_sums) / len(subset))
 
     top_positive = sorted(
         ((label, value) for label, value in component_means.items() if value > 0.0),
@@ -1559,6 +1724,10 @@ def _subset_reward_attribution(step_records, predicate):
         "reward_total_mean": round(sum(rec.get("reward", 0.0) for rec in subset) / len(subset), 4),
         "reward_clean_mean": round(sum(rec.get("reward_clean", 0.0) for rec in subset) / len(subset), 4),
         "reward_survive_mean": round(sum(rec.get("reward_survive", 0.0) for rec in subset) / len(subset), 4),
+        "positive_reward_sum_mean": round(positive_reward_sum_mean, 4),
+        "negative_reward_sum_mean": round(negative_reward_sum_mean, 4),
+        "positive_total_reward_rate": round(sum(1 for rec in subset if float(rec.get("reward", 0.0)) > 0.0) / len(subset), 4),
+        "conflict_score": round(positive_reward_sum_mean + negative_reward_sum_mean, 4),
         "top_positive_reward_terms": [[label, round(value, 4)] for label, value in top_positive],
         "top_negative_reward_terms": [[label, round(value, 4)] for label, value in top_negative],
         "avg_mode_distribution": {label: round(count / len(subset), 4) for label, count in sorted(mode_counts.items())},
@@ -1582,9 +1751,29 @@ def _extract_evidence_windows(step_records):
             step_records,
             next((idx for idx, rec in enumerate(step_records) if rec.get("anomalies", {}).get("missed_charge_opportunity", 0.0) > 0.0), None),
         ),
+        "first_low_value_revisit_window": _slice_window(
+            step_records,
+            next((idx for idx, rec in enumerate(step_records) if rec.get("anomalies", {}).get("low_value_revisit", 0.0) > 0.0), None),
+        ),
         "first_narrow_unknown_commit_window": _slice_window(
             step_records,
             next((idx for idx, rec in enumerate(step_records) if rec.get("anomalies", {}).get("narrow_unknown_commit", 0.0) > 0.0), None),
+        ),
+        "first_loop_window": _slice_window(
+            step_records,
+            next((idx for idx, rec in enumerate(step_records) if rec.get("anomalies", {}).get("loop_suspect", 0.0) > 0.0), None),
+        ),
+        "first_return_stall_window": _slice_window(
+            step_records,
+            next((idx for idx, rec in enumerate(step_records) if rec.get("mode", -1) == 4 and rec.get("target_progress_delta", 0.0) <= 0.0), None),
+        ),
+        "first_suboptimal_target_window": _slice_window(
+            step_records,
+            next((idx for idx, rec in enumerate(step_records) if rec.get("anomalies", {}).get("suboptimal_target_hold", 0.0) > 0.0), None),
+        ),
+        "first_charger_contested_window": _slice_window(
+            step_records,
+            next((idx for idx, rec in enumerate(step_records) if rec.get("anomalies", {}).get("charger_contested", 0.0) > 0.0), None),
         ),
         "first_target_retarget_window": _slice_window(
             step_records,
@@ -1723,6 +1912,10 @@ def _aggregate_reward_attribution(episodes):
                 "reward_total_mean": 0.0,
                 "reward_clean_mean": 0.0,
                 "reward_survive_mean": 0.0,
+                "positive_reward_sum_mean": 0.0,
+                "negative_reward_sum_mean": 0.0,
+                "positive_total_reward_rate": 0.0,
+                "conflict_score": 0.0,
                 "top_positive_reward_terms": [],
                 "top_negative_reward_terms": [],
             }
@@ -1750,6 +1943,10 @@ def _aggregate_reward_attribution(episodes):
             "reward_total_mean": round(sum(attr["reward_total_mean"] for attr in attrs) / len(attrs), 4),
             "reward_clean_mean": round(sum(attr["reward_clean_mean"] for attr in attrs) / len(attrs), 4),
             "reward_survive_mean": round(sum(attr["reward_survive_mean"] for attr in attrs) / len(attrs), 4),
+            "positive_reward_sum_mean": round(sum(attr.get("positive_reward_sum_mean", 0.0) for attr in attrs) / len(attrs), 4),
+            "negative_reward_sum_mean": round(sum(attr.get("negative_reward_sum_mean", 0.0) for attr in attrs) / len(attrs), 4),
+            "positive_total_reward_rate": round(sum(attr.get("positive_total_reward_rate", 0.0) for attr in attrs) / len(attrs), 4),
+            "conflict_score": round(sum(attr.get("conflict_score", 0.0) for attr in attrs) / len(attrs), 4),
             "top_positive_reward_terms": [[label, round(value, 4)] for label, value in top_positive],
             "top_negative_reward_terms": [[label, round(value, 4)] for label, value in top_negative],
         }
@@ -1758,6 +1955,8 @@ def _aggregate_reward_attribution(episodes):
 
 def _build_ai_summary(snapshot):
     episodes = snapshot.get("episodes", [])
+    overall = snapshot.get("overall", {})
+    reward_attribution = overall.get("reward_attribution", {})
     issue_index = {}
     for issue, config in ISSUE_INDEX_CONFIG.items():
         matched = [ep for ep in episodes if config["predicate"](ep)]
@@ -1766,6 +1965,7 @@ def _build_ai_summary(snapshot):
             "episode_count": len(matched),
             "example_episode_ids": [ep.get("episode_id") for ep in matched[:3]],
             "primary_metrics": config["primary_metrics"],
+            "primary_metric_values": _primary_metric_values(matched, config["primary_metrics"], overall),
             "primary_attribution_key": config["primary_attribution_key"],
         }
 
@@ -1784,18 +1984,86 @@ def _build_ai_summary(snapshot):
             continue
         evidence[issue] = episode.get("evidence_windows", {})
 
+    diagnosis_cards = {}
+    for issue, meta in issue_index.items():
+        if not meta["detected"]:
+            continue
+        first_id = meta["example_episode_ids"][0] if meta["example_episode_ids"] else None
+        episode = next((item for item in episodes if item.get("episode_id") == first_id), {})
+        attribution = _lookup_dotted(
+            {"reward_attribution": reward_attribution},
+            ISSUE_INDEX_CONFIG[issue]["primary_attribution_key"],
+            {},
+        )
+        evidence_windows = episode.get("evidence_windows", {}) if isinstance(episode, dict) else {}
+        preferred_window = ISSUE_EVIDENCE_WINDOW_KEY.get(issue)
+        first_evidence_window = preferred_window if preferred_window and evidence_windows.get(preferred_window) else None
+        if first_evidence_window is None:
+            first_evidence_window = next((name for name, window in evidence_windows.items() if window), None)
+        diagnosis_cards[issue] = {
+            "episode_count": meta["episode_count"],
+            "example_episode_id": first_id,
+            "primary_metric_values": meta["primary_metric_values"],
+            "reward_conflict": {
+                "sample_count": int(attribution.get("sample_count", 0)) if isinstance(attribution, dict) else 0,
+                "reward_total_mean": float(attribution.get("reward_total_mean", 0.0)) if isinstance(attribution, dict) else 0.0,
+                "positive_total_reward_rate": float(attribution.get("positive_total_reward_rate", 0.0))
+                if isinstance(attribution, dict)
+                else 0.0,
+                "conflict_score": float(attribution.get("conflict_score", 0.0)) if isinstance(attribution, dict) else 0.0,
+                "top_positive_reward_terms": attribution.get("top_positive_reward_terms", []) if isinstance(attribution, dict) else [],
+                "top_negative_reward_terms": attribution.get("top_negative_reward_terms", []) if isinstance(attribution, dict) else [],
+            },
+            "first_evidence_window": first_evidence_window,
+        }
+
     return {
         "version": SCHEMA_VERSION,
         "schema_version": SCHEMA_VERSION,
         "timestamp": snapshot.get("timestamp"),
         "checkpoint": snapshot.get("checkpoint"),
-        "overall": snapshot.get("overall", {}),
+        "overall": overall,
         "top_anomalies": [{"issue": issue, "episode_count": count} for issue, count in ranked[:5]],
         "issue_index": issue_index,
+        "diagnosis_cards": diagnosis_cards,
         "round_summaries": snapshot.get("per_round", {}),
-        "reward_attribution": snapshot.get("overall", {}).get("reward_attribution", {}),
+        "reward_attribution": reward_attribution,
         "example_evidence_windows": evidence,
     }
+
+
+def _primary_metric_values(episodes, metric_names, overall):
+    values = {}
+    for metric_name in metric_names:
+        if metric_name in overall and isinstance(overall.get(metric_name), (int, float)):
+            values[metric_name] = round(float(overall[metric_name]), 4)
+            continue
+        metric_values = []
+        for episode in episodes:
+            value = _episode_metric_value(episode, metric_name)
+            if isinstance(value, (int, float)):
+                metric_values.append(float(value))
+        values[metric_name] = round(sum(metric_values) / len(metric_values), 4) if metric_values else 0.0
+    return values
+
+
+def _episode_metric_value(episode, metric_name):
+    if metric_name in episode:
+        return episode.get(metric_name)
+    for container_name in ("anomaly_summary", "diagnostics", "charge_timing_summary", "phase_events"):
+        container = episode.get(container_name, {})
+        if isinstance(container, dict) and metric_name in container:
+            return container.get(metric_name)
+    return None
+
+
+def _lookup_dotted(payload, dotted_key, default=None):
+    current = payload
+    for part in dotted_key.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return default
+        current = current[part]
+    return current
 
 
 # ---------------------------------------------------------------------------

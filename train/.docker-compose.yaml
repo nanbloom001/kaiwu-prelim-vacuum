@@ -980,6 +980,7 @@ services:
             "    replace_toml_literal(app_conf, 'preload_model_dir', f'\"{preload.get(\"checkpoint_dir_relative\", \"agent_ppo/ckpt\")}\"')\n"
             "    replace_toml_literal(app_conf, 'preload_model_id', preload['checkpoint_id'])\n"
             "replace_toml_key(framework_conf, 'train_batch_size', 'KAIWU_EXPERIMENT_TRAIN_BATCH_SIZE')\n"
+            "replace_toml_key(framework_conf, 'aisrv_connect_to_kaiwu_env_count', 'KAIWU_PARALLEL_ENV_PER_AISRV')\n"
             "replace_toml_key(framework_conf, 'predict_batch_size', 'KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE')\n"
             "replace_toml_key(framework_conf, 'proxy_batch_size', 'KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE')\n"
             "required_max_sample_size = compute_required_max_sample_size()\n"
@@ -1470,6 +1471,7 @@ services:
 
         # ---- Phase 2: Patch configure.toml for predict_batch_size (aisrv side) ----
         configure_toml = root / "kaiwudrl/conf/kaiwudrl/configure.toml"
+        replace_toml_key(configure_toml, "aisrv_connect_to_kaiwu_env_count", "KAIWU_PARALLEL_ENV_PER_AISRV")
         replace_toml_key(configure_toml, "predict_batch_size", "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE")
         replace_toml_key(configure_toml, "proxy_batch_size", "KAIWU_EXPERIMENT_PREDICT_BATCH_SIZE")
 
@@ -1525,6 +1527,7 @@ services:
             "project = os.environ.get('KAIWU_PROJECT_CODE', 'robot_vacuum')\n"
             "root = Path(f'/data/projects/{project}')\n"
             "app_conf = root / 'conf/configure_app.toml'\n"
+            "framework_conf = root / 'kaiwudrl/conf/kaiwudrl/configure.toml'\n"
             "code_dir = Path('/workspace/code')\n"
             "benchmark_mode = os.environ.get('KAIWU_BENCHMARK_MODE') == '1' or os.environ.get('KAIWU_BENCHMARK_PARALLEL_MODE') == '1'\n"
             "if benchmark_mode:\n"
@@ -1539,12 +1542,40 @@ services:
             "if preload.get('enabled'):\n"
             "    replace_toml_literal(app_conf, 'preload_model_dir', f'\"{preload.get(\"checkpoint_dir_relative\", \"agent_ppo/ckpt\")}\"')\n"
             "    replace_toml_literal(app_conf, 'preload_model_id', preload['checkpoint_id'])\n"
+            "replace_toml_key(framework_conf, 'aisrv_connect_to_kaiwu_env_count', 'KAIWU_PARALLEL_ENV_PER_AISRV')\n"
         )
         PY
         if [ -n "${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE:-}" ]; then
           sed -i "s|sh tools/change_sample_server.sh reverb|sh tools/change_sample_server.sh ${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE}|g" /root/tools/common.sh
           echo "[aisrv-sed] Patched common.sh to use ${KAIWU_EXPERIMENT_REPLAY_BUFFER_TYPE}"
         fi
+        python3 - <<'STARTCLIENTPY'
+        from pathlib import Path
+
+        target = Path("/root/tools/start_train_client.sh")
+        text = target.read_text()
+        anchor = "sh tools/change_alloc_process_count.sh kaiwu_env $${parallel_env_per_aisrv}\n"
+        inserted = "change_config_in_file aisrv_connect_to_kaiwu_env_count $${parallel_env_per_aisrv} $${kaiwudrl_configure_file} int\n"
+        changed = False
+        if inserted not in text:
+            if anchor not in text:
+                raise SystemExit(f"Failed to patch {target}: parallel env count anchor not found")
+            text = text.replace(anchor, anchor + inserted, 1)
+            changed = True
+        if text.count("change_config_in_file aisrv_connect_to_kaiwu_env_count") != 1:
+            raise SystemExit(f"Failed to patch {target}: expected one env-count config line")
+        alloc_pos = text.find(anchor.strip())
+        inserted_pos = text.find(inserted.strip())
+        deployment_anchor = "change_config_in_file deployment_platforms client $$kaiwudrl_configure_file str"
+        deployment_pos = text.find(deployment_anchor, inserted_pos)
+        if not (alloc_pos < inserted_pos < deployment_pos):
+            raise SystemExit(f"Failed to patch {target}: env-count config line is not before deployment_platforms config")
+        if changed:
+            target.write_text(text)
+            print("[aisrv-startup-patch] inserted aisrv_connect_to_kaiwu_env_count before start_aisrv")
+        else:
+            print("[aisrv-startup-patch] aisrv_connect_to_kaiwu_env_count already patched")
+        STARTCLIENTPY
         bash -c '/root/tools/start_train_client.sh aisrv & sleep 10 && python3 /data/projects/robot_vacuum/kaiwudrl/aisrv_post_init_patch.py && wait'
     scale: ${KAIWU_AISRV_NUM}
     profiles:

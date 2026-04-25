@@ -1,0 +1,33 @@
+{
+  "authoritative_for": "latest_f1_remediation_return_teacher_maskobs",
+  "baseline_session_id": "20260421-134719",
+  "comparison_report": ".sisyphus/evidence/benchmark-900/compare-20260425-214802-return-teacher-maskobs.json",
+  "continuation_allowed_past_global_40": false,
+  "convergence_report": ".sisyphus/evidence/benchmark-900/convergence-20260425-214802-return-teacher-maskobs.json",
+  "decision": "revert",
+  "docker_cleanup": {
+    "clean": true,
+    "down_ran": true,
+    "running_kaiwu_train_containers": []
+  },
+  "evidence_report": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-214802-return-teacher-maskobs-report.json",
+  "final_runtime_global_episode_count": 41,
+  "global_40_metrics": {
+    "avg_clean_per_step": 0.335047,
+    "battery_fail_rate": 0.6,
+    "invalid_for_promotion": true,
+    "return_action_teacher_mask_mean": 0.06965865030538894,
+    "return_action_teacher_mask_nonzero_rate": 0.06965865030538894,
+    "route_phase_action_teacher_mask_mean": 0.1301692774397507,
+    "route_phase_action_teacher_mask_nonzero_rate": 0.135552584779643,
+    "route_phase_return_stall_rate": 0.40715,
+    "win_rate": 0.325,
+    "zero_charge_battery_fail_rate": 0.45
+  },
+  "monitor_trigger_global_episode_count": 40,
+  "next_action": "Do not promote or benchmark; mask metrics are nonzero/present, so shift from observability gap to return readiness/control diagnosis.",
+  "phase": "s1_survival_return_teacher_v1",
+  "promotion_allowed": false,
+  "run_session_id": "20260425-214802",
+  "updated_at": "2026-04-25T14:04:02.438302+00:00"
+}

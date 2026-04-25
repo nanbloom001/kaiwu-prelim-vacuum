@@ -12,7 +12,7 @@
 - 中文优先，必要时保留英文 metric key
 """
 
-from kaiwudrl.common.monitor.monitor_config_builder import MonitorConfigBuilder
+from kaiwudrl.common.monitor.monitor_config_builder import MonitorConfigBuilder  # pyright: ignore[reportMissingImports]
 
 
 def _add_line_panel(builder, title_cn, metric_name, expr=None):
@@ -67,6 +67,17 @@ def build_monitor():
         ("预返航到返航切换率", "readiness_to_return_transition_rate"),
         ("无预返航直接返航率", "direct_return_without_readiness_rate"),
         ("风险释放奖励均值", "avg_reward_risk_release_reward"),
+        (
+            "目标充电到达奖励均值",
+            "avg_reward_charger_arrival_bonus",
+            "avg(avg_reward_charger_progress_arrival_bonus{})",
+        ),
+        ("目标安全返航进度奖励均值", "avg_reward_safe_return_progress_bonus"),
+        (
+            "目标清扫效率奖励均值",
+            "avg_reward_clean_efficiency_bonus",
+            "avg(avg_reward_clean_per_step_efficiency_bonus{})",
+        ),
         ("路由阶段风险恶化惩罚均值", "avg_reward_route_risk_growth_pen"),
         ("清扫态风险恶化影子均值", "avg_reward_clean_risk_shadow"),
         ("路由阶段影子风险均值", "avg_route_phase_shadow_risk"),
@@ -108,7 +119,12 @@ def build_monitor():
         ("熵损失", "entropy_loss"),
     ]
 
-    for title_cn, metric_name in panels:
-        builder = _add_line_panel(builder, title_cn, metric_name)
+    for panel_def in panels:
+        if len(panel_def) == 2:
+            title_cn, metric_name = panel_def
+            expr = None
+        else:
+            title_cn, metric_name, expr = panel_def
+        builder = _add_line_panel(builder, title_cn, metric_name, expr)
 
     return builder.end_group().build()

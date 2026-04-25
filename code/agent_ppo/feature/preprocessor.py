@@ -1675,6 +1675,7 @@ class Preprocessor:
         )
 
         return_progress_shaping_bonus = 0.0
+        safe_return_progress_bonus = 0.0
         if return_context_reliable:
             progress_signal = (
                 0.50 * float(np.clip(progress / 2.0, 0.0, 1.0))
@@ -1687,6 +1688,13 @@ class Preprocessor:
                 * max(slack_confidence, 0.35 if known_route else 0.0)
                 * progress_signal
             )
+            if Config.TARGET_REWARD_ALIGNMENT_ENABLED:
+                safe_return_progress_bonus = (
+                    Config.TARGET_SAFE_RETURN_PROGRESS_BONUS_SCALE
+                    * max(urgency, 0.35)
+                    * max(slack_confidence, 0.35 if known_route else 0.0)
+                    * progress_signal
+                )
 
         risk_release_from_progress = 0.0
         risk_release_from_charge_event = 0.0
@@ -1705,6 +1713,7 @@ class Preprocessor:
             risk_release_reward = risk_release_from_progress + risk_release_from_charge_event
 
         necessary_charge_bonus = 0.0
+        charger_progress_arrival_bonus = 0.0
         if self.just_charged and prev_charge_state in ("planning", "critical") and not simplify_control_stack:
             charge_received_ratio = float(
                 np.clip(max(0.0, float(self.battery - self.pre_charge_battery + 1)) / max(self.battery_max, 1), 0.0, 0.4)
@@ -1715,6 +1724,12 @@ class Preprocessor:
                 * charge_received_ratio
                 * float(np.clip(prev_charge_need_score, 0.0, 1.0))
             )
+            if Config.TARGET_REWARD_ALIGNMENT_ENABLED:
+                charger_progress_arrival_bonus = (
+                    Config.TARGET_CHARGER_ARRIVAL_BONUS_SCALE
+                    * charge_received_ratio
+                    * float(np.clip(prev_charge_need_score, 0.0, 1.0))
+                )
 
         unnecessary_charge_penalty = 0.0
         if self.just_charged and prev_charge_state == "safe" and not simplify_control_stack:
@@ -1941,6 +1956,26 @@ class Preprocessor:
         ):
             edge_follow_bonus = Config.EDGE_FOLLOW_BONUS_SCALE * edge_follow_raw * edge_state_gate
 
+        clean_per_step_efficiency_bonus = 0.0
+        if (
+            Config.TARGET_REWARD_ALIGNMENT_ENABLED
+            and self.current_mode in (self.MODE_EXPAND, self.MODE_HARVEST)
+            and battery_state == "safe"
+            and not low_value_revisit_flag
+        ):
+            useful_step_signal = max(
+                float(np.clip(float(self.cleaned_this_step) / 2.0, 0.0, 1.0)),
+                0.5 * float(np.clip(float(self.new_explored_cells) / 4.0, 0.0, 1.0)),
+            )
+            clean_per_step_efficiency_bonus = (
+                Config.TARGET_CLEAN_PER_STEP_EFFICIENCY_BONUS_SCALE
+                * useful_step_signal
+                * max(
+                    float(self.coverage_efficiency_20) - Config.TARGET_CLEAN_PER_STEP_EFFICIENCY_BASELINE,
+                    0.0,
+                )
+            )
+
         planner_alignment_reward = 0.0
         planner_alignment_scale = 0.0
         if self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN):
@@ -2009,6 +2044,9 @@ class Preprocessor:
             + coverage_efficiency_bonus
             + effective_coverage_bonus
             + edge_follow_bonus
+            + charger_progress_arrival_bonus
+            + safe_return_progress_bonus
+            + clean_per_step_efficiency_bonus
         )
         if not strong_heuristic_slice2a_phase:
             gain_reward += (
@@ -2029,6 +2067,9 @@ class Preprocessor:
             return_action_teacher_mask = 0.0
             route_phase_action_teacher = -1
             route_phase_action_teacher_mask = 0.0
+            route_phase_teacher_from_return_reliable = 0.0
+            route_phase_teacher_from_anchor_or_target = 0.0
+            route_phase_teacher_from_critical_fallback = 0.0
         else:
             mode_teacher = self.MODE_NAME_TO_ID.get(teacher.get("route_mode", "expand"), self.MODE_EXPAND)
             route_anchor_teacher = self._target_teacher_from_guidance({"target": teacher.get("route_anchor")})
@@ -2053,6 +2094,9 @@ class Preprocessor:
                     return_action_teacher_mask = max(return_action_teacher_mask, 0.65)
             route_phase_action_teacher = -1
             route_phase_action_teacher_mask = 0.0
+            route_phase_teacher_from_return_reliable = 0.0
+            route_phase_teacher_from_anchor_or_target = 0.0
+            route_phase_teacher_from_critical_fallback = 0.0
             if (
                 self.current_mode in (self.MODE_CONTRACT, self.MODE_RETURN)
                 and suggested_action is not None
@@ -2062,24 +2106,33 @@ class Preprocessor:
                     if self.current_mode == self.MODE_RETURN:
                         if return_action_reliable:
                             route_phase_action_teacher_mask = 1.0
+                            route_phase_teacher_from_return_reliable = 1.0
                         elif anchor_reliable or target_reliable:
                             route_phase_action_teacher_mask = 0.8
+                            route_phase_teacher_from_anchor_or_target = 1.0
                     elif return_action_reliable or anchor_reliable or target_reliable:
                         route_phase_action_teacher_mask = 0.5
+                        if return_action_reliable:
+                            route_phase_teacher_from_return_reliable = 1.0
+                        else:
+                            route_phase_teacher_from_anchor_or_target = 1.0
                 else:
                     if return_action_reliable:
                         if battery_state == "critical":
                             route_phase_action_teacher_mask = 1.0
                         else:
                             route_phase_action_teacher_mask = 0.8
+                        route_phase_teacher_from_return_reliable = 1.0
                     elif anchor_reliable or target_reliable:
                         route_phase_action_teacher_mask = 0.6
+                        route_phase_teacher_from_anchor_or_target = 1.0
                     if (
                         not strong_heuristic_slice2a_phase
                         and battery_state == "critical"
                         and route_phase_action_teacher_mask <= 0.0
                     ):
                         route_phase_action_teacher_mask = 1.0
+                        route_phase_teacher_from_critical_fallback = 1.0
 
         if strong_heuristic_phase:
             route_anchor_teacher_mask = 0.0
@@ -2087,9 +2140,17 @@ class Preprocessor:
             if not strong_heuristic_slice2a_phase:
                 route_phase_action_teacher = -1
                 route_phase_action_teacher_mask = 0.0
+                route_phase_teacher_from_return_reliable = 0.0
+                route_phase_teacher_from_anchor_or_target = 0.0
+                route_phase_teacher_from_critical_fallback = 0.0
             if self.current_mode != self.MODE_RETURN:
                 return_action_teacher = -1
                 return_action_teacher_mask = 0.0
+
+        if route_phase_action_teacher_mask <= 0.0 or route_phase_action_teacher < 0:
+            route_phase_teacher_from_return_reliable = 0.0
+            route_phase_teacher_from_anchor_or_target = 0.0
+            route_phase_teacher_from_critical_fallback = 0.0
 
         battery_risk_label = 1.0 if (charge_need_score >= Config.BATTERY_CRITICAL_NEED_THRESHOLD or slack < 0.0) else 0.0
 
@@ -2114,6 +2175,9 @@ class Preprocessor:
             "return_action_teacher_mask": float(return_action_teacher_mask),
             "route_phase_action_teacher": int(route_phase_action_teacher),
             "route_phase_action_teacher_mask": float(route_phase_action_teacher_mask),
+            "route_phase_teacher_from_return_reliable": float(route_phase_teacher_from_return_reliable),
+            "route_phase_teacher_from_anchor_or_target": float(route_phase_teacher_from_anchor_or_target),
+            "route_phase_teacher_from_critical_fallback": float(route_phase_teacher_from_critical_fallback),
             "battery_risk_label": float(battery_risk_label),
             "collision_risk_label": float(collision_risk_label),
             "fallback_mask": 0.0,
@@ -2125,6 +2189,9 @@ class Preprocessor:
             "risk_release_reward": risk_release_reward,
             "risk_release_from_progress": risk_release_from_progress,
             "risk_release_from_charge_event": risk_release_from_charge_event,
+            "charger_progress_arrival_bonus": charger_progress_arrival_bonus,
+            "safe_return_progress_bonus": safe_return_progress_bonus,
+            "clean_per_step_efficiency_bonus": clean_per_step_efficiency_bonus,
             "risk_growth_while_clean_penalty": risk_growth_while_clean_penalty,
             "route_phase_risk_growth_penalty": route_phase_risk_growth_penalty,
             "charge_opportunity_cost_penalty": charge_opportunity_cost_penalty,

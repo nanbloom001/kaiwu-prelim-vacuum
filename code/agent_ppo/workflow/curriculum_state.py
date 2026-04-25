@@ -89,6 +89,162 @@ RETURN_WINDOW_ALIAS_KEYS = (
     ("route_phase_planner_divergence_rate", "avg_route_phase_planner_divergence_rate"),
     ("reliable_planner_divergence_rate", "avg_reliable_planner_divergence_rate"),
 )
+TEACHER_LABEL_QUALITY_COUNT_KEYS = (
+    "return_teacher_count",
+    "route_phase_teacher_count",
+    "active_pair_count",
+    "agree_pair_count",
+    "disagree_pair_count",
+    "missing_route_pair_count",
+    "missing_return_pair_count",
+    "route_phase_teacher_from_return_reliable_count",
+    "route_phase_teacher_from_anchor_or_target_count",
+    "route_phase_teacher_from_critical_fallback_count",
+    "return_teacher_in_route_phase_count",
+    "return_teacher_outside_route_phase_count",
+    "return_teacher_mode_depart_count",
+    "return_teacher_mode_expand_count",
+    "return_teacher_mode_harvest_count",
+    "return_teacher_mode_contract_count",
+    "return_teacher_mode_return_count",
+    "return_teacher_mode_evade_count",
+    "return_teacher_mode_other_count",
+    "return_teacher_target_stable_count",
+    "return_teacher_target_unstable_count",
+    "return_teacher_suggested_legal_safe_count",
+    "return_teacher_action_margin_low_count",
+    "return_teacher_action_margin_mid_count",
+    "return_teacher_action_margin_high_count",
+    "return_teacher_stable_invariant_satisfied_count",
+    "return_teacher_stable_invariant_violated_count",
+    "return_teacher_legal_safe_invariant_satisfied_count",
+    "return_teacher_legal_safe_invariant_violated_count",
+    "return_teacher_action_margin_invariant_satisfied_count",
+    "return_teacher_action_margin_invariant_violated_count",
+    "return_teacher_reliability_invariant_satisfied_count",
+    "return_teacher_reliability_invariant_violated_count",
+)
+TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS = (
+    "return_route_teacher_active_pair_rate",
+    "return_route_teacher_agreement_rate",
+    "return_route_teacher_disagreement_rate",
+    "missing_route_pair_rate",
+    "missing_return_pair_rate",
+    "route_phase_teacher_from_return_reliable_rate",
+    "route_phase_teacher_from_anchor_or_target_rate",
+    "route_phase_teacher_from_critical_fallback_rate",
+    "return_teacher_in_route_phase_rate",
+    "return_teacher_outside_route_phase_rate",
+    "return_teacher_mode_depart_rate",
+    "return_teacher_mode_expand_rate",
+    "return_teacher_mode_harvest_rate",
+    "return_teacher_mode_contract_rate",
+    "return_teacher_mode_return_rate",
+    "return_teacher_mode_evade_rate",
+    "return_teacher_mode_other_rate",
+    "return_teacher_stable_invariant_satisfied_rate",
+    "return_teacher_stable_invariant_violated_rate",
+    "return_teacher_legal_safe_invariant_satisfied_rate",
+    "return_teacher_legal_safe_invariant_violated_rate",
+    "return_teacher_action_margin_invariant_satisfied_rate",
+    "return_teacher_action_margin_invariant_violated_rate",
+    "return_teacher_reliability_invariant_satisfied_rate",
+    "return_teacher_reliability_invariant_violated_rate",
+)
+TEACHER_LABEL_QUALITY_METRIC_KEYS = (
+    *TEACHER_LABEL_QUALITY_COUNT_KEYS,
+    *TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS,
+    "return_teacher_target_stable_rate",
+    "return_teacher_target_unstable_rate",
+    "return_teacher_suggested_legal_safe_rate",
+    "return_teacher_action_margin_low_rate",
+    "return_teacher_action_margin_mid_rate",
+    "return_teacher_action_margin_high_rate",
+    "return_teacher_agree_route_phase_planner_divergence_rate",
+    "return_teacher_disagree_route_phase_planner_divergence_rate",
+    "return_teacher_agree_route_phase_return_stall_rate",
+    "return_teacher_disagree_route_phase_return_stall_rate",
+    "return_teacher_margin_low_route_phase_planner_divergence_rate",
+    "return_teacher_margin_mid_route_phase_planner_divergence_rate",
+    "return_teacher_margin_high_route_phase_planner_divergence_rate",
+    "return_teacher_margin_low_route_phase_return_stall_rate",
+    "return_teacher_margin_mid_route_phase_return_stall_rate",
+    "return_teacher_margin_high_route_phase_return_stall_rate",
+)
+
+
+def _apply_teacher_label_quality_count_rates(payload: dict[str, Any]) -> dict[str, Any]:
+    def _ratio(num_key: str, den_key: str) -> float:
+        denominator = float(payload.get(den_key, 0.0) or 0.0)
+        if denominator <= 0.0:
+            return 0.0
+        return float(payload.get(num_key, 0.0) or 0.0) / denominator
+
+    payload["return_route_teacher_active_pair_rate"] = _ratio("active_pair_count", "return_teacher_count")
+    payload["return_route_teacher_agreement_rate"] = _ratio("agree_pair_count", "active_pair_count")
+    payload["return_route_teacher_disagreement_rate"] = _ratio("disagree_pair_count", "active_pair_count")
+    payload["missing_route_pair_rate"] = _ratio("missing_route_pair_count", "return_teacher_count")
+    payload["missing_return_pair_rate"] = _ratio("missing_return_pair_count", "route_phase_teacher_count")
+    payload["route_phase_teacher_from_return_reliable_rate"] = _ratio(
+        "route_phase_teacher_from_return_reliable_count", "route_phase_teacher_count"
+    )
+    payload["route_phase_teacher_from_anchor_or_target_rate"] = _ratio(
+        "route_phase_teacher_from_anchor_or_target_count", "route_phase_teacher_count"
+    )
+    payload["route_phase_teacher_from_critical_fallback_rate"] = _ratio(
+        "route_phase_teacher_from_critical_fallback_count", "route_phase_teacher_count"
+    )
+    payload["return_teacher_in_route_phase_rate"] = _ratio(
+        "return_teacher_in_route_phase_count", "return_teacher_count"
+    )
+    payload["return_teacher_outside_route_phase_rate"] = _ratio(
+        "return_teacher_outside_route_phase_count", "return_teacher_count"
+    )
+    for mode_name in ("depart", "expand", "harvest", "contract", "return", "evade", "other"):
+        payload[f"return_teacher_mode_{mode_name}_rate"] = _ratio(
+            f"return_teacher_mode_{mode_name}_count", "return_teacher_count"
+        )
+    payload["return_teacher_target_stable_rate"] = _ratio("return_teacher_target_stable_count", "return_teacher_count")
+    payload["return_teacher_target_unstable_rate"] = _ratio("return_teacher_target_unstable_count", "return_teacher_count")
+    payload["return_teacher_suggested_legal_safe_rate"] = _ratio(
+        "return_teacher_suggested_legal_safe_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_low_rate"] = _ratio(
+        "return_teacher_action_margin_low_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_mid_rate"] = _ratio(
+        "return_teacher_action_margin_mid_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_high_rate"] = _ratio(
+        "return_teacher_action_margin_high_count", "return_teacher_count"
+    )
+    payload["return_teacher_stable_invariant_satisfied_rate"] = _ratio(
+        "return_teacher_stable_invariant_satisfied_count", "return_teacher_count"
+    )
+    payload["return_teacher_stable_invariant_violated_rate"] = _ratio(
+        "return_teacher_stable_invariant_violated_count", "return_teacher_count"
+    )
+    payload["return_teacher_legal_safe_invariant_satisfied_rate"] = _ratio(
+        "return_teacher_legal_safe_invariant_satisfied_count", "return_teacher_count"
+    )
+    payload["return_teacher_legal_safe_invariant_violated_rate"] = _ratio(
+        "return_teacher_legal_safe_invariant_violated_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_invariant_satisfied_rate"] = _ratio(
+        "return_teacher_action_margin_invariant_satisfied_count", "return_teacher_count"
+    )
+    payload["return_teacher_action_margin_invariant_violated_rate"] = _ratio(
+        "return_teacher_action_margin_invariant_violated_count", "return_teacher_count"
+    )
+    payload["return_teacher_reliability_invariant_satisfied_rate"] = _ratio(
+        "return_teacher_reliability_invariant_satisfied_count", "return_teacher_count"
+    )
+    payload["return_teacher_reliability_invariant_violated_rate"] = _ratio(
+        "return_teacher_reliability_invariant_violated_count", "return_teacher_count"
+    )
+    return payload
+
+
 COMPARISON_SAMPLE_LEARNING_KEYS = (
     "mode_teacher_active_rate",
     "route_anchor_teacher_active_rate",
@@ -249,7 +405,7 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
             "charge_reward_shadow_only_active",
         )
     }
-    payload = {
+    payload: dict[str, Any] = {
         "_count": len(records),
         "win_rate": sum(1 for record in records if record.get("result") == "completed") / len(records),
         "battery_fail_count": sum(1 for record in records if record.get("result") == "battery"),
@@ -290,6 +446,16 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
         "clean_floor_revisit_rate": avg("clean_floor_revisit_rate"),
         "clean_floor_revisit_penalty_mean": avg("clean_floor_revisit_penalty_mean"),
         "effective_coverage_bonus_mean": avg("effective_coverage_bonus_mean"),
+        "return_action_teacher_mask_mean": avg("return_action_teacher_mask_mean"),
+        "return_action_teacher_mask_nonzero_rate": avg("return_action_teacher_mask_nonzero_rate"),
+        "route_phase_action_teacher_mask_mean": avg("route_phase_action_teacher_mask_mean"),
+        "route_phase_action_teacher_mask_nonzero_rate": avg("route_phase_action_teacher_mask_nonzero_rate"),
+        **{key: sum(float(record.get(key, 0.0) or 0.0) for record in records) for key in TEACHER_LABEL_QUALITY_COUNT_KEYS},
+        **{
+            key: avg(key)
+            for key in TEACHER_LABEL_QUALITY_METRIC_KEYS
+            if key not in TEACHER_LABEL_QUALITY_COUNT_KEYS
+        },
         "suboptimal_target_hold_rate": avg("suboptimal_target_hold_rate"),
         "planner_policy_divergence_rate": avg("planner_policy_divergence_rate"),
         "route_phase_planner_divergence_rate": avg("route_phase_planner_divergence_rate"),
@@ -358,6 +524,7 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
     payload.update(compute_reward_contribution_payload({
         key.replace("avg_reward_", ""): value for key, value in reward_component_means.items()
     }))
+    _apply_teacher_label_quality_count_rates(payload)
     simplify_records = [record for record in records if float(record.get("control_stack_simplify_active", 0.0) or 0.0) > 0.0]
     if simplify_records:
         payload["pre_return_readiness_hit_rate"] = avg("pre_return_readiness_hit_rate")
@@ -599,6 +766,11 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
         "clean_floor_revisit_rate",
         "clean_floor_revisit_penalty_mean",
         "effective_coverage_bonus_mean",
+        "return_action_teacher_mask_mean",
+        "return_action_teacher_mask_nonzero_rate",
+        "route_phase_action_teacher_mask_mean",
+        "route_phase_action_teacher_mask_nonzero_rate",
+        *TEACHER_LABEL_QUALITY_METRIC_KEYS,
         "expert_weight_nonzero_rate",
         "pre_return_bias_active_rate",
         "return_bias_active_rate",
@@ -699,10 +871,11 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
     ]
     payload: dict[str, Any] = {"_count": total_count}
     for key in keys:
-        if key in {"battery_fail_count", "battery_positive_reward_count"}:
-            payload[key] = sum(int((signal.get(field_name) or {}).get(key, 0) or 0) for signal in active)
+        if key in {"battery_fail_count", "battery_positive_reward_count", *TEACHER_LABEL_QUALITY_COUNT_KEYS}:
+            payload[key] = sum(float((signal.get(field_name) or {}).get(key, 0.0) or 0.0) for signal in active)
         else:
             payload[key] = _weighted_average_from(active, field_name, key)
+    _apply_teacher_label_quality_count_rates(payload)
     payload["anchor_win_rate"] = _weighted_ratio(active, "anchor_win_rate")
     payload["mild_win_rate"] = _weighted_ratio(active, "mild_win_rate")
     payload["broad_win_rate"] = _weighted_ratio(active, "broad_win_rate")

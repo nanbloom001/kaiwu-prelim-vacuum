@@ -14,6 +14,9 @@ POSITIVE_REWARD_KEYS = (
     "streak",
     "explore",
     "risk_release_reward",
+    "charger_progress_arrival_bonus",
+    "safe_return_progress_bonus",
+    "clean_per_step_efficiency_bonus",
     "charge_route_progress_bonus",
     "return_progress_shaping_bonus",
     "necessary_charge_bonus",
@@ -42,6 +45,8 @@ NEGATIVE_REWARD_KEYS = (
 
 CHARGING_POSITIVE_REWARD_KEYS = (
     "risk_release_reward",
+    "charger_progress_arrival_bonus",
+    "safe_return_progress_bonus",
     "charge_route_progress_bonus",
     "return_progress_shaping_bonus",
     "necessary_charge_bonus",

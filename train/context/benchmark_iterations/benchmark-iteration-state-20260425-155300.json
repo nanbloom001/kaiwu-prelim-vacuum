@@ -1,0 +1,125 @@
+{
+  "allowed_modification_classes": [
+    "P0_observe_only",
+    "P1_information_additive",
+    "P2_eval_only_safety",
+    "R1_small_threshold",
+    "R2_reward_positive",
+    "R3_reward_penalty",
+    "R4_light_refactor",
+    "R5_architecture"
+  ],
+  "baseline": {
+    "avg_clean_score": 386.4,
+    "checkpoint": "/workspace/code/runtime_state/preload_cache/model.ckpt-734599.pkl",
+    "failure_buckets": {
+      "battery depletion": 7,
+      "collision/stuck loop": 33
+    },
+    "per_map_count": 10,
+    "readme_parallel_40_baseline_note": "Task 4 accepted operational baseline is README parallel-40: maps 1-10 x4, 3 chargers, 4 robots, 1000 steps, 150 battery, policy eval.",
+    "session_id": "20260425-155300",
+    "win_rate": 0.7,
+    "wins": null
+  },
+  "candidate_statuses": [],
+  "command_templates": {
+    "dev_slice": "bash train/run_target_benchmark_900.sh --profile dev <checkpoint> --policy-mode eval --runner serial",
+    "full_benchmark": "bash train/run_target_benchmark_900.sh --profile target <checkpoint> --policy-mode eval --runner parallel",
+    "full_benchmark_default_without_parallel_40_note": "bash train/run_target_benchmark_900.sh --profile target <checkpoint> --policy-mode eval --runner serial",
+    "training": "python3 train/run_training_phase.py s1_survival --seed-label <iteration_id>"
+  },
+  "dry_run": true,
+  "guards": {
+    "modification_order": "R1+ classes require all available P0/P1/P2 candidates terminal",
+    "numeric_only": "exactly one failure bucket and one fixed-observation diff required",
+    "sweep": "one lever, at most two values"
+  },
+  "iterations": [
+    {
+      "analyzer_summary": null,
+      "benchmark_commands": {
+        "dev_slice": "bash train/run_target_benchmark_900.sh --profile dev <checkpoint> --policy-mode eval --runner serial",
+        "full": "bash train/run_target_benchmark_900.sh --profile target <checkpoint> --policy-mode eval --runner parallel"
+      },
+      "candidate": {
+        "changed_files": [],
+        "failure_buckets": [],
+        "fixed_observation_diffs": [],
+        "hypothesis": "TBD by candidate selector; controller reserves state-machine fields only.",
+        "id": "benchmark-attribution-first",
+        "modification_class": "P0_observe_only",
+        "numeric_only": false,
+        "source": "wave0_audit",
+        "status": "planned",
+        "sweep": null,
+        "title": "Use existing issue-index and failure taxonomy before changing policy"
+      },
+      "changed_files": [],
+      "checkpoint": "<checkpoint>",
+      "comparator_result": null,
+      "convergence_gate_result": null,
+      "dev_slice_result": null,
+      "full_benchmark_result": null,
+      "hypothesis": "TBD by candidate selector; controller reserves state-machine fields only.",
+      "iteration_id": "iteration-0001",
+      "keep_revert_decision": null,
+      "next_action": "await_candidate_selector",
+      "sample_points": [
+        "bootstrap_10",
+        "bootstrap_20",
+        "global_40",
+        "global_80",
+        "global_120",
+        "global_160",
+        "global_200"
+      ],
+      "state": "planned",
+      "training_command": "python3 train/run_training_phase.py s1_survival --seed-label iteration-0001"
+    },
+    {
+      "analyzer_summary": null,
+      "benchmark_commands": {
+        "dev_slice": "bash train/run_target_benchmark_900.sh --profile dev <checkpoint> --policy-mode eval --runner serial",
+        "full": "bash train/run_target_benchmark_900.sh --profile target <checkpoint> --policy-mode eval --runner parallel"
+      },
+      "candidate": {
+        "changed_files": [],
+        "failure_buckets": [],
+        "fixed_observation_diffs": [],
+        "hypothesis": "TBD by candidate selector; controller reserves state-machine fields only.",
+        "id": "no-preaudit-behavior-diff-guard",
+        "modification_class": "P0_observe_only",
+        "numeric_only": false,
+        "source": "wave0_audit",
+        "status": "planned",
+        "sweep": null,
+        "title": "Record git diff guard for code/agent_ppo and train/phases before audit completion"
+      },
+      "changed_files": [],
+      "checkpoint": "<checkpoint>",
+      "comparator_result": null,
+      "convergence_gate_result": null,
+      "dev_slice_result": null,
+      "full_benchmark_result": null,
+      "hypothesis": "TBD by candidate selector; controller reserves state-machine fields only.",
+      "iteration_id": "iteration-0002",
+      "keep_revert_decision": null,
+      "next_action": "await_candidate_selector",
+      "sample_points": [
+        "bootstrap_10",
+        "bootstrap_20",
+        "global_40",
+        "global_80",
+        "global_120",
+        "global_160",
+        "global_200"
+      ],
+      "state": "planned",
+      "training_command": "python3 train/run_training_phase.py s1_survival --seed-label iteration-0002"
+    }
+  ],
+  "schema_version": 1,
+  "state_dir": "train/context/benchmark_iterations",
+  "success": false
+}

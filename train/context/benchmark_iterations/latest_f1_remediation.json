@@ -1,0 +1,29 @@
+{
+  "classification": "baseline_backed_revert_no_promotion",
+  "authoritative_run_session_id": "20260425-193501",
+  "baseline_run": "20260421-134719",
+  "decision": "revert",
+  "evidence": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-193501-report.json",
+  "convergence_gate": ".sisyphus/evidence/benchmark-900/convergence-20260425-193501.json",
+  "global_40_metrics": {
+    "avg_clean_per_step": 0.417121878658613,
+    "battery_fail_rate": 0.95,
+    "route_phase_return_stall_rate": 0.533772896222562,
+    "zero_charge_battery_fail_rate": 0.8
+  },
+  "regressed_metric_names": [
+    "avg_clean_per_step",
+    "battery_fail_rate",
+    "zero_charge_battery_fail_rate",
+    "route_phase_return_stall_rate"
+  ],
+  "promotion_allowed": false,
+  "continuation_allowed_past_global_40": false,
+  "next_action": "Do not promote this checkpoint. Treat run 20260425-193501 as rejected/revert at global_40; preserve the later 194430 adopted-session evidence as historical only because it lacked baseline metrics.",
+  "historical_adopted_session_evidence": {
+    "preserved_report": ".sisyphus/evidence/benchmark-900/f1-remediation-training-20260425-194430.json",
+    "preserved_convergence_gate": ".sisyphus/evidence/benchmark-900/f1-remediation-training-20260425-194430-convergence.json",
+    "note": "Historical adopted-session evidence is preserved, but it is not authoritative for the latest F1 remediation decision because its convergence summary had no baseline metrics and therefore escalated instead of applying the deterministic gate."
+  },
+  "updated_at": "2026-04-25T11:44:51.681566+00:00"
+}
