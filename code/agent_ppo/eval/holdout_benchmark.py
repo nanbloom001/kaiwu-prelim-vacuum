@@ -21,9 +21,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 import torch
@@ -70,11 +73,26 @@ HOLDOUT_ROUNDS = [
 ]
 
 
+class EpisodeAssignment(TypedDict):
+    map_id: int
+    ep_idx: int
+
+
+class ShardAssignment(TypedDict):
+    shard_index: int
+    shard_count: int
+    episodes: list[EpisodeAssignment]
+    maps: list[int]
+    episodes_per_map: int
+    run_id: str
+    assignment_path: str
+
+
 # ---------------------------------------------------------------------------
 # Public API — called from train_workflow.py
 # ---------------------------------------------------------------------------
 
-def run_holdout_benchmark(env, agent, usr_conf, logger) -> dict[str, object]:
+def run_holdout_benchmark(env, agent, usr_conf, logger, envs=None, agents=None, process_index=None) -> dict[str, object]:
     """
     Run fixed holdout benchmark and save structured results.
 
@@ -91,6 +109,17 @@ def run_holdout_benchmark(env, agent, usr_conf, logger) -> dict[str, object]:
     Returns:
         dict with 'overall', 'per_map', 'episodes', 'checkpoint'.
     """
+    if _env_flag("KAIWU_BENCHMARK_PARALLEL_MODE") or os.getenv("KAIWU_BENCHMARK_SCHEDULER", "").strip().lower() == "dynamic":
+        return _run_dynamic_holdout_benchmark(
+            env=env,
+            agent=agent,
+            usr_conf=usr_conf,
+            logger=logger,
+            envs=envs,
+            agents=agents,
+            process_index=process_index,
+        )
+
     base_env_conf = _extract_base_env_conf(usr_conf)
     checkpoint_path = os.getenv(
         "KAIWU_BENCHMARK_CHECKPOINT", "model.ckpt-resume.pkl"
@@ -98,17 +127,48 @@ def run_holdout_benchmark(env, agent, usr_conf, logger) -> dict[str, object]:
     maps_str = os.getenv("KAIWU_BENCHMARK_MAPS", "4,7").strip()
     requested_maps = [int(m.strip()) for m in maps_str.split(",") if m.strip()]
     episodes_per_map = int(os.getenv("KAIWU_BENCHMARK_EPISODES_PER_MAP", "10").strip())
+    sharded_mode = _env_flag("KAIWU_BENCHMARK_SHARDED")
+    requested_workers_per_aisrv = _env_int("KAIWU_BENCHMARK_WORKERS_PER_AISRV", 1)
 
     round_def = HOLDOUT_ROUNDS[0]  # single fixed round
     total_episodes = len(requested_maps) * episodes_per_map
     session_id = time.strftime("%Y%m%d-%H%M%S")
+    hostname = socket.gethostname()
+    shard_assignment: ShardAssignment | None = None
+    current_shard: ShardAssignment | None = None
+    execution: dict[str, object] = {"mode": "single"}
+
+    if sharded_mode:
+        shard_assignment = _load_shard_assignment(
+            hostname=hostname,
+            requested_maps=requested_maps,
+            episodes_per_map=episodes_per_map,
+        )
+        if shard_assignment is None:
+            logger.info(f"[HOLDOUT-BENCH] host={hostname} has no shard assignment; skipping extra AISRV worker")
+            return {"skipped": True, "reason": "no_shard_assignment", "hostname": hostname}
+        current_shard = shard_assignment
+        total_episodes = len(shard_assignment["episodes"])
+        execution = {
+            "mode": "sharded",
+            "shard_index": shard_assignment["shard_index"],
+            "shard_count": shard_assignment["shard_count"],
+            "hostname": hostname,
+            "run_id": shard_assignment["run_id"],
+            "assignment_path": shard_assignment["assignment_path"],
+            "requested_maps": list(shard_assignment["maps"]),
+            "episodes_per_map": shard_assignment["episodes_per_map"],
+            "episodes_run": list(shard_assignment["episodes"]),
+            "episode_count": total_episodes,
+        }
 
     logger.info(f"[HOLDOUT-BENCH] ========== Holdout Benchmark Start ==========")
     logger.info(f"[HOLDOUT-BENCH] checkpoint={checkpoint_path}")
     logger.info(f"[HOLDOUT-BENCH] maps={requested_maps} episodes_per_map={episodes_per_map} total={total_episodes}")
-
-    # Load checkpoint
-    loaded_checkpoint = _load_benchmark_checkpoint(agent, checkpoint_path, logger)
+    if sharded_mode:
+        if current_shard is None:
+            raise RuntimeError("Sharded benchmark requested without a valid shard assignment")
+        logger.info(f"[HOLDOUT-BENCH] sharded assignment host={hostname} shard={current_shard['shard_index']}/{current_shard['shard_count']} episodes={total_episodes} run_id={current_shard['run_id']}")
 
     # Create session dir for logs
     session_dir = EVAL_LOG_BASE / session_id
@@ -116,7 +176,52 @@ def run_holdout_benchmark(env, agent, usr_conf, logger) -> dict[str, object]:
 
     step_log = _create_step_logger(session_dir)
 
-    # Write manifest
+    # Run episodes
+    episode_results = []
+    idx = 0
+    t_start = time.time()
+
+    assigned_episodes: list[EpisodeAssignment] = (
+        shard_assignment["episodes"]
+        if shard_assignment is not None
+        else [
+            {"map_id": map_id, "ep_idx": ep_idx}
+            for map_id in requested_maps
+            for ep_idx in range(1, episodes_per_map + 1)
+        ]
+    )
+    worker_pairs, worker_downgrade_reason = _build_worker_pairs(
+        primary_env=env,
+        primary_agent=agent,
+        envs=envs,
+        agents=agents,
+        requested_workers=requested_workers_per_aisrv,
+        episode_count=len(assigned_episodes),
+    )
+    execution["workers_per_aisrv_requested"] = requested_workers_per_aisrv
+    execution["workers_per_aisrv_effective"] = len(worker_pairs)
+    execution["env_count"] = len(_as_list(envs, env))
+    execution["agent_count"] = len(_as_list(agents, agent))
+    execution["worker_mode"] = "threaded_env_agent_pairs" if len(worker_pairs) > 1 else "serial"
+    if worker_downgrade_reason:
+        execution["worker_downgrade_reason"] = worker_downgrade_reason
+
+    active_agents = []
+    seen_agent_ids = set()
+    for _, worker_agent in worker_pairs:
+        agent_id = id(worker_agent)
+        if agent_id in seen_agent_ids:
+            continue
+        seen_agent_ids.add(agent_id)
+        active_agents.append(worker_agent)
+
+    loaded_checkpoint = None
+    for worker_agent in active_agents:
+        loaded_checkpoint = _load_benchmark_checkpoint(worker_agent, checkpoint_path, logger)
+    if loaded_checkpoint is None:
+        loaded_checkpoint = _load_benchmark_checkpoint(agent, checkpoint_path, logger)
+
+    # Write manifest after worker resolution so concurrency metadata is captured.
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "timestamp": session_id,
@@ -125,41 +230,63 @@ def run_holdout_benchmark(env, agent, usr_conf, logger) -> dict[str, object]:
         "episodes_per_map": episodes_per_map,
         "round_def": round_def,
         "total_episodes": total_episodes,
+        "execution": execution,
     }
     _atomic_write_json(session_dir / "manifest.json", manifest)
 
-    # Run episodes
-    episode_results = []
-    idx = 0
-    t_start = time.time()
-
-    for map_id in requested_maps:
-        for ep_idx in range(1, episodes_per_map + 1):
+    if len(worker_pairs) <= 1:
+        worker_env, worker_agent = worker_pairs[0]
+        for assignment in assigned_episodes:
             idx += 1
-            env_conf = deepcopy(base_env_conf)
-            env_conf["map"] = [map_id]
-            env_conf["map_random"] = False
-            env_conf["robot_count"] = round_def["robot_count"]
-            env_conf["charger_count"] = round_def["charger_count"]
-            env_conf["max_step"] = round_def["max_step"]
-            env_conf["battery_max"] = round_def["battery_max"]
-
-            wrapped_conf = _wrap_env_conf(usr_conf, env_conf)
-
-            result = _run_eval_episode(
-                env=env,
-                agent=agent,
-                usr_conf=wrapped_conf,
-                map_id=map_id,
-                ep_idx=ep_idx,
+            result = _run_assigned_episode(
+                assignment=assignment,
+                env=worker_env,
+                agent=worker_agent,
+                base_env_conf=base_env_conf,
+                usr_conf=usr_conf,
                 idx=idx,
                 total=total_episodes,
                 session_dir=session_dir,
                 logger=logger,
                 step_log=step_log,
                 round_def=round_def,
+                worker_index=0,
             )
             episode_results.append(result)
+    else:
+        indexed_assignments = [
+            (position + 1, assignment)
+            for position, assignment in enumerate(assigned_episodes)
+        ]
+        assignment_batches = _partition_indexed_assignments(indexed_assignments, len(worker_pairs))
+        logger.info(
+            f"[HOLDOUT-BENCH] using {len(worker_pairs)} env/agent workers inside AISRV "
+            f"for {len(assigned_episodes)} assigned episodes"
+        )
+        with ThreadPoolExecutor(max_workers=len(worker_pairs)) as executor:
+            futures = []
+            for worker_index, ((worker_env, worker_agent), batch) in enumerate(zip(worker_pairs, assignment_batches)):
+                if not batch:
+                    continue
+                futures.append(
+                    executor.submit(
+                        _run_assignment_batch,
+                        batch=batch,
+                        env=worker_env,
+                        agent=worker_agent,
+                        base_env_conf=base_env_conf,
+                        usr_conf=usr_conf,
+                        total=total_episodes,
+                        session_dir=session_dir,
+                        logger=logger,
+                        step_log=step_log,
+                        round_def=round_def,
+                        worker_index=worker_index,
+                    )
+                )
+            for future in as_completed(futures):
+                episode_results.extend(future.result())
+        episode_results.sort(key=lambda item: (int(item.get("map_id", 0)), int(item.get("ep_idx", 0))))
 
     elapsed = time.time() - t_start
 
@@ -191,7 +318,7 @@ def run_holdout_benchmark(env, agent, usr_conf, logger) -> dict[str, object]:
         "overall": aggregated["overall"],
         "per_map": aggregated["per_map"],
         "episodes": episode_results,
-        "execution": {"mode": "single"},
+        "execution": execution,
     }
 
     _atomic_write_json(session_dir / "result.json", snapshot)
@@ -199,20 +326,44 @@ def run_holdout_benchmark(env, agent, usr_conf, logger) -> dict[str, object]:
     ai_summary = _build_ai_summary(snapshot)
     _atomic_write_json(session_dir / "ai_summary.json", ai_summary)
 
-    # Also write to /workspace/code/holdout_result.json for external pickup
-    _atomic_write_json(Path("/workspace/code/holdout_result.json"), snapshot)
+    if sharded_mode:
+        current_shard = shard_assignment
+        if current_shard is None:
+            raise RuntimeError("Sharded benchmark requested without a valid shard assignment")
+        shard_results_dir = Path("/workspace/code/holdout_shards/results")
+        shard_done_dir = Path("/workspace/code/holdout_shards/done")
+        shard_results_dir.mkdir(parents=True, exist_ok=True)
+        shard_done_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write completion marker
-    done_marker = Path("/workspace/code/.benchmark_done")
-    done_marker.write_text(
-        json.dumps({
-            "session_id": session_id,
-            "timestamp": time.strftime("%Y%m%d-%H%M%S"),
-            "checkpoint": loaded_checkpoint,
-            "overall": aggregated["overall"],
-        }, ensure_ascii=False),
-        encoding="utf-8",
-    )
+        shard_result_path = shard_results_dir / f"shard_{current_shard['shard_index']}.json"
+        _atomic_write_json(shard_result_path, snapshot)
+
+        done_marker = shard_done_dir / f".done_shard_{current_shard['shard_index']}"
+        _ = done_marker.write_text(
+            json.dumps({
+                "session_id": session_id,
+                "timestamp": time.strftime("%Y%m%d-%H%M%S"),
+                "checkpoint": loaded_checkpoint,
+                "overall": aggregated["overall"],
+                "execution": execution,
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    else:
+        # Also write to /workspace/code/holdout_result.json for external pickup
+        _atomic_write_json(Path("/workspace/code/holdout_result.json"), snapshot)
+
+        # Write completion marker
+        done_marker = Path("/workspace/code/.benchmark_done")
+        _ = done_marker.write_text(
+            json.dumps({
+                "session_id": session_id,
+                "timestamp": time.strftime("%Y%m%d-%H%M%S"),
+                "checkpoint": loaded_checkpoint,
+                "overall": aggregated["overall"],
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     for handler in step_log.handlers[:]:
         handler.close()
@@ -225,8 +376,582 @@ def run_holdout_benchmark(env, agent, usr_conf, logger) -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------------
+# Dynamic parallel benchmark runner
+# ---------------------------------------------------------------------------
+
+def _run_dynamic_holdout_benchmark(env, agent, usr_conf, logger, envs=None, agents=None, process_index=None):
+    base_env_conf = _extract_base_env_conf(usr_conf)
+    checkpoint_path = os.getenv(
+        "KAIWU_BENCHMARK_CHECKPOINT", "model.ckpt-resume.pkl"
+    ).strip()
+    maps_str = os.getenv("KAIWU_BENCHMARK_MAPS", "4,7").strip()
+    requested_maps = [int(m.strip()) for m in maps_str.split(",") if m.strip()]
+    episodes_per_map = _env_int("KAIWU_BENCHMARK_EPISODES_PER_MAP", 4)
+    configured_envs_per_aisrv = _env_int(
+        "KAIWU_BENCHMARK_ENVS_PER_WORKER",
+        _env_int("KAIWU_BENCHMARK_WORKERS_PER_AISRV", _env_int("KAIWU_PARALLEL_ENV_PER_AISRV", 1)),
+    )
+    aisrv_worker_count = _env_int("KAIWU_BENCHMARK_WORKER_COUNT", _env_int("KAIWU_AISRV_NUM", 1))
+    hostname = socket.gethostname()
+    shard_assignment = _load_shard_assignment(
+        hostname=hostname,
+        requested_maps=requested_maps,
+        episodes_per_map=episodes_per_map,
+    )
+    if shard_assignment is None:
+        logger.info(f"[HOLDOUT-DYN] host={hostname} has no AISRV assignment; skipping")
+        return {"skipped": True, "reason": "no_dynamic_assignment", "hostname": hostname}
+
+    aisrv_worker_id = int(shard_assignment["shard_index"]) + 1
+    normalized_process_index = _normalize_process_index(process_index)
+    if normalized_process_index >= configured_envs_per_aisrv:
+        logger.info(
+            f"[HOLDOUT-DYN] process_index={normalized_process_index} exceeds "
+            f"configured_envs_per_aisrv={configured_envs_per_aisrv}; skipping"
+        )
+        return {"skipped": True, "reason": "process_index_out_of_range", "process_index": normalized_process_index}
+
+    session_id = str(shard_assignment["run_id"])
+    logical_worker_count = max(aisrv_worker_count, 1) * max(configured_envs_per_aisrv, 1)
+    logical_worker_id = (aisrv_worker_id - 1) * max(configured_envs_per_aisrv, 1) + normalized_process_index + 1
+    worker_id = str(logical_worker_id)
+    coordinator = aisrv_worker_id == 1 and normalized_process_index == 0
+    runtime_dir = Path(os.getenv("KAIWU_BENCHMARK_RUNTIME_DIR", "").strip() or "/workspace/code/holdout_shards/dynamic")
+    result_path = Path("/workspace/code/holdout_result.json")
+    done_marker = Path("/workspace/code/.benchmark_done")
+    round_def = HOLDOUT_ROUNDS[0]
+    total_episodes = len(requested_maps) * episodes_per_map
+
+    logger.info("[HOLDOUT-DYN] ========== Dynamic Holdout Benchmark Start ==========")
+    logger.info(
+        f"[HOLDOUT-DYN] session={session_id} worker={logical_worker_id}/{logical_worker_count} "
+        f"aisrv={aisrv_worker_id}/{aisrv_worker_count} process_index={normalized_process_index} "
+        f"envs_per_aisrv={configured_envs_per_aisrv} checkpoint={checkpoint_path}"
+    )
+    logger.info(
+        f"[HOLDOUT-DYN] visible_env_handles={len(_as_list(envs, env))} "
+        f"visible_agent_handles={len(_as_list(agents, agent))} total_episodes={total_episodes}"
+    )
+
+    if coordinator:
+        _initialize_dynamic_runtime(
+            runtime_dir=runtime_dir,
+            session_id=session_id,
+            checkpoint_path=checkpoint_path,
+            requested_maps=requested_maps,
+            episodes_per_map=episodes_per_map,
+            round_def=round_def,
+            aisrv_worker_count=aisrv_worker_count,
+            configured_envs_per_aisrv=configured_envs_per_aisrv,
+            logical_worker_count=logical_worker_count,
+            base_env_conf=base_env_conf,
+        )
+    else:
+        _wait_for_dynamic_manifest(runtime_dir, logger)
+
+    session_dir = EVAL_LOG_BASE / f"{session_id}-worker{logical_worker_id:02d}"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    step_log = _create_step_logger(session_dir)
+
+    assigned_episode_count = total_episodes
+    worker_pairs, worker_downgrade_reason = _build_worker_pairs(
+        primary_env=env,
+        primary_agent=agent,
+        envs=envs,
+        agents=agents,
+        requested_workers=configured_envs_per_aisrv,
+        episode_count=assigned_episode_count,
+    )
+    active_agents = []
+    seen_agent_ids = set()
+    for _, worker_agent in worker_pairs:
+        agent_id = id(worker_agent)
+        if agent_id in seen_agent_ids:
+            continue
+        seen_agent_ids.add(agent_id)
+        active_agents.append(worker_agent)
+
+    loaded_checkpoint = None
+    for worker_agent in active_agents:
+        loaded_checkpoint = _load_benchmark_checkpoint(worker_agent, checkpoint_path, logger)
+    if loaded_checkpoint is None:
+        loaded_checkpoint = _load_benchmark_checkpoint(agent, checkpoint_path, logger)
+
+    _write_dynamic_heartbeat(
+        runtime_dir=runtime_dir,
+        worker_id=worker_id,
+        logical_worker_id=logical_worker_id,
+        aisrv_worker_id=aisrv_worker_id,
+        process_index=normalized_process_index,
+        slot_count=len(worker_pairs),
+        env_count=len(_as_list(envs, env)),
+        agent_count=len(_as_list(agents, agent)),
+        worker_downgrade_reason=worker_downgrade_reason,
+    )
+
+    t_start = time.time()
+    if len(worker_pairs) <= 1:
+        _dynamic_slot_loop(
+            runtime_dir=runtime_dir,
+            worker_id=worker_id,
+            slot_index=0,
+            env=worker_pairs[0][0],
+            agent=worker_pairs[0][1],
+            base_env_conf=base_env_conf,
+            usr_conf=usr_conf,
+            session_dir=session_dir,
+            logger=logger,
+            step_log=step_log,
+            round_def=round_def,
+        )
+    else:
+        logger.info(f"[HOLDOUT-DYN] using {len(worker_pairs)} visible env/agent slots in this workflow process")
+        with ThreadPoolExecutor(max_workers=len(worker_pairs)) as executor:
+            futures = [
+                executor.submit(
+                    _dynamic_slot_loop,
+                    runtime_dir=runtime_dir,
+                    worker_id=worker_id,
+                    slot_index=slot_index,
+                    env=worker_env,
+                    agent=worker_agent,
+                    base_env_conf=base_env_conf,
+                    usr_conf=usr_conf,
+                    session_dir=session_dir,
+                    logger=logger,
+                    step_log=step_log,
+                    round_def=round_def,
+                )
+                for slot_index, (worker_env, worker_agent) in enumerate(worker_pairs)
+            ]
+            for future in as_completed(futures):
+                future.result()
+
+    if coordinator:
+        snapshot = _finalize_dynamic_runtime(
+            runtime_dir=runtime_dir,
+            session_id=session_id,
+            checkpoint=loaded_checkpoint,
+            requested_maps=requested_maps,
+            episodes_per_map=episodes_per_map,
+            round_def=round_def,
+            result_path=result_path,
+            done_marker=done_marker,
+            elapsed_seconds=round(time.time() - t_start, 1),
+            logger=logger,
+        )
+    else:
+        snapshot = _wait_for_dynamic_done(done_marker, logger)
+
+    for handler in step_log.handlers[:]:
+        handler.close()
+        step_log.removeHandler(handler)
+
+    return snapshot
+
+
+def _initialize_dynamic_runtime(
+    runtime_dir,
+    session_id,
+    checkpoint_path,
+    requested_maps,
+    episodes_per_map,
+    round_def,
+    aisrv_worker_count,
+    configured_envs_per_aisrv,
+    logical_worker_count,
+    base_env_conf,
+):
+    for subdir in ("tasks/pending", "tasks/claimed", "tasks/completed", "workers"):
+        (runtime_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "timestamp": session_id,
+        "checkpoint": checkpoint_path,
+        "maps": requested_maps,
+        "episodes_per_map": episodes_per_map,
+        "round_def": round_def,
+        "total_episodes": len(requested_maps) * episodes_per_map,
+        "execution": {
+            "mode": "dynamic",
+            "scheduler": "dynamic",
+            "aisrv_worker_count": aisrv_worker_count,
+            "configured_envs_per_aisrv": configured_envs_per_aisrv,
+            "logical_worker_count": logical_worker_count,
+            "runtime_dir": str(runtime_dir),
+        },
+        "base_env_conf": deepcopy(base_env_conf),
+    }
+    _atomic_write_json(runtime_dir / "manifest.json", manifest)
+
+    task_index = 0
+    for map_id in requested_maps:
+        for ep_idx in range(1, episodes_per_map + 1):
+            task_index += 1
+            task = {
+                "task_id": f"{task_index:04d}-map{map_id}-ep{ep_idx:02d}",
+                "idx": task_index,
+                "total": len(requested_maps) * episodes_per_map,
+                "map_id": map_id,
+                "ep_idx": ep_idx,
+            }
+            _atomic_write_json(runtime_dir / "tasks" / "pending" / f"{task['task_id']}.json", task)
+
+
+def _wait_for_dynamic_manifest(runtime_dir, logger):
+    deadline = time.time() + _env_int("KAIWU_BENCHMARK_ASSIGNMENT_WAIT_SECONDS", 180)
+    manifest_path = runtime_dir / "manifest.json"
+    while time.time() <= deadline:
+        if manifest_path.is_file():
+            return
+        time.sleep(1.0)
+    raise FileNotFoundError(f"Dynamic benchmark manifest not found: {manifest_path}")
+
+
+def _write_dynamic_heartbeat(
+    runtime_dir,
+    worker_id,
+    logical_worker_id,
+    aisrv_worker_id,
+    process_index,
+    slot_count,
+    env_count,
+    agent_count,
+    worker_downgrade_reason,
+):
+    payload = {
+        "worker_id": worker_id,
+        "logical_worker_id": logical_worker_id,
+        "aisrv_worker_id": aisrv_worker_id,
+        "process_index": process_index,
+        "slot_count": slot_count,
+        "visible_env_handles": env_count,
+        "visible_agent_handles": agent_count,
+        "updated_at": time.time(),
+        "hostname": socket.gethostname(),
+        "pid": os.getpid(),
+    }
+    if worker_downgrade_reason:
+        payload["worker_downgrade_reason"] = worker_downgrade_reason
+    _atomic_write_json(runtime_dir / "workers" / f"{worker_id}.json", payload)
+
+
+def _dynamic_slot_loop(runtime_dir, worker_id, slot_index, env, agent, base_env_conf, usr_conf, session_dir, logger, step_log, round_def):
+    slot_name = f"{worker_id}.{slot_index}"
+    while True:
+        task = _claim_dynamic_task(runtime_dir, worker_id, slot_name)
+        if task is None:
+            manifest = _read_json(runtime_dir / "manifest.json")
+            total_episodes = int(manifest.get("total_episodes", 0) or 0)
+            if total_episodes and _count_json_files(runtime_dir / "tasks" / "completed") >= total_episodes:
+                return
+            if not any((runtime_dir / "tasks" / "pending").glob("*.json")):
+                return
+            time.sleep(1.0)
+            continue
+
+        try:
+            result = _run_assigned_episode(
+                assignment={"map_id": int(task["map_id"]), "ep_idx": int(task["ep_idx"])},
+                env=env,
+                agent=agent,
+                base_env_conf=base_env_conf,
+                usr_conf=usr_conf,
+                idx=int(task["idx"]),
+                total=int(task["total"]),
+                session_dir=session_dir,
+                logger=logger,
+                step_log=step_log,
+                round_def=round_def,
+                worker_index=int(worker_id),
+            )
+            _complete_dynamic_task(runtime_dir, worker_id, task, result)
+        except Exception as exc:
+            logger.exception(f"[HOLDOUT-DYN] slot={slot_name} failed task={task.get('task_id')}: {exc}")
+            _release_dynamic_task(runtime_dir, worker_id, task, str(exc))
+            time.sleep(1.0)
+
+
+def _claim_dynamic_task(runtime_dir, worker_id, slot_name):
+    pending_dir = runtime_dir / "tasks" / "pending"
+    claimed_dir = runtime_dir / "tasks" / "claimed" / worker_id
+    claimed_dir.mkdir(parents=True, exist_ok=True)
+    for pending_path in sorted(pending_dir.glob("*.json")):
+        claimed_path = claimed_dir / pending_path.name
+        try:
+            os.replace(pending_path, claimed_path)
+        except FileNotFoundError:
+            continue
+        task = _read_json(claimed_path)
+        task["claimed_by"] = slot_name
+        task["claimed_at"] = time.time()
+        _atomic_write_json(claimed_path, task)
+        return task
+    return None
+
+
+def _complete_dynamic_task(runtime_dir, worker_id, task, result):
+    claimed_path = runtime_dir / "tasks" / "claimed" / worker_id / f"{task['task_id']}.json"
+    completed_path = runtime_dir / "tasks" / "completed" / f"{task['task_id']}.json"
+    payload = deepcopy(task)
+    payload["completed_at"] = time.time()
+    payload["episode_result"] = result
+    _atomic_write_json(completed_path, payload)
+    try:
+        claimed_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _release_dynamic_task(runtime_dir, worker_id, task, error):
+    claimed_path = runtime_dir / "tasks" / "claimed" / worker_id / f"{task['task_id']}.json"
+    pending_path = runtime_dir / "tasks" / "pending" / f"{task['task_id']}.json"
+    payload = deepcopy(task)
+    payload["last_error"] = error
+    payload["requeue_count"] = int(payload.get("requeue_count", 0) or 0) + 1
+    payload["claimed_by"] = None
+    payload["claimed_at"] = None
+    _atomic_write_json(pending_path, payload)
+    try:
+        claimed_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _finalize_dynamic_runtime(
+    runtime_dir,
+    session_id,
+    checkpoint,
+    requested_maps,
+    episodes_per_map,
+    round_def,
+    result_path,
+    done_marker,
+    elapsed_seconds,
+    logger,
+):
+    manifest = _read_json(runtime_dir / "manifest.json")
+    total_episodes = int(manifest.get("total_episodes", 0) or 0)
+    deadline = time.time() + _env_int("KAIWU_BENCHMARK_MAX_WAIT_SECONDS", 3600)
+    completed_dir = runtime_dir / "tasks" / "completed"
+    while time.time() <= deadline:
+        completed_count = _count_json_files(completed_dir)
+        if completed_count >= total_episodes:
+            break
+        logger.info(f"[HOLDOUT-DYN] coordinator waiting completed={completed_count}/{total_episodes}")
+        time.sleep(5.0)
+
+    completed_count = _count_json_files(completed_dir)
+    if completed_count < total_episodes:
+        raise TimeoutError(f"Dynamic benchmark timed out completed={completed_count}/{total_episodes}")
+
+    episode_results = []
+    for completed_path in sorted(completed_dir.glob("*.json")):
+        payload = _read_json(completed_path)
+        episode_results.append(payload["episode_result"])
+    episode_results.sort(key=lambda item: (int(item.get("map_id", 0)), int(item.get("ep_idx", 0))))
+    aggregated = _aggregate_results(episode_results, requested_maps)
+    workers = [_read_json(path) for path in sorted((runtime_dir / "workers").glob("*.json"))]
+    execution = deepcopy(manifest.get("execution") or {})
+    execution.update(
+        {
+            "mode": "dynamic",
+            "completed_task_count": len(episode_results),
+            "total_episodes": total_episodes,
+            "observed_worker_count": len(workers),
+            "workers": workers,
+        }
+    )
+    snapshot = {
+        "schema_version": SCHEMA_VERSION,
+        "timestamp": session_id,
+        "checkpoint": checkpoint,
+        "elapsed_seconds": elapsed_seconds,
+        "contract": {
+            "schema_version": SCHEMA_VERSION,
+            "maps": requested_maps,
+            "episodes_per_map": episodes_per_map,
+            "round_def": round_def,
+            "fixed_config": {
+                "map_random": False,
+                "max_step": round_def["max_step"],
+                "battery_max": round_def["battery_max"],
+                "robot_count": round_def["robot_count"],
+                "charger_count": round_def["charger_count"],
+            },
+            "checkpoint": checkpoint,
+        },
+        "round_def": round_def,
+        "maps": requested_maps,
+        "episodes_per_map": episodes_per_map,
+        "overall": aggregated["overall"],
+        "per_map": aggregated["per_map"],
+        "episodes": episode_results,
+        "execution": execution,
+    }
+    _atomic_write_json(runtime_dir / "result.json", snapshot)
+    _atomic_write_json(result_path, snapshot)
+    _ = done_marker.write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "timestamp": time.strftime("%Y%m%d-%H%M%S"),
+                "checkpoint": checkpoint,
+                "overall": aggregated["overall"],
+                "execution": execution,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _print_summary(aggregated, logger, elapsed_seconds)
+    return snapshot
+
+
+def _wait_for_dynamic_done(done_marker, logger):
+    deadline = time.time() + _env_int("KAIWU_BENCHMARK_MAX_WAIT_SECONDS", 3600)
+    while time.time() <= deadline:
+        if done_marker.is_file():
+            try:
+                return json.loads(Path("/workspace/code/holdout_result.json").read_text(encoding="utf-8"))
+            except Exception:
+                return {"status": "done", "done_marker": str(done_marker)}
+        time.sleep(2.0)
+    raise TimeoutError(f"Dynamic benchmark done marker not found: {done_marker}")
+
+
+def _normalize_process_index(process_index):
+    try:
+        return max(int(process_index), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _count_json_files(path):
+    return len(list(path.glob("*.json"))) if path.exists() else 0
+
+
+def _read_json(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
 # Episode runner
 # ---------------------------------------------------------------------------
+
+def _as_list(value, fallback):
+    if value is None:
+        return [fallback]
+    if isinstance(value, (list, tuple)):
+        return list(value) or [fallback]
+    return [value]
+
+
+def _build_worker_pairs(primary_env, primary_agent, envs, agents, requested_workers, episode_count):
+    env_list = _as_list(envs, primary_env)
+    agent_list = _as_list(agents, primary_agent)
+    max_workers = min(
+        max(1, int(requested_workers)),
+        len(env_list),
+        len(agent_list),
+        max(1, int(episode_count)),
+    )
+    if max_workers <= 1:
+        reason = None
+        if int(requested_workers) > 1:
+            reason = (
+                f"requested={requested_workers}, env_count={len(env_list)}, "
+                f"agent_count={len(agent_list)}, episode_count={episode_count}"
+            )
+        return [(primary_env, primary_agent)], reason
+
+    pairs = [(env_list[index], agent_list[index]) for index in range(max_workers)]
+    return pairs, None
+
+
+def _partition_indexed_assignments(indexed_assignments, worker_count):
+    batches = [[] for _ in range(worker_count)]
+    for position, item in enumerate(indexed_assignments):
+        batches[position % worker_count].append(item)
+    return batches
+
+
+def _run_assigned_episode(
+    assignment,
+    env,
+    agent,
+    base_env_conf,
+    usr_conf,
+    idx,
+    total,
+    session_dir,
+    logger,
+    step_log,
+    round_def,
+    worker_index,
+):
+    map_id = int(assignment["map_id"])
+    ep_idx = int(assignment["ep_idx"])
+    env_conf = deepcopy(base_env_conf)
+    env_conf["map"] = [map_id]
+    env_conf["map_random"] = False
+    env_conf["robot_count"] = round_def["robot_count"]
+    env_conf["charger_count"] = round_def["charger_count"]
+    env_conf["max_step"] = round_def["max_step"]
+    env_conf["battery_max"] = round_def["battery_max"]
+
+    wrapped_conf = _wrap_env_conf(usr_conf, env_conf)
+    result = _run_eval_episode(
+        env=env,
+        agent=agent,
+        usr_conf=wrapped_conf,
+        map_id=map_id,
+        ep_idx=ep_idx,
+        idx=idx,
+        total=total,
+        session_dir=session_dir,
+        logger=logger,
+        step_log=step_log,
+        round_def=round_def,
+    )
+    result["worker_index"] = worker_index
+    return result
+
+
+def _run_assignment_batch(
+    batch,
+    env,
+    agent,
+    base_env_conf,
+    usr_conf,
+    total,
+    session_dir,
+    logger,
+    step_log,
+    round_def,
+    worker_index,
+):
+    results = []
+    for idx, assignment in batch:
+        results.append(
+            _run_assigned_episode(
+                assignment=assignment,
+                env=env,
+                agent=agent,
+                base_env_conf=base_env_conf,
+                usr_conf=usr_conf,
+                idx=idx,
+                total=total,
+                session_dir=session_dir,
+                logger=logger,
+                step_log=step_log,
+                round_def=round_def,
+                worker_index=worker_index,
+            )
+        )
+    return results
+
 
 def _run_eval_episode(
     env, agent, usr_conf, map_id, ep_idx, idx, total,
@@ -1333,6 +2058,157 @@ def _extract_base_env_conf(usr_conf):
     return deepcopy(usr_conf)
 
 
+def _env_flag(name):
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name, default):
+    value = os.getenv(name)
+    if value in (None, ""):
+        return int(default)
+    return int(value)
+
+
+def _load_shard_assignment(hostname, requested_maps, episodes_per_map) -> ShardAssignment | None:
+    assignments_dir = Path("/workspace/code/holdout_shards/assignments")
+    shard_count = int(os.getenv("KAIWU_BENCHMARK_SHARD_COUNT", "1").strip() or "1")
+    aisrv_index_raw = os.getenv("KAIWU_AISRV_INDEX", "").strip()
+    candidate_paths = []
+
+    if aisrv_index_raw:
+        try:
+            shard_index = int(aisrv_index_raw) - 1
+        except ValueError as exc:
+            raise ValueError(f"KAIWU_AISRV_INDEX must be an integer, got {aisrv_index_raw!r}") from exc
+        if shard_index < 0:
+            raise ValueError(f"KAIWU_AISRV_INDEX must be >= 1, got {aisrv_index_raw!r}")
+        if shard_index >= shard_count:
+            return None
+        candidate_paths.append(assignments_dir / f"shard_{shard_index}.json")
+
+    candidate_paths.append(assignments_dir / f"{hostname}.json")
+
+    deduped_paths = []
+    seen_paths = set()
+    for path in candidate_paths:
+        if path in seen_paths:
+            continue
+        deduped_paths.append(path)
+        seen_paths.add(path)
+
+    assignment_path = None
+    max_wait_seconds = int(os.getenv("KAIWU_BENCHMARK_ASSIGNMENT_WAIT_SECONDS", "180").strip() or "180")
+    deadline = time.time() + max_wait_seconds
+    while time.time() <= deadline:
+        for candidate_path in deduped_paths:
+            if candidate_path.is_file():
+                assignment_path = candidate_path
+                break
+        if assignment_path is not None:
+            break
+        time.sleep(1.0)
+
+    if assignment_path is None:
+        raise FileNotFoundError(
+            f"Holdout shard assignment not found for host {hostname}; checked: "
+            f"{[str(path) for path in deduped_paths]}"
+        )
+
+    try:
+        assignment = json.loads(assignment_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Holdout shard assignment is not valid JSON: {assignment_path}") from exc
+
+    if not isinstance(assignment, dict):
+        raise ValueError(f"Holdout shard assignment must be a JSON object: {assignment_path}")
+
+    required_fields = ["shard_index", "shard_count", "episodes", "maps", "episodes_per_map", "run_id"]
+    missing_fields = [field for field in required_fields if field not in assignment]
+    if missing_fields:
+        raise ValueError(f"Holdout shard assignment missing fields {missing_fields}: {assignment_path}")
+
+    if not isinstance(assignment["maps"], list):
+        raise ValueError(f"Holdout shard assignment maps must be a JSON array: {assignment_path}")
+    if not isinstance(assignment["episodes"], list):
+        raise ValueError(f"Holdout shard assignment episodes must be a JSON array: {assignment_path}")
+
+    shard_index = int(assignment["shard_index"])
+    shard_count = int(assignment["shard_count"])
+    assignment_maps = [int(map_id) for map_id in assignment["maps"]]
+    assignment_eps_per_map = int(assignment["episodes_per_map"])
+    run_id = str(assignment["run_id"] or "").strip()
+    raw_episodes = list(assignment["episodes"])
+
+    if shard_index < 0:
+        raise ValueError(f"Holdout shard_index must be >= 0: {assignment_path}")
+    if shard_count <= 0:
+        raise ValueError(f"Holdout shard_count must be > 0: {assignment_path}")
+    if shard_index >= shard_count:
+        raise ValueError(f"Holdout shard_index must be < shard_count: {assignment_path}")
+    if not assignment_maps:
+        raise ValueError(f"Holdout shard assignment maps must be non-empty: {assignment_path}")
+    if assignment_eps_per_map <= 0:
+        raise ValueError(f"Holdout shard assignment episodes_per_map must be > 0: {assignment_path}")
+    if not run_id:
+        raise ValueError(f"Holdout shard assignment run_id must be non-empty: {assignment_path}")
+    if not raw_episodes:
+        raise ValueError(f"Holdout shard assignment episodes must be non-empty: {assignment_path}")
+    if len(set(assignment_maps)) != len(assignment_maps):
+        raise ValueError(f"Holdout shard assignment maps must be unique: {assignment_path}")
+    if set(assignment_maps) != set(requested_maps):
+        raise ValueError(
+            f"Holdout shard assignment maps {assignment_maps} do not match requested maps {list(requested_maps)}: {assignment_path}"
+        )
+    if assignment_eps_per_map != int(episodes_per_map):
+        raise ValueError(
+            f"Holdout shard assignment episodes_per_map {assignment_eps_per_map} does not match requested {episodes_per_map}: {assignment_path}"
+        )
+
+    normalized_episodes = []
+    seen = set()
+    allowed_maps = set(assignment_maps)
+    for item in raw_episodes:
+        if isinstance(item, dict):
+            map_id = item.get("map_id")
+            ep_idx = item.get("ep_idx")
+            if map_id is None or ep_idx is None:
+                raise ValueError(
+                    f"Holdout shard assignment episode dict must include map_id and ep_idx: {assignment_path}"
+                )
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            map_id, ep_idx = item
+        else:
+            raise ValueError(
+                f"Holdout shard assignment episodes must contain map_id/ep_idx pairs: {assignment_path}"
+            )
+
+        map_id = int(map_id)
+        ep_idx = int(ep_idx)
+        pair = (map_id, ep_idx)
+
+        if map_id not in allowed_maps:
+            raise ValueError(f"Holdout shard episode map_id {map_id} not declared in maps: {assignment_path}")
+        if ep_idx < 1 or ep_idx > assignment_eps_per_map:
+            raise ValueError(
+                f"Holdout shard episode ep_idx {ep_idx} out of range 1..{assignment_eps_per_map}: {assignment_path}"
+            )
+        if pair in seen:
+            raise ValueError(f"Holdout shard assignment contains duplicate episode pair {pair}: {assignment_path}")
+
+        seen.add(pair)
+        normalized_episodes.append({"map_id": map_id, "ep_idx": ep_idx})
+
+    return {
+        "shard_index": shard_index,
+        "shard_count": shard_count,
+        "episodes": normalized_episodes,
+        "maps": assignment_maps,
+        "episodes_per_map": assignment_eps_per_map,
+        "run_id": run_id,
+        "assignment_path": str(assignment_path),
+    }
+
+
 def _wrap_env_conf(usr_conf, env_conf):
     if isinstance(usr_conf, dict) and "env_conf" in usr_conf:
         wrapped = deepcopy(usr_conf)
@@ -1447,6 +2323,7 @@ def _empty_episode_result(map_id, ep_idx, fail_reason):
 
 
 def _atomic_write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.parent / f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)

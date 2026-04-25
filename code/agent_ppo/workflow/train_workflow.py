@@ -35,16 +35,36 @@ def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
         logger.error("usr_conf is None, please check agent_ppo/conf/train_env_conf.toml")
         return
 
+    # --- Parallel benchmark mode: framework-level env fanout + dynamic task queue ---
+    if os.getenv("KAIWU_BENCHMARK_PARALLEL_MODE", "").strip().lower() in ("1", "true", "yes", "on"):
+        logger.info("[BENCHMARK] KAIWU_BENCHMARK_PARALLEL_MODE detected - entering dynamic holdout benchmark")
+        from agent_ppo.eval.holdout_benchmark import run_holdout_benchmark
+        run_holdout_benchmark(
+            env,
+            agent,
+            usr_conf,
+            logger,
+            envs=envs,
+            agents=agents,
+            process_index=kwargs.get("process_index"),
+        )
+        logger.info("[BENCHMARK] dynamic holdout benchmark complete, exiting")
+        return
+
     # --- Benchmark mode: run inference-only holdout eval, then exit ---
     if os.getenv("KAIWU_BENCHMARK_MODE", "").strip() in ("1", "true"):
         aisrv_index = os.getenv("KAIWU_AISRV_INDEX", "1").strip()
-        if aisrv_index not in ("", "1"):
+        sharded_benchmark = os.getenv("KAIWU_BENCHMARK_SHARDED", "").strip().lower() in ("1", "true", "yes", "on")
+        if aisrv_index not in ("", "1") and not sharded_benchmark:
             logger.info(f"[BENCHMARK] Skipping on aisrv-{aisrv_index}, only aisrv-1 runs benchmark")
             return
         logger.info("[BENCHMARK] KAIWU_BENCHMARK_MODE detected — entering inference-only holdout benchmark")
         from agent_ppo.eval.holdout_benchmark import run_holdout_benchmark
-        run_holdout_benchmark(env, agent, usr_conf, logger)
-        logger.info("[BENCHMARK] aisrv-1 benchmark complete, exiting")
+        run_holdout_benchmark(env, agent, usr_conf, logger, envs=envs, agents=agents)
+        if sharded_benchmark:
+            logger.info(f"[BENCHMARK] aisrv-{aisrv_index or '1'} sharded benchmark complete, exiting")
+        else:
+            logger.info("[BENCHMARK] aisrv-1 benchmark complete, exiting")
         return
 
     archive.ensure_run(
