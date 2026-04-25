@@ -75,6 +75,15 @@ class Preprocessor:
         self.rewarded_arrived_charger_regions = set()
         self.new_charger_arrival_reward = 0.0
         self.charger_arrival_steps = {}
+        self.confirmed_charger_arrival_steps = {}
+        self.pending_arrivals = {}
+        self.arrival_confirmed_count = 0
+        self.arrival_canceled_count = 0
+        self.arrival_confirm_reward_total = 0.0
+        self.arrival_cancel_penalty_total = 0.0
+        self.charge_loop_frames = 0
+        self.current_mode = ""
+        self.should_charge = False
 
     def set_episode_config(self, max_step=None, robot_count=None, charger_count=None, battery_max=None):
         if max_step is not None:
@@ -83,6 +92,12 @@ class Preprocessor:
             self.episode_charger_count = int(np.clip(charger_count, 1, 4))
         if battery_max is not None:
             self.episode_battery_max = int(np.clip(battery_max, 100, 999))
+
+    def set_policy_context(self, target_mode=None, should_charge=None):
+        if target_mode is not None:
+            self.current_mode = str(target_mode)
+        if should_charge is not None:
+            self.should_charge = bool(should_charge)
 
     def pb2struct(self, env_obs: dict, last_action: int):
         """Parse env observation and cache required state."""
@@ -129,12 +144,16 @@ class Preprocessor:
                 arrival_order = len(self.rewarded_arrived_charger_regions)
                 self.rewarded_arrived_charger_regions.add(region_key)
                 self.charger_arrival_steps[region_key] = self.step_no
-                if arrival_order == 0:
-                    self.new_charger_arrival_reward += 0.18
-                elif arrival_order == 1:
-                    self.new_charger_arrival_reward += 0.24
-                else:
-                    self.new_charger_arrival_reward += 0.22
+                self.pending_arrivals[region_key] = {
+                    "region": region,
+                    "arrival_step": self.step_no,
+                    "base_reward": self._arrival_base_reward(arrival_order),
+                    "start_dirt_cleaned": self.dirt_cleaned,
+                    "start_observed_cells": int(np.count_nonzero(self.observed_map)),
+                    "start_battery_ratio": _norm(self.battery, self.battery_max),
+                    "confirmed": False,
+                    "left_region": False,
+                }
         self._nearest_unarrived_charger_dist = self._nearest_unarrived_charger_distance()
 
         self.npc_positions = [
@@ -320,6 +339,75 @@ class Preprocessor:
             for cx, cz in unarrived_centers
         ))
 
+    def _arrival_base_reward(self, arrival_order: int) -> float:
+        if arrival_order == 0:
+            return 0.12
+        if arrival_order == 1:
+            return 0.08
+        return 0.04
+
+    def _resolve_pending_arrivals(
+        self,
+        *,
+        cleaning_progress: float,
+        is_on_charger: bool,
+        charge_active: bool,
+        charge_loop_flag: bool,
+        is_starving: bool,
+    ) -> float:
+        reward = 0.0
+        observed_cells = int(np.count_nonzero(self.observed_map))
+        min_delay = 20
+        max_delay = 40
+
+        for region_key, info in list(self.pending_arrivals.items()):
+            age = self.step_no - int(info["arrival_step"])
+            region = info["region"]
+            if not is_on_charger or self.cur_pos not in region:
+                info["left_region"] = True
+
+            if age < min_delay:
+                continue
+
+            coverage_gain = self.dirt_cleaned - int(info["start_dirt_cleaned"])
+            observed_gain = observed_cells - int(info["start_observed_cells"])
+            left_region = bool(info["left_region"])
+            battery_ratio = _norm(self.battery, self.battery_max)
+            battery_gain = battery_ratio - float(info["start_battery_ratio"])
+
+            has_value = (
+                coverage_gain >= 3
+                or observed_gain >= 24
+                or (left_region and (coverage_gain >= 1 or observed_gain >= 10 or battery_gain >= 0.05))
+            )
+            severe_risk = is_starving or (charge_active and charge_loop_flag and not left_region)
+            expired = age >= max_delay
+
+            if not severe_risk and not expired and not has_value:
+                continue
+
+            if severe_risk or expired:
+                if severe_risk:
+                    penalty = -0.04 if age < max_delay else -0.02
+                else:
+                    penalty = -0.02 if expired else 0.0
+                reward += penalty
+                self.arrival_canceled_count += 1
+                self.arrival_cancel_penalty_total += penalty
+                del self.pending_arrivals[region_key]
+                continue
+
+            gated_reward = float(info["base_reward"]) * max(0.65, 1.0 - 0.25 * cleaning_progress)
+            if charge_active and not left_region:
+                gated_reward *= 0.5
+            reward += gated_reward
+            self.arrival_confirmed_count += 1
+            self.arrival_confirm_reward_total += gated_reward
+            self.confirmed_charger_arrival_steps[region_key] = self.step_no
+            del self.pending_arrivals[region_key]
+
+        return reward
+
     def _get_global_state_feature(self) -> np.ndarray:
         """Construct the 27D global handcrafted feature vector."""
         hx, hz = self.cur_pos
@@ -394,26 +482,28 @@ class Preprocessor:
         """
         cleaned_this_step = max(0, self.dirt_cleaned - self.last_dirt_cleaned)
         cleaning_progress = self.dirt_cleaned / max(self.total_dirt, 1)
+        unvisited_ratio = self._get_unvisited_ratio()
         prev_battery_ratio = _norm(self.prev_battery, self.battery_max)
         cur_battery_ratio = _norm(self.battery, self.battery_max)
         charge_gain_ratio = max(0.0, cur_battery_ratio - prev_battery_ratio)
         nearest_charger_dist = self._nearest_charger_distance()
         charger_known = nearest_charger_dist < self.MAX_DIST
         is_on_charger = any(self.cur_pos in region for region in self.charger_regions)
+        charge_active = self.current_mode == "charge" or self.should_charge
         is_starving = (
             charger_known
             and not is_on_charger
-            and float(self.battery) <= nearest_charger_dist + 20.0
+            and float(self.battery) <= nearest_charger_dist + 22.0
         )
         cleaning_reward = 0.22 * cleaned_this_step
         explore_reward = 0.003 * min(self.new_observed_cells, 12) * max(0.0, 1.0 - cleaning_progress)
         approach_reward = 0.01 if cleaned_this_step == 0 and self._nearest_dirt_dist < self._last_nearest_dirt_dist else 0.0
         fresh_path_reward = 0.0
         if self.cur_revisit_count == 0:
-            fresh_path_reward = 0.012
+            fresh_path_reward = 0.015
         elif self.cur_revisit_count == 1:
             fresh_path_reward = 0.006
-        fresh_path_reward *= max(0.4, 1.0 - 0.5 * cleaning_progress)
+        fresh_path_reward *= max(0.45, 1.0 - 0.45 * cleaning_progress)
         unarrived_charger_progress_reward = 0.0
         if is_starving:
             cleaning_reward = 0.0
@@ -464,11 +554,45 @@ class Preprocessor:
             and unarrived_progress > 0.0
         ):
             unarrived_charger_progress_reward = 0.012 * np.clip(unarrived_progress / 2.0, 0.0, 1.5)
+            if self._nearest_unarrived_charger_dist < 20.0:
+                unarrived_charger_progress_reward += 0.012
+            if self._nearest_unarrived_charger_dist < 12.0:
+                unarrived_charger_progress_reward += 0.015
+            if self._nearest_unarrived_charger_dist < 6.0:
+                unarrived_charger_progress_reward += 0.010
         revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
+        loop_penalty = 0.0
+        if (
+            not is_starving
+            and self.cur_revisit_count >= 3
+            and self.new_observed_cells == 0
+            and cleaned_this_step == 0
+        ):
+            loop_penalty = -0.012
+        charge_loop_penalty = 0.0
+        if (
+            charge_active
+            and self.cur_revisit_count >= 2
+            and self.new_observed_cells == 0
+            and cleaned_this_step == 0
+            and charge_gain_ratio < 0.01
+        ):
+            charge_loop_penalty -= 0.020
+            self.charge_loop_frames += 1
+            if unvisited_ratio < 0.18:
+                charge_loop_penalty -= 0.006
         step_penalty = -(0.001 + 0.002 * cleaning_progress)
+        if charge_active:
+            step_penalty -= 0.0025
         if is_starving:
             step_penalty *= 2.5
-        charger_arrival_reward = self.new_charger_arrival_reward * max(0.60, 1.0 - 0.35 * cleaning_progress)
+        charger_arrival_reward = self._resolve_pending_arrivals(
+            cleaning_progress=cleaning_progress,
+            is_on_charger=is_on_charger,
+            charge_active=charge_active,
+            charge_loop_flag=charge_loop_penalty < 0.0,
+            is_starving=is_starving,
+        )
 
         return (
             cleaning_reward
@@ -482,6 +606,8 @@ class Preprocessor:
             + low_battery_penalty
             + critical_battery_penalty
             + revisit_penalty
+            + loop_penalty
+            + charge_loop_penalty
             + step_penalty
         )
 

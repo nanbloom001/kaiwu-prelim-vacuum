@@ -139,6 +139,10 @@ class Agent(BaseAgent):
     def exploit(self, env_obs) -> int:
         obs_data, _ = self.observation_process(env_obs)
         policy_info = self.planner.update(env_obs, self.last_action)
+        self.preprocessor.set_policy_context(
+            target_mode=getattr(policy_info, "target_mode", ""),
+            should_charge=getattr(policy_info, "should_charge", False),
+        )
         act_data = self.guided_predict(
             [obs_data],
             policy_info=policy_info,
@@ -201,10 +205,10 @@ class Agent(BaseAgent):
             and np.isfinite(charger_distance)
             and charger_distance < 900.0
         ):
-            if battery <= charger_distance + 14.0:
+            if battery <= charger_distance + 16.0:
                 return 0.0
-            if battery <= charger_distance + 20.0:
-                alpha = min(alpha, 0.002)
+            if battery <= charger_distance + 22.0:
+                alpha = min(alpha, 0.001)
         if getattr(policy_info, "target_mode", "") == "charge":
             return min(alpha, Config.RESIDUAL_ALPHA_CHARGE_CAP)
         if getattr(policy_info, "target_mode", "") == "fallback":

@@ -119,6 +119,16 @@ class EpisodeRunner:
             "total_score": int(env_info.get("total_score", 0)),
         }
 
+    def _extract_fail_reason(self, env_obs: dict) -> str:
+        obs = env_obs.get("observation", {})
+        env_info = obs.get("env_info", {})
+        return str(
+            env_obs.get("fail_reason")
+            or obs.get("fail_reason")
+            or env_info.get("fail_reason")
+            or ""
+        )
+
     def run_episodes(self):
         while True:
             now = time.time()
@@ -164,19 +174,12 @@ class EpisodeRunner:
 
             obs_data, _ = self.agent.observation_process(env_obs)
             self.logger.info(
-                f"[Agent{self.agent_id}] Episode {self.episode_cnt} start "
-                f"alpha={last_alpha:.3f} max_step={episode_max_step} "
-                f"charger_count={episode_charger_count} "
-                f"battery_max={episode_battery_max}"
+                f"[Agent{self.agent_id}] Episode {self.episode_cnt} start alpha={last_alpha:.3f}"
             )
 
             while not done:
                 policy_info = self.planner.update(env_obs, self.agent.last_action)
                 last_mode = policy_info.target_mode
-                self.agent.preprocessor.set_policy_context(
-                    target_mode=last_mode,
-                    should_charge=getattr(policy_info, "should_charge", False),
-                )
                 last_alpha = self.scheduler.action_alpha(last_mode)
 
                 act_data = self.agent.guided_predict(
@@ -227,56 +230,13 @@ class EpisodeRunner:
                     fm = self.agent.preprocessor
                     cleaning_ratio = fm.dirt_cleaned / max(fm.total_dirt, 1)
                     episode_score = float(final_parsed["total_score"])
-                    arrival_steps = sorted(fm.charger_arrival_steps.values())
-                    confirmed_arrival_steps = sorted(fm.confirmed_charger_arrival_steps.values())
-                    charger_arrived_count = len(arrival_steps)
-                    arrival_confirmed_count = int(fm.arrival_confirmed_count)
-                    arrival_canceled_count = int(fm.arrival_canceled_count)
-                    pending_arrival_count = len(fm.pending_arrivals)
-                    first_arrival_step = arrival_steps[0] if charger_arrived_count >= 1 else -1
-                    second_arrival_step = arrival_steps[1] if charger_arrived_count >= 2 else -1
-                    third_arrival_step = arrival_steps[2] if charger_arrived_count >= 3 else -1
-                    first_confirmed_arrival_step = (
-                        confirmed_arrival_steps[0] if confirmed_arrival_steps else -1
-                    )
                     score_ratio = episode_score / 2000.0
-                    quality_bonus = 0.0
+                    fail_reason = self._extract_fail_reason(env_obs)
                     if truncated:
-                        if last_mode == "charge":
-                            quality_bonus += 0.05
-
-                        if charger_arrived_count >= 3:
-                            quality_bonus += 0.30
-                        elif charger_arrived_count == 2:
-                            quality_bonus += 0.12
-
-                        if (
-                            charger_arrived_count >= 2
-                            and second_arrival_step > 0
-                            and second_arrival_step <= 500
-                        ):
-                            quality_bonus += 0.08
-
-                        if charger_arrived_count == 1 and episode_score < 900:
-                            quality_bonus -= 0.18
-
-                        if charger_arrived_count == 1 and episode_score < 820:
-                            quality_bonus -= 0.25
-
-                        final_reward = 2.5 * cleaning_ratio + 1.5 * score_ratio + quality_bonus
+                        final_reward = 2.5 * cleaning_ratio + 1.5 * score_ratio
                         result_str = "WIN"
                     else:
-                        if charger_arrived_count >= 3:
-                            quality_bonus += 0.05
-                        elif charger_arrived_count == 2:
-                            quality_bonus += 0.02
-
-                        if last_mode == "charge":
-                            quality_bonus -= 0.20
-                            if step <= 250:
-                                quality_bonus -= 0.15
-
-                        final_reward = -2.5 - 0.5 * max(0.0, 0.9 - cleaning_ratio) + quality_bonus
+                        final_reward = -2.5 - 0.5 * max(0.0, 0.9 - cleaning_ratio)
                         result_str = "FAIL"
 
                     collector[-1].reward = (
@@ -284,55 +244,31 @@ class EpisodeRunner:
                     )
 
                     new_alpha = self.scheduler.update(episode_score, cleaning_ratio)
-                    charge_fail_after_arrival = int(not truncated and charger_arrived_count > 0)
                     self.logger.info(
                         f"[Agent{self.agent_id}][GAMEOVER] "
                         f"ep={self.episode_cnt} steps={step} result={result_str} "
+                        f"terminated={terminated} truncated={truncated} "
                         f"mode={last_mode} alpha={last_alpha:.3f}->{new_alpha:.3f} "
-                        f"max_step={episode_max_step} "
-                        f"charger_count={episode_charger_count} "
-                        f"battery_max={episode_battery_max} "
-                        f"quality_bonus={quality_bonus:.3f} "
+                        f"npc_dist={policy_info.nearest_npc_distance:.1f} "
+                        f"charger_slack={policy_info.charger_slack:.1f} "
+                        f"should_charge={policy_info.should_charge} "
+                        f"fail_reason={fail_reason or '-'} "
                         f"score={episode_score:.1f} reward={total_reward + final_reward:.3f} "
-                        f"dirt={fm.dirt_cleaned}/{fm.total_dirt} "
-                        f"charger_arrivals={charger_arrived_count} "
-                        f"arrival_steps=[{first_arrival_step},{second_arrival_step},{third_arrival_step}] "
-                        f"arrival_confirmed={arrival_confirmed_count} "
-                        f"arrival_canceled={arrival_canceled_count} "
-                        f"arrival_pending={pending_arrival_count} "
-                        f"first_confirmed_arrival_step={first_confirmed_arrival_step} "
-                        f"charge_loop_frames={fm.charge_loop_frames} "
-                        f"charge_fail_after_arrival={charge_fail_after_arrival}"
+                        f"dirt={fm.dirt_cleaned}/{fm.total_dirt}"
                     )
 
                     now = time.time()
                     if now - self.last_report_monitor_time >= 60 and self.monitor:
-                        monitor_payload = {
-                            "reward": total_reward + final_reward,
-                            "episode_cnt": self.episode_cnt,
-                            "mix_alpha": new_alpha,
-                            "score": episode_score,
-                            "quality_bonus": quality_bonus,
-                            "local_predict_cnt": self.local_predict_cnt,
-                            "local_frame_cnt": self.local_frame_cnt,
-                            "local_yield_cnt": self.local_yield_cnt,
-                            "max_step_target_1000": 1000 if episode_max_step == 1000 else 0,
-                            "finished_steps_actual_1000": step if episode_max_step == 1000 else 0,
-                            "max_step_target_2000": 2000 if episode_max_step == 2000 else 0,
-                            "finished_steps_actual_2000": step if episode_max_step == 2000 else 0,
-                            "charger_arrived_count": charger_arrived_count,
-                            "charger_first_arrival_step": first_arrival_step,
-                            "charger_second_arrival_step": second_arrival_step,
-                            "charger_third_arrival_step": third_arrival_step,
-                            "arrival_confirmed_count": arrival_confirmed_count,
-                            "arrival_canceled_count": arrival_canceled_count,
-                            "arrival_pending_count": pending_arrival_count,
-                            "charger_first_confirmed_arrival_step": first_confirmed_arrival_step,
-                            "charge_loop_frames": fm.charge_loop_frames,
-                            "charge_fail_after_arrival": charge_fail_after_arrival,
-                        }
                         self.monitor.put_data({
-                            os.getpid(): monitor_payload
+                            os.getpid(): {
+                                "reward": total_reward + final_reward,
+                                "episode_cnt": self.episode_cnt,
+                                "mix_alpha": new_alpha,
+                                "score": episode_score,
+                                "local_predict_cnt": self.local_predict_cnt,
+                                "local_frame_cnt": self.local_frame_cnt,
+                                "local_yield_cnt": self.local_yield_cnt,
+                            }
                         })
                         self.last_report_monitor_time = now
 

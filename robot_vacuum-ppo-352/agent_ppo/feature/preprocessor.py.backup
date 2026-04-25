@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+###########################################################################
+# Copyright © 1998 - 2026 Tencent. All Rights Reserved.
+###########################################################################
+"""
+Author: Tencent AI Arena Authors
+
+Feature preprocessor for Robot Vacuum.
+清扫大作战特征预处理器。
+"""
+
+import math
+
+import numpy as np
+
+
+def _clip_norm(v, vmax):
+    if vmax <= 0:
+        return 0.0
+    return float(np.clip(float(v) / float(vmax), 0.0, 1.0))
+
+
+def _get_pos(obj):
+    pos = obj.get("pos", {}) if isinstance(obj, dict) else {}
+    return float(pos.get("x", 0.0)), float(pos.get("z", 0.0))
+
+
+class Preprocessor:
+    """Feature preprocessor for Robot Vacuum PPO.
+
+    470D feature layout:
+    - 441: map_info flatten(21x21), normalized by /2.0
+    -   5: battery_ratio, step_ratio, pos_x, pos_z, clean_ratio
+    -   4: charger distances
+    -  12: npc distances (4) + npc direction sin/cos pairs (8)
+    -   8: last action one-hot
+    """
+
+    GRID_SIZE = 128
+    ACTION_NUM = 8
+    MAX_ENTITY = 4
+    MAX_DIST = 180.0
+    FEATURE_DIM = 470
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.step_no = 0
+        self.battery = 0
+        self.battery_max = 1
+        self.cur_pos = (0.0, 0.0)
+        self.total_dirt = 1
+        self.dirt_cleaned = 0
+        self.last_dirt_cleaned = 0
+        self._legal_act = [1] * self.ACTION_NUM
+        self._map_info = np.zeros((21, 21), dtype=np.float32)
+        self._organs = []
+        self._npcs = []
+        self._terminated = False
+        self._truncated = False
+        self._fail_reason = ""
+        self._step_cleaned = 0
+
+        # Mild behavior tracking for reward shaping only (not in features)
+        self._visit_counter = {}
+        self._recent_positions = []
+        self._history_size = 8
+        self._was_stuck = False
+        self._prev_min_charger_dist = None
+        self._prev_battery_ratio = 1.0
+        self._cur_battery_ratio = 1.0
+
+    def _extract_observation(self, env_obs):
+        if not isinstance(env_obs, dict):
+            return {}, False, False, ""
+
+        if isinstance(env_obs.get("observation"), dict):
+            obs = env_obs.get("observation", {})
+        else:
+            obs = env_obs
+
+        terminated = bool(env_obs.get("terminated", False))
+        truncated = bool(env_obs.get("truncated", False))
+        fail_reason = str(env_obs.get("fail_reason", ""))
+
+        if not fail_reason:
+            fail_reason = str(obs.get("fail_reason", ""))
+        if not fail_reason:
+            fail_reason = str(obs.get("env_info", {}).get("fail_reason", ""))
+
+        return obs, terminated, truncated, fail_reason
+
+    def _update_movement_memory(self):
+        cell = (int(round(self.cur_pos[0])), int(round(self.cur_pos[1])))
+        self._visit_counter[cell] = self._visit_counter.get(cell, 0) + 1
+        self._recent_positions.append(cell)
+        if len(self._recent_positions) > self._history_size:
+            self._recent_positions.pop(0)
+
+    def _is_stuck(self):
+        if len(self._recent_positions) < self._history_size:
+            return False
+        return len(set(self._recent_positions)) <= 2
+
+    def pb2struct(self, env_obs, _last_action):
+        obs, terminated, truncated, fail_reason = self._extract_observation(env_obs)
+        frame_state = obs.get("frame_state", {})
+        env_info = obs.get("env_info", {})
+        hero = frame_state.get("heroes", {})
+
+        self._terminated = terminated
+        self._truncated = truncated
+        self._fail_reason = fail_reason.lower()
+
+        self.step_no = int(obs.get("step_no", 0))
+        self.cur_pos = _get_pos(hero)
+
+        self.battery = int(hero.get("battery", 0))
+        self.battery_max = max(int(hero.get("battery_max", 1)), 1)
+        self._cur_battery_ratio = _clip_norm(self.battery, self.battery_max)
+
+        self.last_dirt_cleaned = self.dirt_cleaned
+        self.dirt_cleaned = int(hero.get("dirt_cleaned", hero.get("score", 0)))
+        self.total_dirt = max(int(env_info.get("total_dirt", 1)), 1)
+
+        legal = obs.get("legal_action")
+        if legal is None:
+            legal = obs.get("legal_act")
+        if isinstance(legal, (list, tuple)) and len(legal) >= self.ACTION_NUM:
+            self._legal_act = [int(x) for x in list(legal)[: self.ACTION_NUM]]
+        else:
+            self._legal_act = [1] * self.ACTION_NUM
+
+        map_info = obs.get("map_info")
+        if map_info is not None:
+            arr = np.array(map_info, dtype=np.float32)
+            if arr.ndim == 2:
+                out = np.zeros((21, 21), dtype=np.float32)
+                h = min(arr.shape[0], 21)
+                w = min(arr.shape[1], 21)
+                out[:h, :w] = arr[:h, :w]
+                self._map_info = out
+            else:
+                self._map_info = np.zeros((21, 21), dtype=np.float32)
+        else:
+            self._map_info = np.zeros((21, 21), dtype=np.float32)
+
+        self._organs = frame_state.get("organs", []) or []
+        self._npcs = frame_state.get("npcs", []) or []
+
+        step_cleaned_cells = env_info.get("step_cleaned_cells", [])
+        if isinstance(step_cleaned_cells, (list, tuple)):
+            self._step_cleaned = len(step_cleaned_cells)
+        else:
+            self._step_cleaned = max(0, self.dirt_cleaned - self.last_dirt_cleaned)
+
+        self._update_movement_memory()
+
+    def _map_feature(self):
+        return (self._map_info.flatten() / 2.0).astype(np.float32)
+
+    def _global_feature(self):
+        hx, hz = self.cur_pos
+        battery_ratio = _clip_norm(self.battery, self.battery_max)
+        step_ratio = _clip_norm(self.step_no, 2000.0)
+        pos_x = _clip_norm(hx, self.GRID_SIZE)
+        pos_z = _clip_norm(hz, self.GRID_SIZE)
+        clean_ratio = _clip_norm(self.dirt_cleaned, self.total_dirt)
+        return np.array([battery_ratio, step_ratio, pos_x, pos_z, clean_ratio], dtype=np.float32)
+
+    def _entity_features(self):
+        hx, hz = self.cur_pos
+
+        chargers = []
+        for organ in self._organs:
+            ox, oz = _get_pos(organ)
+            dist = math.sqrt((ox - hx) ** 2 + (oz - hz) ** 2)
+            chargers.append(_clip_norm(dist, self.MAX_DIST))
+        chargers = sorted(chargers)[: self.MAX_ENTITY]
+        while len(chargers) < self.MAX_ENTITY:
+            chargers.append(0.0)
+
+        npc_items = []
+        for npc in self._npcs:
+            nx, nz = _get_pos(npc)
+            dx = nx - hx
+            dz = nz - hz
+            dist = math.sqrt(dx**2 + dz**2)
+            angle = math.atan2(dz, dx) if dist > 1e-6 else 0.0
+            npc_items.append((_clip_norm(dist, self.MAX_DIST), math.sin(angle), math.cos(angle)))
+        npc_items = sorted(npc_items, key=lambda x: x[0])[: self.MAX_ENTITY]
+
+        npc_dists = [it[0] for it in npc_items]
+        npc_dirs = []
+        for _, sin_v, cos_v in npc_items:
+            npc_dirs.extend([sin_v, cos_v])
+
+        while len(npc_dists) < self.MAX_ENTITY:
+            npc_dists.append(0.0)
+        while len(npc_dirs) < self.MAX_ENTITY * 2:
+            npc_dirs.append(0.0)
+
+        return (
+            np.array(chargers, dtype=np.float32),
+            np.array(npc_dists, dtype=np.float32),
+            np.array(npc_dirs, dtype=np.float32),
+        )
+
+    def _last_action_feature(self, last_action):
+        onehot = np.zeros(self.ACTION_NUM, dtype=np.float32)
+        if isinstance(last_action, int) and 0 <= last_action < self.ACTION_NUM:
+            onehot[last_action] = 1.0
+        return onehot
+
+    def get_legal_action(self):
+        return list(self._legal_act)
+
+    def feature_process(self, env_obs, last_action):
+        self.pb2struct(env_obs, last_action)
+
+        map_flat = self._map_feature()
+        global_state = self._global_feature()
+        charger_dist, npc_dist, npc_dir = self._entity_features()
+        last_act_onehot = self._last_action_feature(last_action)
+
+        feature = np.concatenate(
+            [map_flat, global_state, charger_dist, npc_dist, npc_dir, last_act_onehot], axis=0
+        ).astype(np.float32)
+
+        if feature.shape[0] != self.FEATURE_DIM:
+            fixed = np.zeros(self.FEATURE_DIM, dtype=np.float32)
+            n = min(feature.shape[0], self.FEATURE_DIM)
+            fixed[:n] = feature[:n]
+            feature = fixed
+
+        feature = np.nan_to_num(feature, nan=0.0, posinf=1.0, neginf=0.0)
+        legal_action = self.get_legal_action()
+        reward = self.reward_process()
+        return feature, legal_action, reward
+
+    def _min_charger_distance(self):
+        hx, hz = self.cur_pos
+        if not self._organs:
+            return 1e9
+        dists = []
+        for organ in self._organs:
+            ox, oz = _get_pos(organ)
+            dists.append(math.sqrt((ox - hx) ** 2 + (oz - hz) ** 2))
+        return float(min(dists)) if dists else 1e9
+
+    def _min_npc_distance(self):
+        hx, hz = self.cur_pos
+        if not self._npcs:
+            return 1e9
+        dists = []
+        for npc in self._npcs:
+            nx, nz = _get_pos(npc)
+            dists.append(math.sqrt((nx - hx) ** 2 + (nz - hz) ** 2))
+        return float(min(dists)) if dists else 1e9
+
+    def reward_process(self):
+        reward = 0.0
+
+        # 1) Main cleaning reward
+        cleaned_this_step = max(0, int(self._step_cleaned))
+        reward += 1.0 * cleaned_this_step
+
+        # 2) Mild time penalty
+        reward -= 0.006
+
+        # 3) Mild coverage shaping (keep weak to avoid overshadowing main reward)
+        cur_cell = (int(round(self.cur_pos[0])), int(round(self.cur_pos[1])))
+        visit_count = self._visit_counter.get(cur_cell, 1)
+        if visit_count == 1:
+            reward += 0.03
+        elif visit_count > 6:
+            reward -= 0.004 * min(visit_count - 6, 10)
+
+        # 4) Mild low-battery charging guidance
+        battery_ratio = self._cur_battery_ratio
+        min_charger_dist = self._min_charger_distance()
+        if battery_ratio < 0.35:
+            if self._prev_min_charger_dist is not None:
+                dist_delta = self._prev_min_charger_dist - min_charger_dist
+                reward += 0.10 * float(np.clip(dist_delta / 8.0, -1.0, 1.0))
+            if min_charger_dist < 12.0:
+                reward += 0.12 * ((12.0 - min_charger_dist) / 12.0)
+            if min_charger_dist > 22.0:
+                reward -= 0.08 * float(np.clip((min_charger_dist - 22.0) / 40.0, 0.0, 1.0))
+            if self._cur_battery_ratio - self._prev_battery_ratio > 0.10:
+                reward += 0.20
+
+        # 5) NPC safety penalty
+        min_npc_dist = self._min_npc_distance()
+        if min_npc_dist < 8.0:
+            reward -= 0.55 * ((8.0 - min_npc_dist) / 8.0)
+
+        # 6) Very mild anti-stuck shaping
+        is_stuck = self._is_stuck()
+        if is_stuck:
+            reward -= 0.05
+        if self._was_stuck and not is_stuck:
+            reward += 0.04
+        self._was_stuck = is_stuck
+
+        # 7) Terminal penalty
+        if self._terminated and not self._truncated:
+            if "collision" in self._fail_reason:
+                reward -= 12.0
+            elif "battery" in self._fail_reason:
+                reward -= 10.0
+            else:
+                reward -= 4.0
+
+        self._prev_min_charger_dist = min_charger_dist
+        self._prev_battery_ratio = self._cur_battery_ratio
+        return float(reward)
