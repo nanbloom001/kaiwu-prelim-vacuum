@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportGeneralTypeIssues=false, reportIndexIssue=false, reportOperatorIssue=false, reportReturnType=false
 """
 Analyze fixed holdout benchmark runner output into JSON and optional Markdown.
 """
@@ -98,11 +99,19 @@ def safe_int_sort_key(value: str) -> tuple[int, object]:
 
 
 def normalize_fail_reason(episode: dict[str, object]) -> str:
-    for key in ("fail_reason", "done_reason", "status"):
+    for key in ("fail_reason", "done_reason", "status", "result"):
         value = episode.get(key)
         if value:
             return str(value).lower()
     return "unknown"
+
+
+def get_finished_steps(episode: dict[str, object]) -> int:
+    for key in ("finished_steps", "steps", "step"):
+        value = episode.get(key)
+        if value not in (None, ""):
+            return coerce_int(value)
+    return 0
 
 
 def is_completed(reason: str) -> bool:
@@ -159,7 +168,7 @@ def build_metrics(episodes: list[dict[str, object]]) -> dict[str, object]:
         }
 
     clean_scores = [coerce_float(ep.get("clean_score", ep.get("score", 0.0))) for ep in episodes]
-    finished_steps = [coerce_float(ep.get("finished_steps", ep.get("step", 0.0))) for ep in episodes]
+    finished_steps = [coerce_float(get_finished_steps(ep)) for ep in episodes]
     charge_counts = [coerce_float(ep.get("charge_count", 0.0)) for ep in episodes]
     remaining_charge = [coerce_float(ep.get("remaining_charge", ep.get("battery", 0.0))) for ep in episodes]
     clean_per_step = []
@@ -186,6 +195,17 @@ def build_metrics(episodes: list[dict[str, object]]) -> dict[str, object]:
 
 def load_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_optional_adjacent_ai_summary(input_path: Path) -> dict[str, object] | None:
+    candidate = input_path.with_name("ai_summary.json")
+    if not candidate.exists():
+        return None
+    try:
+        payload = load_json(candidate)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def load_jsonl(path: Path) -> list[dict[str, object]]:
@@ -321,10 +341,15 @@ def snapshot_example(episode_id: str, episode: dict[str, object], replay_path: s
         "map_id": episode.get("map_id"),
         "fail_reason": normalize_fail_reason(episode),
         "clean_score": round(coerce_float(episode.get("clean_score", episode.get("total_score", 0.0))), 4),
-        "finished_steps": coerce_int(episode.get("finished_steps", episode.get("step", 0))),
+        "finished_steps": get_finished_steps(episode),
         "remaining_charge": round(coerce_float(episode.get("remaining_charge", episode.get("battery", 0.0))), 4),
+        "charger_known_final": get_episode_bool(episode, "charger_known_final"),
+        "attempted_charge_step_count": coerce_int(episode.get("attempted_charge_step_count", 0)),
         "charger_arrived_count": coerce_int(episode.get("charger_arrived_count", 0)),
         "charger_first_arrival_step": coerce_int(episode.get("charger_first_arrival_step", -1), -1),
+        "min_charger_slack": get_episode_float(episode, "min_charger_slack"),
+        "repeat_action_max_streak": coerce_int(episode.get("repeat_action_max_streak", 0)),
+        "revisit_ratio": round(coerce_float(episode.get("revisit_ratio", 0.0)), 4),
         "invalid_move_rate": round(coerce_float(episode.get("invalid_move_rate", 0.0)), 4),
         "death_replay_path": replay_path,
     }
@@ -348,15 +373,59 @@ def text_blob(*parts: object) -> str:
     return " | ".join(rendered)
 
 
+def get_episode_bool(episode: dict[str, object], key: str) -> bool | None:
+    if key not in episode:
+        return None
+    value = episode.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+        return None
+    return bool(value)
+
+
+def get_episode_float(episode: dict[str, object], key: str) -> float | None:
+    if key not in episode:
+        return None
+    value = episode.get(key)
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_episode_int(episode: dict[str, object], key: str) -> int | None:
+    value = get_episode_float(episode, key)
+    if value is None:
+        return None
+    return int(value)
+
+
 def classify_failure(episode: dict[str, object], replay: dict[str, object] | None) -> tuple[str, list[str]]:
     fail_reason = normalize_fail_reason(episode)
     clean_score = coerce_float(episode.get("clean_score", episode.get("total_score", 0.0)))
-    finished_steps = coerce_float(episode.get("finished_steps", episode.get("step", 0.0)))
+    finished_steps = coerce_float(get_finished_steps(episode))
     max_step = max(1.0, coerce_float(episode.get("max_step", 1000.0), 1000.0))
     invalid_move_rate = coerce_float(episode.get("invalid_move_rate", 0.0))
     charger_arrived_count = coerce_int(episode.get("charger_arrived_count", 0))
     charger_first_arrival_step = coerce_int(episode.get("charger_first_arrival_step", -1), -1)
     remaining_charge = coerce_float(episode.get("remaining_charge", episode.get("battery", 0.0)))
+    charger_known_final = get_episode_bool(episode, "charger_known_final")
+    known_charger_count_final = get_episode_int(episode, "known_charger_count_final")
+    attempted_charge_step_count = get_episode_int(episode, "attempted_charge_step_count")
+    min_charger_slack_episode = get_episode_float(episode, "min_charger_slack")
+    repeat_action_max_streak = get_episode_int(episode, "repeat_action_max_streak")
+    revisit_ratio = get_episode_float(episode, "revisit_ratio")
+    max_revisit_count = get_episode_int(episode, "max_revisit_count")
     text = text_blob(
         episode.get("fail_reason"),
         episode.get("done_reason"),
@@ -382,6 +451,20 @@ def classify_failure(episode: dict[str, object], replay: dict[str, object] | Non
     attempted_charge = any(
         str(row.get("mode", "")).lower() == "charge" or bool(row.get("should_charge")) for row in trajectory
     )
+    repeated_invalid_episode_signal = False
+    repeated_invalid_reasons = []
+    if invalid_move_rate >= 0.25:
+        repeated_invalid_episode_signal = True
+        repeated_invalid_reasons.append(f"invalid_move_rate={invalid_move_rate:.3f}")
+    if repeat_action_max_streak is not None and repeat_action_max_streak >= 5:
+        repeated_invalid_episode_signal = True
+        repeated_invalid_reasons.append(f"repeat_action_max_streak={repeat_action_max_streak}")
+    if revisit_ratio is not None and revisit_ratio >= 0.35:
+        repeated_invalid_episode_signal = True
+        repeated_invalid_reasons.append(f"revisit_ratio={revisit_ratio:.3f}")
+    if max_revisit_count is not None and max_revisit_count >= 4:
+        repeated_invalid_episode_signal = True
+        repeated_invalid_reasons.append(f"max_revisit_count={max_revisit_count}")
 
     reasons: list[str] = []
 
@@ -389,19 +472,40 @@ def classify_failure(episode: dict[str, object], replay: dict[str, object] | Non
         if is_collision_failure(fail_reason) or "npc" in text or "collision" in text or "blocked" in text or "path" in text:
             reasons.append("non-battery failure text mentions npc/path/collision")
             return "npc_or_path_blocked", reasons
-        if invalid_move_rate >= 0.25:
-            reasons.append(f"invalid_move_rate={invalid_move_rate:.3f}")
+        if repeated_invalid_episode_signal:
+            reasons.extend(repeated_invalid_reasons)
             return "repeated_invalid_move", reasons
         return "unknown", reasons
 
     if "charger unknown" in text or "charger not found" in text or "first charger not found" in text:
         reasons.append("failure text explicitly says charger was not found")
         return "charger_unknown", reasons
-    if charger_arrived_count <= 0 and charger_first_arrival_step < 0 and not attempted_charge:
-        reasons.append("no charger arrivals and no replay evidence of charge-return mode")
+    if charger_known_final is False:
+        reasons.append("episode summary ended without any known charger")
         return "charger_unknown", reasons
-    if invalid_move_rate >= 0.25 or invalid_snapshots >= 4:
-        reasons.append(f"invalid_move_rate={invalid_move_rate:.3f}, invalid_snapshots={invalid_snapshots}")
+    if (
+        charger_known_final is None
+        and known_charger_count_final is not None
+        and known_charger_count_final <= 0
+        and attempted_charge_step_count is not None
+        and attempted_charge_step_count <= 0
+        and charger_arrived_count <= 0
+    ):
+        reasons.append("episode summary never recorded a known charger or charge attempt")
+        return "charger_unknown", reasons
+    if (
+        charger_arrived_count <= 0
+        and charger_first_arrival_step < 0
+        and attempted_charge_step_count is not None
+        and attempted_charge_step_count <= 0
+        and not attempted_charge
+    ):
+        reasons.append("no charger arrivals and no episode/replay evidence of charge-return mode")
+        return "charger_unknown", reasons
+    if repeated_invalid_episode_signal or invalid_snapshots >= 4:
+        reasons.extend(repeated_invalid_reasons)
+        if invalid_snapshots >= 4:
+            reasons.append(f"invalid_snapshots={invalid_snapshots}")
         return "repeated_invalid_move", reasons
     if "npc" in text or "blocked" in text or "path" in text or low_npc_distance <= 1.5:
         if low_npc_distance <= 1.5:
@@ -409,10 +513,13 @@ def classify_failure(episode: dict[str, object], replay: dict[str, object] | Non
         else:
             reasons.append("failure text mentions npc/path blockage")
         return "npc_or_path_blocked", reasons
-    if min_charger_slack <= -3.0:
-        reasons.append(f"charger_slack reached {min_charger_slack:.2f}")
+    if min_charger_slack_episode is not None and min_charger_slack_episode <= -3.0:
+        reasons.append(f"episode min_charger_slack={min_charger_slack_episode:.2f}")
         return "optimistic_route_budget", reasons
-    if charger_arrived_count > 0 and attempted_charge:
+    if min_charger_slack <= -3.0:
+        reasons.append(f"replay charger_slack reached {min_charger_slack:.2f}")
+        return "optimistic_route_budget", reasons
+    if charger_arrived_count > 0 and ((attempted_charge_step_count is not None and attempted_charge_step_count > 0) or attempted_charge):
         reasons.append(
             f"charger_arrived_count={charger_arrived_count}, charger_first_arrival_step={charger_first_arrival_step}, charge mode seen"
         )
@@ -424,6 +531,152 @@ def classify_failure(episode: dict[str, object], replay: dict[str, object] | Non
         reasons.append(f"finished_steps={finished_steps:.0f}, max_step={max_step:.0f}, remaining_charge={remaining_charge:.1f}")
         return "late_battery_death", reasons
     return "unknown", reasons
+
+
+def build_schema_quality(
+    episodes: list[dict[str, object]],
+    ai_summary: dict[str, object] | None = None,
+) -> dict[str, object]:
+    optional_fields = [
+        "step_log",
+        "decision_context",
+        "outcome_state",
+        "final_window",
+        "evidence_windows",
+        "field_availability",
+        "reward_attribution_lite",
+        "anomaly_summary_lite",
+    ]
+    field_availability = {
+        field: any(episode.get(field) not in (None, "") for episode in episodes)
+        for field in optional_fields
+    }
+    missing_signals = [field for field, available in field_availability.items() if not available]
+    present_signals = [field for field, available in field_availability.items() if available]
+    episode_missing_signals = sorted(
+        {
+            str(signal)
+            for episode in episodes
+            for signal in (episode.get("missing_signals") or [])
+        }
+    )
+    ai_missing_signals = [str(signal) for signal in ((ai_summary or {}).get("missing_signals") or [])]
+    return {
+        "status": "OK" if episodes else "NO_EPISODES",
+        "missing_signals": sorted(dict.fromkeys(missing_signals + ai_missing_signals)),
+        "present_signals": present_signals,
+        "field_availability": field_availability,
+        "episode_missing_signals": episode_missing_signals,
+        "ai_missing_signals": ai_missing_signals,
+    }
+
+
+def build_ai_diagnostic_quality(
+    episodes: list[dict[str, object]],
+    schema_quality: dict[str, object],
+    ai_summary: dict[str, object] | None = None,
+) -> dict[str, object]:
+    field_availability = schema_quality.get("field_availability") or {}
+    present_episode_fields = {field for field, available in field_availability.items() if available}
+    episode_missing_signals = set(schema_quality.get("episode_missing_signals") or [])
+    ai_missing_signals = set(schema_quality.get("ai_missing_signals") or [])
+
+    def has_episode_field(name: str) -> bool:
+        return name in present_episode_fields
+
+    def missing_signal(name: str) -> bool:
+        return name in episode_missing_signals or name in ai_missing_signals
+
+    reliability_notes = []
+
+    charger_reliable = all(
+        [
+            not missing_signal("preprocessor.known_charger_count"),
+            any(episode.get("known_charger_count_final") is not None for episode in episodes),
+            any(episode.get("charger_known_final") is not None for episode in episodes),
+        ]
+    )
+    reliability_notes.append(
+        {
+            "failure_class": "charger_unknown / return_too_late",
+            "reliability": "reliable" if charger_reliable else "limited",
+            "reason": (
+                "Episode summaries include charger knowledge and charge-return timing."
+                if charger_reliable
+                else "Charger knowledge or charge-return timing is partially missing, so early-vs-late return calls are weaker."
+            ),
+        }
+    )
+
+    route_budget_reliable = any(episode.get("min_charger_slack") is not None for episode in episodes)
+    reliability_notes.append(
+        {
+            "failure_class": "optimistic_route_budget",
+            "reliability": "reliable" if route_budget_reliable else "unreliable",
+            "reason": (
+                "Route-budget calls can use episode-level charger slack."
+                if route_budget_reliable
+                else "No charger-slack signal was captured, so route-budget conclusions would be speculative."
+            ),
+        }
+    )
+
+    stuck_reliable = any(
+        episode.get("repeat_action_max_streak") is not None or episode.get("revisit_ratio") is not None
+        for episode in episodes
+    )
+    reliability_notes.append(
+        {
+            "failure_class": "repeated_invalid_move / loop_suspect",
+            "reliability": "reliable" if stuck_reliable else "limited",
+            "reason": (
+                "Stuck-pattern calls can use action streak and revisit summaries."
+                if stuck_reliable
+                else "Loop and invalid-move signals are too sparse for confident stuck-pattern classification."
+            ),
+        }
+    )
+
+    npc_reliable = has_episode_field("outcome_state") and not missing_signal("policy_info.nearest_npc_distance")
+    reliability_notes.append(
+        {
+            "failure_class": "npc_or_path_blocked",
+            "reliability": "reliable" if npc_reliable else "limited",
+            "reason": (
+                "NPC/path blocking calls can use step telemetry with nearest-NPC distance."
+                if npc_reliable
+                else "Nearest-NPC distance or step telemetry is missing, so blockage calls should be treated as weaker than charger/battery signals."
+            ),
+        }
+    )
+
+    battery_reliable = bool(episodes)
+    reliability_notes.append(
+        {
+            "failure_class": "high_score_battery_death / late_battery_death",
+            "reliability": "reliable" if battery_reliable else "unreliable",
+            "reason": (
+                "Battery-death calls can use clean score, step count, and remaining charge from episode summaries."
+                if battery_reliable
+                else "No episodes were available, so battery-death quality cannot be assessed."
+            ),
+        }
+    )
+
+    reliability_level = "high"
+    if any(note["reliability"] == "unreliable" for note in reliability_notes):
+        reliability_level = "low"
+    elif any(note["reliability"] == "limited" for note in reliability_notes):
+        reliability_level = "medium"
+
+    return {
+        "status": "OK" if episodes else "NO_EPISODES",
+        "reliability_level": reliability_level,
+        "missing_signals": schema_quality.get("missing_signals") or [],
+        "reliability_notes": reliability_notes,
+        "ai_summary_present": bool(ai_summary),
+        "ai_summary_schema_version": (ai_summary or {}).get("schema_version"),
+    }
 
 
 def build_failure_classification(
@@ -572,7 +825,7 @@ def build_next_step(
             "targeted",
         ),
         "optimistic_route_budget": (
-            "Prioritize route-budget calibration because replay evidence shows negative charger slack before death.",
+            "Prioritize route-budget calibration because episode or replay evidence shows negative charger slack before death.",
             "targeted",
         ),
         "npc_or_path_blocked": (
@@ -618,6 +871,8 @@ def render_markdown(result: dict[str, object]) -> str:
     categories = failure_classification.get("categories") or {}
     next_step = result["next_step"]
     replay_warnings = result.get("missing_replay_warnings") or []
+    schema_quality = result.get("schema_quality") or {}
+    ai_diagnostic_quality = result.get("ai_diagnostic_quality") or {}
     lines = [
         "# Holdout Benchmark Analysis",
         "",
@@ -696,6 +951,37 @@ def render_markdown(result: dict[str, object]) -> str:
             lines.append(f"- `{warning.get('path')}`: {warning.get('warning')}")
     else:
         lines.append("- None")
+
+    lines.extend(["", "## Schema Quality", ""])
+    missing_signals = schema_quality.get("missing_signals") or []
+    if missing_signals:
+        lines.append("- Missing optional diagnostic fields: " + ", ".join(f"`{field}`" for field in missing_signals))
+    else:
+        lines.append("- Missing optional diagnostic fields: none")
+    present_signals = schema_quality.get("present_signals") or []
+    if present_signals:
+        lines.append("- Present optional diagnostic fields: " + ", ".join(f"`{field}`" for field in present_signals))
+    else:
+        lines.append("- Present optional diagnostic fields: none")
+    episode_missing_signals = schema_quality.get("episode_missing_signals") or []
+    if episode_missing_signals:
+        lines.append("- Episode-level missing signals: " + ", ".join(f"`{field}`" for field in episode_missing_signals))
+
+    lines.extend(["", "## AI Diagnostic Quality", ""])
+    lines.append(f"- Reliability level: `{ai_diagnostic_quality.get('reliability_level', 'unknown')}`")
+    lines.append(f"- Adjacent ai_summary.json detected: `{ai_diagnostic_quality.get('ai_summary_present', False)}`")
+    if ai_diagnostic_quality.get("ai_summary_schema_version") is not None:
+        lines.append(f"- AI summary schema version: `{ai_diagnostic_quality.get('ai_summary_schema_version')}`")
+    quality_missing_signals = ai_diagnostic_quality.get("missing_signals") or []
+    if quality_missing_signals:
+        lines.append("- Missing optional signals affecting AI diagnostics: " + ", ".join(f"`{field}`" for field in quality_missing_signals))
+    else:
+        lines.append("- Missing optional signals affecting AI diagnostics: none")
+    lines.append("- Reliability notes:")
+    for note in ai_diagnostic_quality.get("reliability_notes") or []:
+        lines.append(
+            f"  - `{note.get('reliability', 'unknown')}` {note.get('failure_class', 'unknown')}: {note.get('reason', '')}"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -703,6 +989,7 @@ def main() -> int:
     args = parse_args()
     input_path = Path(args.input).resolve()
     payload = load_json(input_path)
+    ai_summary = load_optional_adjacent_ai_summary(input_path)
 
     replay_warnings: list[dict[str, object]] = []
     archive_run_dirs = [Path(path).resolve() for path in args.archive_run_dir]
@@ -732,6 +1019,8 @@ def main() -> int:
     combined = build_metrics(episodes)
     per_map = {map_id: build_metrics(map_episodes) for map_id, map_episodes in sorted(grouped.items(), key=lambda item: safe_int_sort_key(item[0]))}
     failure_classification = build_failure_classification(episodes, replay_index, replay_warnings)
+    schema_quality = build_schema_quality(episodes, ai_summary=ai_summary)
+    ai_diagnostic_quality = build_ai_diagnostic_quality(episodes, schema_quality, ai_summary=ai_summary)
     next_step = build_next_step(
         payload=payload,
         input_path=input_path,
@@ -752,6 +1041,8 @@ def main() -> int:
         "per_map": per_map,
         "failure_classification": failure_classification,
         "missing_replay_warnings": replay_warnings,
+        "schema_quality": schema_quality,
+        "ai_diagnostic_quality": ai_diagnostic_quality,
         "next_step": next_step,
         "risks": derive_risks(payload, combined, replay_warnings),
         "decision_inputs": payload.get("decision_inputs") or {},

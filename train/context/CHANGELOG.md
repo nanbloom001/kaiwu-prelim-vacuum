@@ -16,6 +16,9 @@
 2026-04-25 09:40 | T6-fix: Tightened mutation guard again so warning/info artifact-change language rejects while unchanged MODEL_MUTATION_GUARD info stays non-blocking.
 2026-04-25 06:20 | T10: Recorded evidence gate blocking reward/refactor/network escalation until real holdout episodes resolve REAL_EXECUTION_UNSUPPORTED_IN_T2 and NEED_MORE_DATA.
 2026-04-25 09:10 | T9: Recorded NOT_READY final checkpoint selection gate; no real >900 holdout evidence exists yet.
+2026-04-25 11:24 | T4: Added holdout episode lifecycle summaries/evidence windows and taught analyzer to classify charger-unknown and optimistic-route-budget failures from episode-level diagnostics; synthetic fixtures passed.
+2026-04-25 11:44 | T6: Verified holdout compile, synthetic analyzer fixtures, and dry-run benchmark outputs; wrote fresh QA evidence without touching model artifacts.
+2026-04-25 11:58 | F1 fix: added holdout contract.fixed_config alias plus pre-action decision_context fields step, pos_before, and last_action for deterministic rejection-gap closure.
 
 ## 2026-04-15
 
@@ -64,3 +67,6 @@
 16:27 | Expert charging overhaul: state machine with hysteresis + A* actual distance + blocked cell memory (TTL=8) + visit count penalty in A* cost + path caching + dynamic margin. BETA 0.005->0.008. NPC cleaned tracking in preprocessor. (commit 9c1083b)
 
 ~14:00 | Coordinate bug fix (3 functions in preprocessor.py) + predict() layer reorder (NPC->Expert->Anti-stuck->RL) + expert uses model softmax probability + charging rewards 2x + BETA 0.007->0.005. (commit 2715e42)
+
+2026-04-25 10:23 | Adapted linux-LTSPPO benchmark runtime to win_YJY. New files: code/agent_ppo/eval/holdout_benchmark.py (inference-only benchmark), train/.docker-compose.benchmark.yaml. Modified: train_workflow.py (KAIWU_BENCHMARK_MODE dispatch), run_holdout_benchmark.py (docker compose launch). Smoke test passed: map4=372(battery fail), map7=896(completed), avg=634.
+2026-04-25 12:40 | Fixed holdout diagnostic mask counting to avoid numpy truth-value crashes by using safe mask counters and first-value extraction.
