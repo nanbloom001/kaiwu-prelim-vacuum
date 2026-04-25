@@ -1,0 +1,47 @@
+{
+  "episodes": [
+    {
+      "steps": [
+        {
+          "observation": {
+            "step_no": 7,
+            "legal_action": [1, 1, 0, 1, 1, 1, 0, 1],
+            "map_info": [
+              [1, 1, 1],
+              [1, 2, 1],
+              [0, 1, 1]
+            ],
+            "env_info": {
+              "battery_max": 200,
+              "remaining_charge": 173,
+              "charge_count": 1,
+              "max_step": 1000,
+              "npc_count": 1,
+              "total_charger": 1
+            },
+            "frame_state": {
+              "heroes": {
+                "pos": {"x": 64, "z": 65},
+                "battery": 173,
+                "battery_max": 200,
+                "score": 25
+              },
+              "organs": [
+                {"sub_type": 1, "pos": {"x": 70, "z": 80}, "w": 3, "h": 3}
+              ],
+              "npcs": [
+                {"pos": {"x": 61, "z": 66}}
+              ]
+            }
+          },
+          "derived": {
+            "charger_path": [[64, 65], [65, 66], [66, 67]],
+            "reachable": true,
+            "unknown_path_ratio": 0.25,
+            "planner_topk_reachable_count": 1
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "generated_by": "fixture",
+  "materialization_status": "fixture_pre_task4",
+  "source_session": "fixture",
+  "required_maps": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "required_tags": ["start", "early_clean", "charger_visible", "low_battery", "pre_return", "on_charger", "route_stall", "npc_near", "no_progress"],
+  "nodes": [
+    {"node_id": "fixture-map01-start", "map_id": 1, "round": "round_1", "step": 1, "tags": ["start", "charger_visible"], "observation": {"features": {"battery": 200, "x": 10, "z": 20}, "guidance": {"planner_suggested_action": 0}, "teacher_mask": {"legal_action": [1, 1, 1, 1, 1, 1, 1, 1]}, "action_or_logit": {"action": 0, "greedy_action": 0}, "override": {"fallback_to_chebyshev": 0}, "raw_fields": {"step": 1}}},
+    {"node_id": "fixture-map02-early-clean", "map_id": 2, "round": "round_1", "step": 12, "tags": ["early_clean"], "observation": {"features": {"battery": 188, "dirt_cleaned": 3}, "guidance": {"target": 1}, "teacher_mask": {"legal_action": [1, 1, 1, 1, 1, 1, 1, 1]}, "action_or_logit": {"action": 1, "greedy_action": 1}, "override": {}, "raw_fields": {"cleaned_this_step": 1}}},
+    {"node_id": "fixture-map03-charger-visible", "map_id": 3, "round": "round_1", "step": 25, "tags": ["charger_visible"], "observation": {"features": {"nearest_charger_dist": 9}, "guidance": {"charger_slack": 120}, "teacher_mask": {}, "action_or_logit": {"action": 2}, "override": {}, "raw_fields": {"charger_candidates": [{"center": [4, 5]}]}}},
+    {"node_id": "fixture-map04-low-battery", "map_id": 4, "round": "round_2", "step": 250, "tags": ["low_battery"], "observation": {"features": {"battery": 50, "battery_max": 200}, "guidance": {"mode": 1}, "teacher_mask": {}, "action_or_logit": {"action": 3}, "override": {}, "raw_fields": {}}},
+    {"node_id": "fixture-map05-pre-return", "map_id": 5, "round": "round_2", "step": 300, "tags": ["pre_return"], "observation": {"features": {"battery": 75}, "guidance": {"mode": "return", "charger_slack": 10}, "teacher_mask": {}, "action_or_logit": {"action": 4}, "override": {"path_source": "astar"}, "raw_fields": {}}},
+    {"node_id": "fixture-map06-on-charger", "map_id": 6, "round": "round_2", "step": 330, "tags": ["on_charger"], "observation": {"features": {"nearest_charger_dist": 0}, "guidance": {"mode": "charging"}, "teacher_mask": {}, "action_or_logit": {"action": 5}, "override": {"charger_nearby_not_charged": 1}, "raw_fields": {}}},
+    {"node_id": "fixture-map07-route-stall", "map_id": 7, "round": "round_3", "step": 410, "tags": ["route_stall"], "observation": {"features": {"zero_progress_streak": 8}, "guidance": {"planner_target_gap": 90}, "teacher_mask": {}, "action_or_logit": {"action": 6}, "override": {}, "raw_fields": {}}},
+    {"node_id": "fixture-map08-npc-near", "map_id": 8, "round": "round_3", "step": 420, "tags": ["npc_near"], "observation": {"features": {"nearest_npc_dist": 4}, "guidance": {"planner_suggested_action": 7}, "teacher_mask": {}, "action_or_logit": {"action": 7}, "override": {}, "raw_fields": {}}},
+    {"node_id": "fixture-map09-no-progress", "map_id": 9, "round": "round_4", "step": 500, "tags": ["no_progress"], "observation": {"features": {"zero_progress_streak": 3}, "guidance": {"target_progress_delta": 0}, "teacher_mask": {}, "action_or_logit": {"action": 0}, "override": {}, "raw_fields": {"cleaned_this_step": 0}}},
+    {"node_id": "fixture-map10-combined", "map_id": 10, "round": "round_4", "step": 600, "tags": ["low_battery", "pre_return", "npc_near"], "observation": {"features": {"battery": 40, "battery_max": 200, "nearest_npc_dist": 8}, "guidance": {"mode": "return", "charger_slack": 5}, "teacher_mask": {"legal_action": [1, 0, 1, 0, 1, 0, 1, 0]}, "action_or_logit": {"action": 1, "greedy_action": 1}, "override": {"path_source": "astar"}, "raw_fields": {}}}
+  ]
+}

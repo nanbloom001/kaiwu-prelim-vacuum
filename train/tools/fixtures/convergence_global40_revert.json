@@ -1,0 +1,26 @@
+{
+  "baseline_run": "baseline-fixture",
+  "target_run": "target-regressed-fixture",
+  "sample_points": {
+    "global_40": {
+      "baseline": {
+        "local_metrics": {
+          "avg_clean_per_step": 0.82,
+          "battery_fail_rate": 0.1,
+          "zero_charge_battery_fail_rate": 0.08,
+          "route_phase_return_stall_rate": 0.22,
+          "planner_policy_divergence_rate": 0.3
+        }
+      },
+      "target": {
+        "local_metrics": {
+          "avg_clean_per_step": 0.74,
+          "battery_fail_rate": 0.18,
+          "zero_charge_battery_fail_rate": 0.08,
+          "route_phase_return_stall_rate": 0.22,
+          "planner_policy_divergence_rate": 0.3
+        }
+      }
+    }
+  }
+}
