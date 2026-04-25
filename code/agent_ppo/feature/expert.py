@@ -26,7 +26,7 @@ class ExpertPolicy:
     # Charging state machine parameters
     EXIT_RETURN_RATIO = 0.95       # Leave return_mode when battery >= 95% and on charger
     LOW_BATTERY_RATIO = 0.32       # Force return_mode when battery < 32%
-    BASE_RETURN_MARGIN = 18.0      # Base safety margin for return threshold
+    BASE_RETURN_MARGIN = 24.0      # Base safety margin for return threshold
 
     # Blocked cell memory
     BLOCKED_TTL = 8                # Steps before blocked cell expires

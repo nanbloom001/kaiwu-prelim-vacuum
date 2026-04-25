@@ -415,7 +415,7 @@ class CoveragePlanner:
 
     # ── Decision thresholds（充电策略与 NPC 安全阈值）────────────────────────
     BASE_RETURN_MARGIN    = 28.0  # 固定 150 电量配置下提前返航，减少负 slack 电量死亡。
-    COVERAGE_RETURN_BUFFER = 8.0   # 覆盖目标候选门控专用缓冲，仅用于覆盖选点的返航安全余量。
+    COVERAGE_RETURN_BUFFER = 14.0  # 覆盖目标候选门控专用缓冲，仅用于覆盖选点的返航安全余量。
     NPC_RETURN_MARGIN     = 28.0  # 充电路径经过 NPC 风险区时额外增加的安全余量（避免路途中碰撞）
     LOW_BATTERY_RATIO     = 0.30  # 电量比低于此值时强制返回充电桩（应对充电桩距离估算误差）
     EXIT_RETURN_RATIO     = 0.95  # 抵达充电桩且电量比超过此值后退出返回模式，恢复正常清扫
