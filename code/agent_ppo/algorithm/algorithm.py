@@ -31,6 +31,9 @@ class Algorithm:
         "advantage_clean",
         "advantage_survive",
         "prob",
+        "planner_prob",
+        "mix_alpha",
+        "action_mask",
         "mode_teacher",
         "route_anchor_teacher",
         "target_teacher",
@@ -122,6 +125,45 @@ class Algorithm:
         if float(adv_std.detach().item()) < Config.ADV_STD_MIN:
             return centered
         return centered / adv_std
+
+    @staticmethod
+    def _default_mix_alpha_value():
+        return float(
+            np.clip(
+                min(max(Config.RESIDUAL_ALPHA_START, Config.RESIDUAL_ALPHA_WARMUP_TARGET), Config.RESIDUAL_ALPHA_MAX),
+                0.0,
+                1.0,
+            )
+        )
+
+    def _default_action_mask(self, legal_action):
+        mask = (torch.as_tensor(legal_action, dtype=torch.float32, device=self.device) > 0.5).to(torch.float32)
+        fallback = (torch.as_tensor(legal_action, dtype=torch.float32, device=self.device) > 0.0).to(torch.float32)
+        all_zero = mask.sum(dim=-1, keepdim=True) <= 0.5
+        mask = torch.where(all_zero, fallback, mask)
+        still_zero = mask.sum(dim=-1, keepdim=True) <= 0.5
+        if still_zero.any():
+            mask = torch.where(still_zero, torch.ones_like(mask), mask)
+        return mask
+
+    def _uniform_over_mask(self, action_mask):
+        mask = self._default_action_mask(action_mask)
+        return mask / mask.sum(dim=-1, keepdim=True).clamp_min(1.0)
+
+    def _normalize_masked_prob(self, prob, action_mask):
+        mask = self._default_action_mask(action_mask)
+        if prob is None:
+            return self._uniform_over_mask(mask)
+        tensor = torch.nan_to_num(
+            torch.as_tensor(prob, dtype=torch.float32, device=self.device),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        tensor = tensor * mask
+        denom = tensor.sum(dim=-1, keepdim=True)
+        uniform = self._uniform_over_mask(mask)
+        return torch.where(denom > 1e-8, tensor / denom.clamp_min(1e-8), uniform)
 
     def _record_invalid_batch(self, reason, stats):
         self.nan_batch_count += 1
@@ -269,6 +311,9 @@ class Algorithm:
                     "value_clean_loss": round(info["value_clean_loss"], 4),
                     "value_survive_loss": round(info["value_survive_loss"], 4),
                     "entropy_loss": round(info["entropy_loss"], 4),
+                    "bc_loss": round(info["bc_loss"], 4),
+                    "approx_kl": round(info["approx_kl"], 4),
+                    "mix_alpha": round(info["mix_alpha"], 4),
                     "mode_teacher_loss": round(info["mode_teacher_loss"], 4),
                     "route_anchor_teacher_loss": round(info["route_anchor_teacher_loss"], 4),
                     "target_teacher_loss": round(info["target_teacher_loss"], 4),
@@ -296,7 +341,8 @@ class Algorithm:
             if self.logger:
                 self.logger.info(
                     "policy_loss: %.4f, value_clean_loss: %.4f, value_survive_loss: %.4f, "
-                    "entropy_loss: %.4f, mode_teacher_loss: %.4f, route_anchor_teacher_loss: %.4f, "
+                    "entropy_loss: %.4f, bc_loss: %.4f, approx_kl: %.4f, mix_alpha: %.4f, "
+                    "mode_teacher_loss: %.4f, route_anchor_teacher_loss: %.4f, "
                     "target_teacher_loss: %.4f, return_action_teacher_loss: %.4f, "
                     "route_phase_policy_teacher_loss: %.4f, "
                     "mode_teacher_active_rate: %.4f, route_anchor_teacher_active_rate: %.4f, "
@@ -310,6 +356,9 @@ class Algorithm:
                         results["value_clean_loss"],
                         results["value_survive_loss"],
                         results["entropy_loss"],
+                        results["bc_loss"],
+                        results["approx_kl"],
+                        results["mix_alpha"],
                         results["mode_teacher_loss"],
                         results["route_anchor_teacher_loss"],
                         results["target_teacher_loss"],
@@ -340,6 +389,9 @@ class Algorithm:
                     "value_clean_loss": results["value_clean_loss"],
                     "value_survive_loss": results["value_survive_loss"],
                     "entropy_loss": results["entropy_loss"],
+                    "bc_loss": results["bc_loss"],
+                    "approx_kl": results["approx_kl"],
+                    "mix_alpha": results["mix_alpha"],
                     "mode_teacher_loss": results["mode_teacher_loss"],
                     "route_anchor_teacher_loss": results["route_anchor_teacher_loss"],
                     "target_teacher_loss": results["target_teacher_loss"],
@@ -395,6 +447,37 @@ class Algorithm:
         ).to(**to_device)
         act = torch.stack([torch.as_tensor(s.act, dtype=torch.long) for s in list_sample_data]).to(**to_device)
         prob = torch.stack([torch.as_tensor(s.prob, dtype=torch.float32) for s in list_sample_data]).to(**to_device)
+        planner_prob = torch.stack(
+            [
+                torch.as_tensor(
+                    getattr(s, "planner_prob", getattr(s, "prob", None)),
+                    dtype=torch.float32,
+                )
+                for s in list_sample_data
+            ]
+        ).to(**to_device)
+        mix_alpha = torch.stack(
+            [
+                torch.as_tensor(
+                    getattr(
+                        s,
+                        "mix_alpha",
+                        np.full((Config.SEQ_CHUNK_LEN,), self._default_mix_alpha_value(), dtype=np.float32),
+                    ),
+                    dtype=torch.float32,
+                )
+                for s in list_sample_data
+            ]
+        ).to(**to_device)
+        action_mask = torch.stack(
+            [
+                torch.as_tensor(
+                    getattr(s, "action_mask", getattr(s, "legal_action", None)),
+                    dtype=torch.float32,
+                )
+                for s in list_sample_data
+            ]
+        ).to(**to_device)
         reward_clean = torch.stack(
             [torch.as_tensor(s.reward_clean, dtype=torch.float32) for s in list_sample_data]
         ).to(**to_device)
@@ -466,6 +549,9 @@ class Algorithm:
                 "legal_action": legal_action,
                 "act": act,
                 "prob": prob,
+                "planner_prob": planner_prob,
+                "mix_alpha": mix_alpha,
+                "action_mask": action_mask,
                 "reward_clean": reward_clean,
                 "reward_survive": reward_survive,
                 "done": done,
@@ -497,89 +583,122 @@ class Algorithm:
             batch_tensor = batch_tensor.unsqueeze(0)
 
         batch_tensor = batch_tensor.to(dtype=torch.float32, device=self.device)
+        total_dim = batch_tensor.shape[1]
+        residual_extra_dim = (
+            Config.SAMPLE_PLANNER_PROB_DIM
+            + Config.SAMPLE_MIX_ALPHA_DIM
+            + Config.SAMPLE_ACTION_MASK_DIM
+        )
+        legacy_dim = (
+            Config.SAMPLE_OBS_DIM
+            + Config.SAMPLE_LEGAL_ACTION_DIM
+            + Config.SAMPLE_ACTION_DIM
+            + Config.SAMPLE_REWARD_DIM
+            + Config.SAMPLE_REWARD_DIM
+            + Config.SAMPLE_DONE_DIM
+            + Config.SAMPLE_VALUE_DIM
+            + Config.SAMPLE_VALUE_DIM
+            + Config.SAMPLE_VALUE_DIM
+            + Config.SAMPLE_VALUE_DIM
+            + Config.SAMPLE_PROB_DIM
+            + Config.SAMPLE_MODE_DIM
+            + Config.SAMPLE_ROUTE_ANCHOR_DIM
+            + Config.SAMPLE_TARGET_DIM
+            + Config.SAMPLE_MODE_TEACHER_MASK_DIM
+            + Config.SAMPLE_ROUTE_ANCHOR_MASK_DIM
+            + Config.SAMPLE_TARGET_TEACHER_MASK_DIM
+            + Config.SAMPLE_RETURN_ACTION_DIM
+            + Config.SAMPLE_RETURN_ACTION_MASK_DIM
+            + Config.SAMPLE_ROUTE_PHASE_ACTION_DIM
+            + Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM
+            + Config.SAMPLE_AUX_LABEL_DIM
+            + Config.SAMPLE_AUX_LABEL_DIM
+            + Config.SAMPLE_CONSTRAINT_COST_DIM
+            + Config.FALLBACK_MASK_DIM
+            + Config.EXPERT_WEIGHT_DIM
+        )
+        has_residual_payload = total_dim >= legacy_dim + residual_extra_dim
         begin = 0
 
+        def _take(size, dtype=None, default=None):
+            nonlocal begin
+            if begin + size <= total_dim:
+                value = batch_tensor[:, begin : begin + size]
+                begin += size
+            else:
+                if default is None:
+                    return None
+                value = torch.as_tensor(default, dtype=torch.float32, device=self.device).view(1, -1).repeat(
+                    batch_tensor.shape[0], 1
+                )
+            if dtype is not None and value is not None:
+                value = value.to(dtype=dtype)
+            return value
+
         field_map = {}
-        field_map["obs"] = batch_tensor[:, begin : begin + Config.SAMPLE_OBS_DIM]
-        begin += Config.SAMPLE_OBS_DIM
+        field_map["obs"] = _take(Config.SAMPLE_OBS_DIM)
 
-        field_map["legal_action"] = batch_tensor[:, begin : begin + Config.SAMPLE_LEGAL_ACTION_DIM]
-        begin += Config.SAMPLE_LEGAL_ACTION_DIM
+        field_map["legal_action"] = _take(Config.SAMPLE_LEGAL_ACTION_DIM)
 
-        field_map["act"] = batch_tensor[:, begin : begin + Config.SAMPLE_ACTION_DIM].to(dtype=torch.long)
-        begin += Config.SAMPLE_ACTION_DIM
+        field_map["act"] = _take(Config.SAMPLE_ACTION_DIM, dtype=torch.long)
 
-        field_map["reward_clean"] = batch_tensor[:, begin : begin + Config.SAMPLE_REWARD_DIM]
-        begin += Config.SAMPLE_REWARD_DIM
+        field_map["reward_clean"] = _take(Config.SAMPLE_REWARD_DIM)
 
-        field_map["reward_survive"] = batch_tensor[:, begin : begin + Config.SAMPLE_REWARD_DIM]
-        begin += Config.SAMPLE_REWARD_DIM
+        field_map["reward_survive"] = _take(Config.SAMPLE_REWARD_DIM)
 
-        field_map["done"] = batch_tensor[:, begin : begin + Config.SAMPLE_DONE_DIM]
-        begin += Config.SAMPLE_DONE_DIM
+        field_map["done"] = _take(Config.SAMPLE_DONE_DIM)
 
-        field_map["value_clean"] = batch_tensor[:, begin : begin + Config.SAMPLE_VALUE_DIM]
-        begin += Config.SAMPLE_VALUE_DIM
+        field_map["value_clean"] = _take(Config.SAMPLE_VALUE_DIM)
 
-        field_map["value_survive"] = batch_tensor[:, begin : begin + Config.SAMPLE_VALUE_DIM]
-        begin += Config.SAMPLE_VALUE_DIM
+        field_map["value_survive"] = _take(Config.SAMPLE_VALUE_DIM)
 
-        field_map["advantage_clean"] = batch_tensor[:, begin : begin + Config.SAMPLE_VALUE_DIM]
-        begin += Config.SAMPLE_VALUE_DIM
+        field_map["advantage_clean"] = _take(Config.SAMPLE_VALUE_DIM)
 
-        field_map["advantage_survive"] = batch_tensor[:, begin : begin + Config.SAMPLE_VALUE_DIM]
-        begin += Config.SAMPLE_VALUE_DIM
+        field_map["advantage_survive"] = _take(Config.SAMPLE_VALUE_DIM)
 
-        field_map["prob"] = batch_tensor[:, begin : begin + Config.SAMPLE_PROB_DIM]
-        begin += Config.SAMPLE_PROB_DIM
+        field_map["prob"] = _take(Config.SAMPLE_PROB_DIM)
 
-        field_map["mode_teacher"] = batch_tensor[:, begin : begin + Config.SAMPLE_MODE_DIM].to(dtype=torch.long)
-        begin += Config.SAMPLE_MODE_DIM
+        if has_residual_payload:
+            field_map["planner_prob"] = _take(Config.SAMPLE_PLANNER_PROB_DIM)
+            field_map["mix_alpha"] = _take(
+                Config.SAMPLE_MIX_ALPHA_DIM,
+                default=np.full((Config.SAMPLE_MIX_ALPHA_DIM,), self._default_mix_alpha_value(), dtype=np.float32),
+            )
+            field_map["action_mask"] = _take(Config.SAMPLE_ACTION_MASK_DIM, default=None)
+        else:
+            field_map["planner_prob"] = None
+            field_map["mix_alpha"] = None
+            field_map["action_mask"] = None
 
-        field_map["route_anchor_teacher"] = batch_tensor[:, begin : begin + Config.SAMPLE_ROUTE_ANCHOR_DIM].to(dtype=torch.long)
-        begin += Config.SAMPLE_ROUTE_ANCHOR_DIM
+        field_map["mode_teacher"] = _take(Config.SAMPLE_MODE_DIM, dtype=torch.long)
 
-        field_map["target_teacher"] = batch_tensor[:, begin : begin + Config.SAMPLE_TARGET_DIM].to(dtype=torch.long)
-        begin += Config.SAMPLE_TARGET_DIM
+        field_map["route_anchor_teacher"] = _take(Config.SAMPLE_ROUTE_ANCHOR_DIM, dtype=torch.long)
 
-        field_map["mode_teacher_mask"] = batch_tensor[:, begin : begin + Config.SAMPLE_MODE_TEACHER_MASK_DIM]
-        begin += Config.SAMPLE_MODE_TEACHER_MASK_DIM
+        field_map["target_teacher"] = _take(Config.SAMPLE_TARGET_DIM, dtype=torch.long)
 
-        field_map["route_anchor_teacher_mask"] = batch_tensor[:, begin : begin + Config.SAMPLE_ROUTE_ANCHOR_MASK_DIM]
-        begin += Config.SAMPLE_ROUTE_ANCHOR_MASK_DIM
+        field_map["mode_teacher_mask"] = _take(Config.SAMPLE_MODE_TEACHER_MASK_DIM)
 
-        field_map["target_teacher_mask"] = batch_tensor[:, begin : begin + Config.SAMPLE_TARGET_TEACHER_MASK_DIM]
-        begin += Config.SAMPLE_TARGET_TEACHER_MASK_DIM
+        field_map["route_anchor_teacher_mask"] = _take(Config.SAMPLE_ROUTE_ANCHOR_MASK_DIM)
 
-        field_map["return_action_teacher"] = batch_tensor[:, begin : begin + Config.SAMPLE_RETURN_ACTION_DIM].to(dtype=torch.long)
-        begin += Config.SAMPLE_RETURN_ACTION_DIM
+        field_map["target_teacher_mask"] = _take(Config.SAMPLE_TARGET_TEACHER_MASK_DIM)
 
-        field_map["return_action_teacher_mask"] = batch_tensor[:, begin : begin + Config.SAMPLE_RETURN_ACTION_MASK_DIM]
-        begin += Config.SAMPLE_RETURN_ACTION_MASK_DIM
+        field_map["return_action_teacher"] = _take(Config.SAMPLE_RETURN_ACTION_DIM, dtype=torch.long)
 
-        field_map["route_phase_action_teacher"] = batch_tensor[
-            :, begin : begin + Config.SAMPLE_ROUTE_PHASE_ACTION_DIM
-        ].to(dtype=torch.long)
-        begin += Config.SAMPLE_ROUTE_PHASE_ACTION_DIM
+        field_map["return_action_teacher_mask"] = _take(Config.SAMPLE_RETURN_ACTION_MASK_DIM)
 
-        field_map["route_phase_action_teacher_mask"] = batch_tensor[
-            :, begin : begin + Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM
-        ]
-        begin += Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM
+        field_map["route_phase_action_teacher"] = _take(Config.SAMPLE_ROUTE_PHASE_ACTION_DIM, dtype=torch.long)
 
-        field_map["battery_risk_label"] = batch_tensor[:, begin : begin + Config.SAMPLE_AUX_LABEL_DIM]
-        begin += Config.SAMPLE_AUX_LABEL_DIM
+        field_map["route_phase_action_teacher_mask"] = _take(Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM)
 
-        field_map["collision_risk_label"] = batch_tensor[:, begin : begin + Config.SAMPLE_AUX_LABEL_DIM]
-        begin += Config.SAMPLE_AUX_LABEL_DIM
+        field_map["battery_risk_label"] = _take(Config.SAMPLE_AUX_LABEL_DIM)
 
-        field_map["constraint_battery_process_cost"] = batch_tensor[:, begin : begin + Config.SAMPLE_CONSTRAINT_COST_DIM]
-        begin += Config.SAMPLE_CONSTRAINT_COST_DIM
+        field_map["collision_risk_label"] = _take(Config.SAMPLE_AUX_LABEL_DIM)
 
-        field_map["fallback_mask"] = batch_tensor[:, begin : begin + Config.FALLBACK_MASK_DIM]
-        begin += Config.FALLBACK_MASK_DIM
+        field_map["constraint_battery_process_cost"] = _take(Config.SAMPLE_CONSTRAINT_COST_DIM)
 
-        field_map["expert_weight"] = batch_tensor[:, begin : begin + Config.EXPERT_WEIGHT_DIM]
+        field_map["fallback_mask"] = _take(Config.FALLBACK_MASK_DIM)
+
+        field_map["expert_weight"] = _take(Config.EXPERT_WEIGHT_DIM)
 
         return self._build_batch_from_field_map(field_map)
 
@@ -599,6 +718,16 @@ class Algorithm:
         legal_action = torch.as_tensor(field_map["legal_action"], dtype=torch.float32).to(**to_device)
         act = torch.as_tensor(field_map["act"], dtype=torch.long).to(**to_device)
         prob = torch.as_tensor(field_map["prob"], dtype=torch.float32).to(**to_device)
+        action_mask = field_map.get("action_mask")
+        if action_mask is None:
+            action_mask = legal_action
+        action_mask = torch.as_tensor(action_mask, dtype=torch.float32).to(**to_device)
+        action_mask = self._default_action_mask(action_mask)
+        planner_prob = self._normalize_masked_prob(field_map.get("planner_prob"), action_mask)
+        mix_alpha = field_map.get("mix_alpha")
+        if mix_alpha is None:
+            mix_alpha = np.full((obs.shape[0], Config.SEQ_CHUNK_LEN), self._default_mix_alpha_value(), dtype=np.float32)
+        mix_alpha = torch.as_tensor(mix_alpha, dtype=torch.float32).to(**to_device)
         reward_clean = torch.as_tensor(field_map["reward_clean"], dtype=torch.float32).to(**to_device)
         reward_survive = torch.as_tensor(field_map["reward_survive"], dtype=torch.float32).to(**to_device)
         done = torch.as_tensor(field_map["done"], dtype=torch.float32).to(**to_device)
@@ -635,6 +764,9 @@ class Algorithm:
             "legal_action": legal_action.view(batch_size, seq_len, Config.ACTION_NUM),
             "act": act.view(batch_size, seq_len),
             "prob": prob.view(batch_size, seq_len, Config.ACTION_NUM),
+            "planner_prob": planner_prob.view(batch_size, seq_len, Config.ACTION_NUM),
+            "mix_alpha": mix_alpha.view(batch_size, seq_len),
+            "action_mask": action_mask.view(batch_size, seq_len, Config.ACTION_NUM),
             "reward_clean": reward_clean.view(batch_size, seq_len),
             "reward_survive": reward_survive.view(batch_size, seq_len),
             "done": done.view(batch_size, seq_len),
@@ -667,8 +799,11 @@ class Algorithm:
         learn_slice = slice(Config.SEQ_BURN_IN, Config.SEQ_CHUNK_LEN)
 
         legal = batch["legal_action"][:, learn_slice, :]
+        action_mask = batch["action_mask"][:, learn_slice, :]
         action = batch["act"][:, learn_slice]
         old_prob = batch["prob"][:, learn_slice, :]
+        planner_prob = batch["planner_prob"][:, learn_slice, :]
+        mix_alpha = batch["mix_alpha"][:, learn_slice]
         old_value_clean = batch["value_clean"][:, learn_slice]
         old_value_survive = batch["value_survive"][:, learn_slice]
         adv_clean = batch["advantage_clean"][:, learn_slice]
@@ -719,13 +854,17 @@ class Algorithm:
         value_clean_loss = (value_clean_loss * valid_mask).sum() / valid_count
         value_survive_loss = (value_survive_loss * valid_mask).sum() / valid_count
 
-        prob_dist = self._masked_softmax(logits.reshape(-1, Config.ACTION_NUM), legal.reshape(-1, Config.ACTION_NUM))
-        prob_dist = prob_dist.view_as(logits)
-        entropy = -(prob_dist * torch.log(prob_dist.clamp(1e-9, 1.0))).sum(dim=-1)
+        policy_prob = self._masked_softmax(
+            logits.reshape(-1, Config.ACTION_NUM),
+            action_mask.reshape(-1, Config.ACTION_NUM),
+        ).view_as(logits)
+        planner_prob = self._normalize_masked_prob(planner_prob, action_mask)
+        mixed_prob = self._mix_policy(policy_prob, planner_prob, mix_alpha, action_mask)
+        entropy = -(mixed_prob * torch.log(mixed_prob.clamp(1e-9, 1.0))).sum(dim=-1)
         entropy_loss = (entropy * valid_mask).sum() / valid_count
 
         chosen_idx = action.unsqueeze(-1)
-        new_action_prob = prob_dist.gather(-1, chosen_idx).squeeze(-1)
+        new_action_prob = mixed_prob.gather(-1, chosen_idx).squeeze(-1)
         old_action_prob = old_prob.gather(-1, chosen_idx).squeeze(-1).clamp_min(1e-9)
         ratio = new_action_prob / old_action_prob
 
@@ -740,6 +879,19 @@ class Algorithm:
             -ratio.clamp(1.0 - self.clip_param, 1.0 + self.clip_param) * adv_actor,
         )
         policy_loss = (policy_loss * valid_mask).sum() / valid_count
+        bc_loss = -(planner_prob * torch.log(policy_prob.clamp(1e-9, 1.0))).sum(dim=-1)
+        bc_loss = (bc_loss * valid_mask).sum() / valid_count
+        alpha_mean = (mix_alpha * valid_mask).sum() / valid_count
+        alpha_norm = torch.clamp(alpha_mean / max(Config.RESIDUAL_ALPHA_MAX, 1e-6), 0.0, 1.0)
+        bc_coef = max(Config.BC_COEF_MIN, Config.BC_COEF_START * (1.0 - float(alpha_norm.item())) ** 2)
+        approx_kl = (
+            old_prob.clamp(1e-9, 1.0)
+            * (
+                torch.log(old_prob.clamp(1e-9, 1.0))
+                - torch.log(mixed_prob.clamp(1e-9, 1.0))
+            )
+        ).sum(dim=-1)
+        approx_kl = (approx_kl * valid_mask).sum() / valid_count
 
         mode_teacher_active = mode_teacher_mask * valid_mask
         route_anchor_teacher_active = route_anchor_teacher_mask * valid_mask
@@ -822,6 +974,7 @@ class Algorithm:
             policy_loss
             + self.vf_coef * (value_clean_loss + value_survive_loss)
             - effective_beta * entropy_loss
+            + bc_coef * bc_loss
             + Config.MODE_TEACHER_WEIGHT * mode_teacher_loss
             + Config.ROUTE_ANCHOR_TEACHER_WEIGHT * route_anchor_teacher_loss
             + Config.TARGET_TEACHER_WEIGHT * target_teacher_loss
@@ -841,6 +994,9 @@ class Algorithm:
             "value_clean_loss": float(value_clean_loss.item()),
             "value_survive_loss": float(value_survive_loss.item()),
             "entropy_loss": float(entropy_loss.item()),
+            "bc_loss": float(bc_loss.item()),
+            "approx_kl": float(approx_kl.item()),
+            "mix_alpha": float(alpha_mean.item()),
             "mode_teacher_loss": float(mode_teacher_loss.item()),
             "route_anchor_teacher_loss": float(route_anchor_teacher_loss.item()),
             "target_teacher_loss": float(target_teacher_loss.item()),
@@ -865,6 +1021,7 @@ class Algorithm:
             "value_clean_loss": value_clean_loss,
             "value_survive_loss": value_survive_loss,
             "entropy_loss": entropy_loss,
+            "bc_loss": bc_loss,
             "mode_teacher_loss": mode_teacher_loss,
             "route_anchor_teacher_loss": route_anchor_teacher_loss,
             "target_teacher_loss": target_teacher_loss,
@@ -877,8 +1034,17 @@ class Algorithm:
         return total_loss, info, loss_tensors
 
     def _masked_softmax(self, logits, legal_action):
+        legal_action = self._default_action_mask(legal_action)
         masked = logits - 1e20 * (1.0 - legal_action)
         masked = masked - torch.max(masked, dim=-1, keepdim=True)[0]
         masked = torch.exp(masked).clamp_min(1e-8) * legal_action
         denom = masked.sum(dim=-1, keepdim=True).clamp_min(1e-8)
         return masked / denom
+
+    def _mix_policy(self, policy_prob, planner_prob, mix_alpha, action_mask):
+        alpha = torch.as_tensor(mix_alpha, dtype=torch.float32, device=self.device)
+        if alpha.dim() == policy_prob.dim() - 1:
+            alpha = alpha.unsqueeze(-1)
+        alpha = alpha.clamp(0.0, 1.0)
+        mixed = (1.0 - alpha) * planner_prob + alpha * policy_prob
+        return self._normalize_masked_prob(mixed, action_mask)

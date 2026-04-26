@@ -431,15 +431,21 @@ class Agent(BaseAgent):
     def predict(self, list_obs_data, use_hard_override=False):
         """Stochastic inference for training (exploration).
 
-        Training mode: Expert Logit Bias — soft guidance with correct PPO ratio.
-        Evaluation mode (use_hard_override=True): Expert hard override for max survival.
+        Training mode: planner-guided residual action mixing with correct PPO ratio.
+        Evaluation mode (use_hard_override=True): preserve eval hard overrides for max survival.
         """
         obs_data = list_obs_data[0]
         feature = obs_data.feature
         legal_action = obs_data.legal_action
         expert = self.preprocessor.expert
         filtered_legal = expert.filter_actions(self.preprocessor, legal_action)
-        legal_arr = np.array(filtered_legal, dtype=np.float32)
+        action_mask = self._build_action_mask(legal_action, filtered_legal)
+        obs_data.legal_action = list(action_mask)
+        legal_arr = np.array(action_mask, dtype=np.float32)
+        guidance = expert.get_teacher_guidance(self.preprocessor, filtered_legal, last_action=self.last_action)
+        signal = (guidance or {}).get("signal")
+        if signal is None:
+            signal = expert.get_charger_signal(self.preprocessor, filtered_legal, last_action=self.last_action)
 
         try:
             outputs = self._run_model(feature)
@@ -461,22 +467,8 @@ class Agent(BaseAgent):
         self._last_pre_return_bias_active = 0.0
         self._last_return_bias_active = 0.0
         self._last_fallback_active = 0.0
-
-        logit_bias = np.asarray(
-            expert.get_logit_bias(self.preprocessor, filtered_legal, last_action=self.last_action),
-            dtype=np.float32,
-        ).reshape(-1)
-        if logit_bias.shape[0] != Config.ACTION_NUM:
-            logit_bias = np.zeros(Config.ACTION_NUM, dtype=np.float32)
-        logits = logits + logit_bias
-        self._last_expert_weight = float(getattr(expert, "_last_bias_weight", 0.0))
-        self._last_pre_return_bias_active = 1.0 if getattr(expert, "_last_bias_mode", None) == "pre_return" else 0.0
-        self._last_return_bias_active = 1.0 if getattr(expert, "_last_bias_mode", None) == "return" else 0.0
-
-        clean_prob = self._legal_soft_max(logits, legal_arr)
-        clean_prob, prob_fallback = sanitize_policy_probs(clean_prob, filtered_legal)
-        if prob_fallback:
-            self._predict_fallback_count += 1
+        policy_prob = np.asarray(self._legal_soft_max(logits, legal_arr), dtype=np.float32)
+        planner_prob = self._planner_prior(guidance, signal, legal_arr)
 
         fallback = expert.get_emergency_fallback(
             self.preprocessor,
@@ -492,6 +484,11 @@ class Agent(BaseAgent):
             self._last_return_bias_active = 0.0
         else:
             self._last_eval_override_reason = None
+        mix_alpha = self._effective_residual_alpha(guidance, signal, fallback_action_allowed)
+        mix_prob = self._mix_prob(policy_prob, planner_prob, mix_alpha, legal_arr)
+        mix_prob, prob_fallback = sanitize_policy_probs(mix_prob, filtered_legal)
+        if prob_fallback:
+            self._predict_fallback_count += 1
 
         if use_hard_override:
             self._eval_decision_count += 1
@@ -504,7 +501,11 @@ class Agent(BaseAgent):
                     self._build_act_data(
                         action=expert_action,
                         d_action=expert_action,
-                        prob=clean_prob,
+                        prob=mix_prob,
+                        policy_prob=policy_prob,
+                        planner_prob=planner_prob,
+                        mix_alpha=mix_alpha,
+                        action_mask=legal_arr,
                         value_total=value_total,
                         value_clean=value_clean,
                         value_survive=value_survive,
@@ -527,6 +528,10 @@ class Agent(BaseAgent):
                         action=random_action,
                         d_action=random_action,
                         prob=prob,
+                        policy_prob=policy_prob,
+                        planner_prob=planner_prob,
+                        mix_alpha=mix_alpha,
+                        action_mask=legal_arr,
                         value_total=value_total,
                         value_clean=value_clean,
                         value_survive=value_survive,
@@ -543,18 +548,22 @@ class Agent(BaseAgent):
             action = int(fallback.get("action", 0))
             d_action = action
         else:
-            sampled = safe_sample_action(clean_prob, filtered_legal, use_max=False)
-            greedy = safe_sample_action(clean_prob, filtered_legal, use_max=True)
+            sampled = safe_sample_action(mix_prob, filtered_legal, use_max=False)
+            greedy = safe_sample_action(mix_prob, filtered_legal, use_max=True)
             action = int(sampled["action"])
             d_action = int(greedy["action"])
             if sampled["used_fallback"] or greedy["used_fallback"]:
                 self._predict_fallback_count += 1
-                clean_prob = sampled["probs"]
+                mix_prob = sampled["probs"]
         return [
             self._build_act_data(
                 action=action,
                 d_action=d_action,
-                prob=clean_prob,
+                prob=mix_prob,
+                policy_prob=policy_prob,
+                planner_prob=planner_prob,
+                mix_alpha=mix_alpha,
+                action_mask=legal_arr,
                 value_total=value_total,
                 value_clean=value_clean,
                 value_survive=value_survive,
@@ -808,6 +817,97 @@ class Agent(BaseAgent):
         """Uniform distribution over legal actions (for stable PPO ratio)."""
         return uniform_over_legal(legal_action)
 
+    @staticmethod
+    def _default_residual_alpha():
+        return float(
+            np.clip(
+                min(max(Config.RESIDUAL_ALPHA_START, Config.RESIDUAL_ALPHA_WARMUP_TARGET), Config.RESIDUAL_ALPHA_MAX),
+                0.0,
+                1.0,
+            )
+        )
+
+    def _build_action_mask(self, legal_action, safe_action=None):
+        base = np.where(np.asarray(legal_action, dtype=np.float32) > 0.5, 1.0, 0.0).astype(np.float32)
+        if safe_action is not None:
+            safe = np.where(np.asarray(safe_action, dtype=np.float32) > 0.5, 1.0, 0.0).astype(np.float32)
+            if safe.shape == base.shape and float(np.sum(safe)) > 0.5:
+                base = safe
+        if float(np.sum(base)) <= 0.5:
+            base = np.ones((Config.ACTION_NUM,), dtype=np.float32)
+        return base.astype(np.float32)
+
+    def _normalize_prob(self, prob, action_mask):
+        mask = self._build_action_mask(action_mask)
+        arr = np.nan_to_num(np.asarray(prob, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0).reshape(-1)
+        if arr.size != Config.ACTION_NUM:
+            return np.asarray(self._uniform_over_legal(mask), dtype=np.float32)
+        arr = np.clip(arr, 0.0, None) * mask
+        total = float(np.sum(arr))
+        if total <= 1e-8:
+            return np.asarray(self._uniform_over_legal(mask), dtype=np.float32)
+        return (arr / total).astype(np.float32)
+
+    def _planner_prior(self, guidance, signal, action_mask):
+        planner_action = -1
+        planner_weight = 0.0
+        payload = guidance or {}
+
+        return_mask = float(payload.get("return_action_teacher_mask", 0.0))
+        if return_mask > 0.0:
+            planner_action = int(payload.get("return_action", -1))
+            planner_weight = max(planner_weight, 1.0 + return_mask)
+
+        action_mask_weight = max(
+            float(payload.get("mode_teacher_mask", 0.0)),
+            float(payload.get("target_teacher_mask", 0.0)),
+            float(payload.get("route_anchor_teacher_mask", 0.0)),
+        )
+        if planner_action < 0:
+            planner_action = int(payload.get("action", -1) if payload.get("action") is not None else -1)
+            if planner_action >= 0:
+                planner_weight = max(planner_weight, 0.75 + action_mask_weight)
+
+        if planner_action < 0 and signal is not None:
+            planner_action = int(signal.get("suggested_action", -1) if signal.get("suggested_action") is not None else -1)
+            if planner_action >= 0:
+                planner_weight = max(
+                    planner_weight,
+                    1.0 if bool(signal.get("return_action_reliable", False)) else 0.75,
+                )
+
+        mask = self._build_action_mask(action_mask)
+        if planner_action < 0 or planner_action >= Config.ACTION_NUM or mask[planner_action] <= 0.5:
+            return np.asarray(self._uniform_over_legal(mask), dtype=np.float32)
+
+        scores = np.zeros((Config.ACTION_NUM,), dtype=np.float32)
+        scores[planner_action] = planner_weight / max(float(Config.PLANNER_PRIOR_TEMPERATURE), 1e-6)
+        scores = np.exp(scores - np.max(scores)) * mask
+        return self._normalize_prob(scores, mask)
+
+    def _effective_residual_alpha(self, guidance, signal, fallback_action_allowed):
+        alpha = self._default_residual_alpha()
+        if fallback_action_allowed:
+            return float(min(alpha, Config.RESIDUAL_ALPHA_FALLBACK_CAP))
+        payload = guidance or {}
+        route_mode = str(payload.get("route_mode") or payload.get("mode") or "").strip().lower()
+        if route_mode in {"contract", "return"}:
+            return float(min(alpha, Config.RESIDUAL_ALPHA_CHARGE_CAP))
+        if signal is not None:
+            if bool(signal.get("return_action_reliable", False)):
+                return float(min(alpha, Config.RESIDUAL_ALPHA_CHARGE_CAP))
+            if not bool(signal.get("reachable", True)) or signal.get("suggested_action") is None:
+                return float(min(alpha, Config.RESIDUAL_ALPHA_FALLBACK_CAP))
+        return float(np.clip(alpha, 0.0, 1.0))
+
+    def _mix_prob(self, policy_prob, planner_prob, mix_alpha, action_mask):
+        alpha = float(np.clip(mix_alpha, 0.0, 1.0))
+        mixed = (1.0 - alpha) * np.asarray(planner_prob, dtype=np.float32) + alpha * np.asarray(
+            policy_prob,
+            dtype=np.float32,
+        )
+        return self._normalize_prob(mixed, action_mask)
+
     def _legal_soft_max(self, logits, legal_action):
         """Softmax with legal action masking.
 
@@ -857,6 +957,10 @@ class Agent(BaseAgent):
         action,
         d_action,
         prob,
+        policy_prob,
+        planner_prob,
+        mix_alpha,
+        action_mask,
         value_total,
         value_clean,
         value_survive,
@@ -874,6 +978,10 @@ class Agent(BaseAgent):
             action=[int(action)],
             d_action=[int(d_action)],
             prob=list(prob),
+            policy_prob=np.asarray(policy_prob, dtype=np.float32),
+            planner_prob=np.asarray(planner_prob, dtype=np.float32),
+            mix_alpha=np.array([float(mix_alpha)], dtype=np.float32),
+            action_mask=np.asarray(action_mask, dtype=np.float32),
             value=np.array([value_total], dtype=np.float32),
             value_clean=np.array([value_clean], dtype=np.float32),
             value_survive=np.array([value_survive], dtype=np.float32),
@@ -902,6 +1010,10 @@ class Agent(BaseAgent):
             action=safe["action"],
             d_action=safe["action"],
             prob=safe["probs"],
+            policy_prob=np.asarray(safe["probs"], dtype=np.float32),
+            planner_prob=np.asarray(safe["probs"], dtype=np.float32),
+            mix_alpha=0.0,
+            action_mask=np.asarray(legal_action, dtype=np.float32),
             value_total=value_total,
             value_clean=value_clean,
             value_survive=value_survive,

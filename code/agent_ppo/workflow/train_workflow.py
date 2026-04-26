@@ -17,6 +17,7 @@ import time
 from collections import deque
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -115,6 +116,71 @@ def _env_int_list(name, default):
 def _env_clamped_int(name, default, v_min, v_max):
     value = _env_int(name, default)
     return int(np.clip(value, v_min, v_max))
+
+
+def _config_value(name: str, default):
+    return getattr(Config, name, default)
+
+
+class ResidualScheduler:
+    """Compatibility port of the yjy residual-alpha scheduler."""
+
+    def __init__(self):
+        self.alpha = float(_config_value("RESIDUAL_ALPHA_START", 0.0))
+        self.ema_score = None
+        self.best_ema = float("-inf")
+        self.stale_episodes = 0
+        self.episode_cnt = 0
+
+    def action_alpha(self, target_mode: str) -> float:
+        mode = str(target_mode or "").strip().lower()
+        alpha = float(self.alpha)
+        charge_cap = float(_config_value("RESIDUAL_ALPHA_CHARGE_CAP", 0.35))
+        fallback_cap = float(_config_value("RESIDUAL_ALPHA_FALLBACK_CAP", 0.15))
+        max_alpha = float(_config_value("RESIDUAL_ALPHA_MAX", 1.0))
+        if mode in {"charge", "contract", "return"}:
+            alpha = min(alpha, charge_cap)
+        elif mode in {"fallback", "evade"}:
+            alpha = min(alpha, fallback_cap)
+        return float(np.clip(alpha, 0.0, max_alpha))
+
+    def update(self, episode_score: float, cleaning_ratio: float) -> float:
+        self.episode_cnt += 1
+        decay = float(_config_value("RESIDUAL_SCORE_EMA_DECAY", 0.90))
+        score = float(episode_score)
+        if self.ema_score is None:
+            self.ema_score = score
+        else:
+            self.ema_score = decay * float(self.ema_score) + (1.0 - decay) * score
+
+        start_alpha = float(_config_value("RESIDUAL_ALPHA_START", 0.0))
+        warmup_target = float(_config_value("RESIDUAL_ALPHA_WARMUP_TARGET", 0.20))
+        warmup_episodes = max(int(_config_value("RESIDUAL_WARMUP_EPISODES", 200)), 1)
+        warmup_t = min(1.0, self.episode_cnt / warmup_episodes)
+        warmup_alpha = start_alpha + (warmup_target - start_alpha) * warmup_t
+        self.alpha = max(float(self.alpha), float(warmup_alpha))
+
+        improve = float(_config_value("RESIDUAL_SCORE_IMPROVE", 5.0))
+        if float(self.ema_score) > self.best_ema + improve:
+            self.best_ema = float(self.ema_score)
+            self.stale_episodes = 0
+        else:
+            self.stale_episodes += 1
+
+        plateau_patience = int(_config_value("RESIDUAL_PLATEAU_PATIENCE", 60))
+        plateau_score = float(_config_value("RESIDUAL_PLATEAU_SCORE", 900.0))
+        alpha_step = float(_config_value("RESIDUAL_ALPHA_STEP", 0.05))
+        score_drop = float(_config_value("RESIDUAL_SCORE_DROP", 120.0))
+        max_alpha = float(_config_value("RESIDUAL_ALPHA_MAX", 1.0))
+        if self.stale_episodes >= plateau_patience and float(self.ema_score) >= plateau_score:
+            bonus = alpha_step * (1.0 + 0.5 * max(0.0, float(cleaning_ratio) - 0.85))
+            self.alpha = min(max_alpha, float(self.alpha) + bonus)
+            self.stale_episodes = 0
+        elif self.best_ema - float(self.ema_score) >= score_drop:
+            self.alpha = max(start_alpha, float(self.alpha) - 0.5 * alpha_step)
+            self.stale_episodes = 0
+
+        return float(self.alpha)
 
 
 def _resolve_local_ip(*names) -> str | None:
@@ -1040,7 +1106,88 @@ class EpisodeRunner:
         self.keep_time_snapshots = Config.KEEP_TIME_RESUME_SNAPSHOTS
         self.keep_best_snapshots = Config.KEEP_BEST_RESUME_SNAPSHOTS
         self.keep_preload_snapshots = Config.KEEP_PRELOAD_COMPAT_SNAPSHOTS
+        self.residual_scheduler = ResidualScheduler()
+        self.last_residual_alpha = self.residual_scheduler.action_alpha("expand")
+        self.last_policy_mode = "expand"
+        self.last_policy_should_charge = False
         self._load_resume_state_metadata()
+
+    def _mode_name_from_preprocessor(self):
+        preprocessor = getattr(self.agent, "preprocessor", None)
+        if preprocessor is None:
+            return "expand"
+        mode_name_to_id = getattr(preprocessor, "MODE_NAME_TO_ID", {}) or {}
+        reverse = {}
+        for name, value in mode_name_to_id.items():
+            try:
+                reverse[int(value)] = str(name)
+            except (TypeError, ValueError):
+                continue
+        current_mode = getattr(preprocessor, "current_mode", None)
+        try:
+            return reverse.get(int(current_mode), str(getattr(preprocessor, "policy_target_mode", "") or "expand"))
+        except (TypeError, ValueError):
+            return str(getattr(preprocessor, "policy_target_mode", "") or "expand")
+
+    def _resolve_policy_context(self):
+        preprocessor = getattr(self.agent, "preprocessor", None)
+        guidance = {}
+        if preprocessor is not None and hasattr(preprocessor, "_get_guidance"):
+            try:
+                guidance = preprocessor._get_guidance() or {}
+            except Exception:
+                guidance = {}
+        mode_name = self._mode_name_from_preprocessor()
+        should_charge = bool(
+            mode_name in {"charge", "contract", "return"}
+            or guidance.get("should_charge", False)
+            or guidance.get("on_charger", False)
+        )
+        self.last_policy_mode = mode_name
+        self.last_policy_should_charge = should_charge
+        return SimpleNamespace(
+            target_mode=mode_name,
+            should_charge=should_charge,
+            guidance=guidance,
+        )
+
+    @staticmethod
+    def _as_float_vector(value, fallback):
+        try:
+            arr = np.asarray(value, dtype=np.float32).reshape(-1)
+        except Exception:
+            arr = np.asarray(fallback, dtype=np.float32).reshape(-1)
+        if arr.size == 0:
+            arr = np.asarray(fallback, dtype=np.float32).reshape(-1)
+        return arr.astype(np.float32)
+
+    def _predict_with_residual_compat(self, obs_data, residual_alpha, policy_context):
+        guided_predict = getattr(self.agent, "guided_predict", None)
+        if callable(guided_predict):
+            try:
+                result = guided_predict(
+                    [obs_data],
+                    policy_info=policy_context,
+                    residual_alpha=float(residual_alpha),
+                )
+                if result:
+                    return result[0]
+            except TypeError:
+                try:
+                    result = guided_predict([obs_data], residual_alpha=float(residual_alpha))
+                    if result:
+                        return result[0]
+                except Exception as exc:
+                    self.logger.warning(f"[RESIDUAL] guided_predict fallback to predict due to error: {exc}")
+            except Exception as exc:
+                self.logger.warning(f"[RESIDUAL] guided_predict fallback to predict due to error: {exc}")
+
+        predict_result = self.agent.predict([obs_data])
+        if not predict_result:
+            self.logger.warning(f"[PREDICT] ep:{self.episode_cnt} empty result, applying safe fallback action")
+            legal_action = getattr(obs_data, "legal_action", None) or [1.0] * Config.ACTION_NUM
+            return self.agent._build_safe_fallback_act_data(legal_action, 0.0, 0.0, 0.0)
+        return predict_result[0]
 
     def _persist_best_score(self):
         data = {
@@ -1612,6 +1759,15 @@ class EpisodeRunner:
                 sum(float(ep["clean_per_charge_when_charged"]) for ep in charged) / len(charged)
             ) if charged else 0.0,
             "avg_clean_per_step": sum(ep["clean_per_step"] for ep in buf) / n,
+            "avg_mix_alpha": sum(ep.get("avg_mix_alpha", 0.0) for ep in buf) / n,
+            "final_mix_alpha_mean": sum(ep.get("final_mix_alpha", 0.0) for ep in buf) / n,
+            "residual_alpha_next_mean": sum(ep.get("residual_alpha_next", 0.0) for ep in buf) / n,
+            "avg_charger_arrived_count": sum(ep.get("charger_arrived_count", 0.0) for ep in buf) / n,
+            "avg_arrival_confirmed_count": sum(ep.get("arrival_confirmed_count", 0.0) for ep in buf) / n,
+            "avg_arrival_canceled_count": sum(ep.get("arrival_canceled_count", 0.0) for ep in buf) / n,
+            "avg_arrival_retro_canceled_count": sum(ep.get("arrival_retro_canceled_count", 0.0) for ep in buf) / n,
+            "avg_go23_terminal_adjust": sum(ep.get("go23_terminal_adjust", 0.0) for ep in buf) / n,
+            "charge_fail_after_arrival_rate": sum(ep.get("charge_fail_after_arrival", 0.0) for ep in buf) / n,
             "avg_expert_weight": sum(ep["expert_weight"] for ep in buf) / n,
             "expert_weight_nonzero_rate": sum(ep.get("expert_weight_nonzero_rate", 0.0) for ep in buf) / n,
             "pre_return_bias_active_rate": sum(ep.get("pre_return_bias_active_rate", 0.0) for ep in buf) / n,
@@ -2020,6 +2176,19 @@ class EpisodeRunner:
                 continue
 
             self.agent.reset(env_obs)
+            if hasattr(self.agent, "set_episode_config"):
+                self.agent.set_episode_config(
+                    max_step=sampled_env_conf.get("max_step"),
+                    charger_count=sampled_env_conf.get("charger_count"),
+                    battery_max=sampled_env_conf.get("battery_max"),
+                )
+            elif hasattr(getattr(self.agent, "preprocessor", None), "set_episode_config"):
+                self.agent.preprocessor.set_episode_config(
+                    max_step=sampled_env_conf.get("max_step"),
+                    robot_count=sampled_env_conf.get("robot_count"),
+                    charger_count=sampled_env_conf.get("charger_count"),
+                    battery_max=sampled_env_conf.get("battery_max"),
+                )
 
             last_stage_transition_global_step = int(curriculum_state.get("last_stage_transition_global_step", 0) or 0)
             stage_transition_cooldown_active = (
@@ -2059,14 +2228,20 @@ class EpisodeRunner:
             )
 
             while not done:
+                policy_context = self._resolve_policy_context()
+                if hasattr(getattr(self.agent, "preprocessor", None), "set_policy_context"):
+                    self.agent.preprocessor.set_policy_context(
+                        target_mode=policy_context.target_mode,
+                        should_charge=policy_context.should_charge,
+                    )
+                self.last_residual_alpha = self.residual_scheduler.action_alpha(policy_context.target_mode)
+
                 predict_begin = time.perf_counter()
-                predict_result = self.agent.predict([obs_data])
-                if not predict_result:
-                    self.logger.warning(f"[PREDICT] ep:{self.episode_cnt} empty result, applying safe fallback action")
-                    legal_action = getattr(obs_data, "legal_action", None) or [1.0] * Config.ACTION_NUM
-                    act_data = self.agent._build_safe_fallback_act_data(legal_action, 0.0, 0.0, 0.0)
-                else:
-                    act_data = predict_result[0]
+                act_data = self._predict_with_residual_compat(
+                    obs_data,
+                    residual_alpha=self.last_residual_alpha,
+                    policy_context=policy_context,
+                )
                 self.perf_window.add("predict", (time.perf_counter() - predict_begin) * 1000.0)
                 act = self.agent.action_process(act_data)
 
@@ -2109,6 +2284,16 @@ class EpisodeRunner:
                 reward_payload = self._normalize_reward_payload(getattr(self.agent, "last_reward", 0.0))
                 reward_total = float(reward_payload["reward_total"])
                 total_reward += reward_total
+                planner_prob = self._as_float_vector(
+                    getattr(act_data, "planner_prob", None),
+                    getattr(act_data, "prob", np.zeros((Config.ACTION_NUM,), dtype=np.float32)),
+                )
+                mix_alpha = self._as_float_vector(
+                    getattr(act_data, "mix_alpha", None),
+                    np.asarray([self.last_residual_alpha], dtype=np.float32),
+                )
+                mix_alpha_scalar = float(mix_alpha[0]) if mix_alpha.size > 0 else float(self.last_residual_alpha)
+                self.last_residual_alpha = mix_alpha_scalar
                 guidance = self.agent.preprocessor._get_guidance() if hasattr(self.agent.preprocessor, "_get_guidance") else {}
                 battery_ratio = float(getattr(self.agent.preprocessor, "battery", 0.0)) / max(
                     float(getattr(self.agent.preprocessor, "battery_max", 1.0)), 1.0
@@ -2222,6 +2407,9 @@ class EpisodeRunner:
                         "legal_action": np.array(obs_data.legal_action, dtype=np.float32),
                         "act": int(np.asarray(act_data.action).reshape(-1)[0]),
                         "prob": np.array(act_data.prob, dtype=np.float32).reshape(-1),
+                        "planner_prob": planner_prob,
+                        "mix_alpha": mix_alpha,
+                        "mix_alpha_scalar": mix_alpha_scalar,
                         "done": float(done),
                         "reward_clean": float(reward_payload["reward_clean"]),
                         "reward_survive": float(reward_payload["reward_survive"]),
@@ -2440,6 +2628,21 @@ class EpisodeRunner:
                 1.0 + Config.EPISODE_FAIL_EARLY_SCALE * remaining_ratio
             )
         final_reward = task_terminal_bonus - battery_terminal_cost - collision_terminal_cost
+        result_str = "WIN" if fail_reason == "completed" else "FAIL"
+        charge_fail_after_arrival = bool(
+            fail_reason == "battery" and int(getattr(fm, "arrival_confirmed_count", 0) or 0) > 0
+        )
+        go23_terminal_adjust = 0.0
+        if hasattr(fm, "finalize_episode_rewards"):
+            go23_terminal_adjust = float(
+                fm.finalize_episode_rewards(
+                    result_str=result_str,
+                    final_mode=str(getattr(fm, "policy_target_mode", "") or self.last_policy_mode),
+                    final_step=int(step),
+                    charge_fail_after_arrival=charge_fail_after_arrival,
+                )
+            )
+            final_reward += go23_terminal_adjust
         (
             battery_terminal_cost,
             final_reward,
@@ -2452,7 +2655,11 @@ class EpisodeRunner:
             battery_terminal_cost=battery_terminal_cost,
             final_reward=final_reward,
         )
-        result_str = "WIN" if fail_reason == "completed" else "FAIL"
+        avg_mix_alpha = (
+            sum(float(rec.get("mix_alpha_scalar", self.last_residual_alpha)) for rec in step_records)
+            / max(len(step_records), 1)
+        )
+        new_residual_alpha = self.residual_scheduler.update(total_score, cleaning_ratio)
 
         # Death trajectory logging
         if fail_reason in ("battery", "collision"):
@@ -2501,6 +2708,15 @@ class EpisodeRunner:
             "sampled_profile_broad_count": 1.0 if sampled_meta["profile"] == "broad" else 0.0,
             "sampled_profile_broad_eval_count": 1.0 if sampled_meta["profile"] == "broad_eval" else 0.0,
             "total_reward": effective_total_reward,
+            "avg_mix_alpha": avg_mix_alpha,
+            "final_mix_alpha": float(self.last_residual_alpha),
+            "residual_alpha_next": float(new_residual_alpha),
+            "charger_arrived_count": float(len(getattr(fm, "charger_arrival_steps", {}) or {})),
+            "arrival_confirmed_count": float(getattr(fm, "arrival_confirmed_count", 0.0) or 0.0),
+            "arrival_canceled_count": float(getattr(fm, "arrival_canceled_count", 0.0) or 0.0),
+            "arrival_retro_canceled_count": float(getattr(fm, "arrival_retro_canceled_count", 0.0) or 0.0),
+            "go23_terminal_adjust": float(go23_terminal_adjust),
+            "charge_fail_after_arrival": 1.0 if charge_fail_after_arrival else 0.0,
             "late_return_rate": diagnostics["late_return_rate"],
             "late_contract_rate": diagnostics["late_contract_rate"],
             "anchor_switch_rate": diagnostics["anchor_switch_rate"],
@@ -2579,6 +2795,7 @@ class EpisodeRunner:
             f"result:{result_str} final_bonus:{final_reward:.2f} "
             f"step_reward:{total_reward:.3f} episode_reward:{episode_total_reward:.3f} "
             f"effective_episode_reward:{effective_total_reward:.3f} task_reward_scale:{task_reward_scale:.2f} "
+            f"mix_alpha:{avg_mix_alpha:.3f}->{new_residual_alpha:.3f} "
             f"clean_score:{clean_score:.1f} "
             f"dirt_cleaned:{fm.dirt_cleaned}/{fm.total_dirt} "
             f"invalid_move_rate:{invalid_move_rate:.3f} "
@@ -2742,6 +2959,15 @@ class EpisodeRunner:
             "resume_eligible": checkpoint_scores["resume_eligible"],
             "mode": int(getattr(fm, "current_mode", -1)),
             "task_reward_scale": round(task_reward_scale, 4),
+            "avg_mix_alpha": round(float(avg_mix_alpha), 4),
+            "final_mix_alpha": round(float(self.last_residual_alpha), 4),
+            "residual_alpha_next": round(float(new_residual_alpha), 4),
+            "charger_arrived_count": int(len(getattr(fm, "charger_arrival_steps", {}) or {})),
+            "arrival_confirmed_count": int(getattr(fm, "arrival_confirmed_count", 0) or 0),
+            "arrival_canceled_count": int(getattr(fm, "arrival_canceled_count", 0) or 0),
+            "arrival_retro_canceled_count": int(getattr(fm, "arrival_retro_canceled_count", 0) or 0),
+            "go23_terminal_adjust": round(float(go23_terminal_adjust), 4),
+            "charge_fail_after_arrival": bool(charge_fail_after_arrival),
             "profile_seed": int(sampled_meta.get("profile_seed", 0)),
             "sampled_env_conf": deepcopy(sampled_env_conf),
         }
@@ -3616,6 +3842,15 @@ class EpisodeRunner:
             "avg_charge_efficiency": round(m["avg_charge_efficiency"], 4),
             "avg_clean_per_charge_when_charged": round(m["avg_clean_per_charge_when_charged"], 4),
             "avg_clean_per_step": round(m["avg_clean_per_step"], 4),
+            "avg_mix_alpha": round(m.get("avg_mix_alpha", 0.0), 4),
+            "final_mix_alpha_mean": round(m.get("final_mix_alpha_mean", 0.0), 4),
+            "residual_alpha_next_mean": round(m.get("residual_alpha_next_mean", 0.0), 4),
+            "avg_charger_arrived_count": round(m.get("avg_charger_arrived_count", 0.0), 4),
+            "avg_arrival_confirmed_count": round(m.get("avg_arrival_confirmed_count", 0.0), 4),
+            "avg_arrival_canceled_count": round(m.get("avg_arrival_canceled_count", 0.0), 4),
+            "avg_arrival_retro_canceled_count": round(m.get("avg_arrival_retro_canceled_count", 0.0), 4),
+            "avg_go23_terminal_adjust": round(m.get("avg_go23_terminal_adjust", 0.0), 4),
+            "charge_fail_after_arrival_rate": round(m.get("charge_fail_after_arrival_rate", 0.0), 4),
             "battery_fail_rate": round(m["battery_fail_rate"], 4),
             "collision_fail_rate": round(m["collision_fail_rate"], 4),
             "zero_charge_battery_fail_rate": round(m["zero_charge_battery_fail_rate"], 4),
