@@ -1,0 +1,42 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_teacher_launch_instance_g40_rerun",
+  "classification": "fresh_launch_instance_bound_global40_collected_after_severe_bootstrap_collapse_no_promotion",
+  "created_at": "2026-04-26T11:10:38+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/gate-return-teacher-launch-instance-g40-rerun.json",
+  "summary": {
+    "bootstrap_20_key_metrics": {
+      "_count": 20,
+      "battery_fail_rate": 1.0,
+      "return_action_teacher_mask_nonzero_rate": 0.0,
+      "route_phase_teacher_from_critical_fallback_rate": 1.0,
+      "route_phase_teacher_from_return_reliable_rate": 0.0,
+      "win_rate": 0.0,
+      "zero_charge_battery_fail_rate": 0.85
+    },
+    "docker_stopped_now": true,
+    "fresh_run_session_id": "20260426-110457",
+    "global_40_key_metrics": {
+      "_count": 40,
+      "avg_clean_per_step": 0.4524491484872807,
+      "avg_clean_score": 143.875,
+      "battery_fail_rate": 1.0,
+      "return_action_teacher_mask_nonzero_rate": 0.0,
+      "route_phase_teacher_from_anchor_or_target_rate": 0.07109004739336493,
+      "route_phase_teacher_from_critical_fallback_rate": 0.9289099526066351,
+      "route_phase_teacher_from_return_reliable_rate": 0.0,
+      "win_rate": 0.0,
+      "zero_charge_battery_fail_rate": 0.825
+    },
+    "global_episode_count": 41,
+    "launch_instance_id": "s1_survival-20260426-110427-5012b82ffc43",
+    "next_action": "Ask Oracle for the next bounded action/diagnosis before any rerun, benchmark, checkpoint promotion, F1 approval, or original-task completion claim.",
+    "promotion_evidence": false,
+    "sample_window_keys": [
+      "bootstrap_10",
+      "bootstrap_20",
+      "global_40"
+    ],
+    "source_session_id": "20260426-110457",
+    "stop_gate_effectively_overrun": true
+  }
+}

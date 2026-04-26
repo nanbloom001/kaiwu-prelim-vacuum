@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_baseline_partial_restore_prep",
+  "phase_name": "s1_survival_baseline_partial_restore_v1",
+  "status": "prep_completed_dry_run_only",
+  "decision": "hold_for_oracle_review",
+  "source_evidence_path": ".sisyphus/evidence/benchmark-900/baseline-partial-restore-phase-prep.json",
+  "baseline_recovery_source": ".sisyphus/evidence/benchmark-900/baseline-20260421-config-recovery-search.json",
+  "promotion_allowed": false,
+  "checkpoint_promoted": false,
+  "canonical_serial_benchmark_run": false,
+  "benchmark_run": false,
+  "training_run": false,
+  "dry_run_validated": true,
+  "docker_remained_stopped": true,
+  "intentionally_unset": [
+    "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+  ],
+  "summary": {
+    "result": "Prepared one dry-run-only partial baseline restoration phase from recovered baseline-era config evidence.",
+    "scope_limit": "No training, benchmark, checkpoint promotion, or approval claim.",
+    "next_action": "oracle_review_before_any_training_execution"
+  }
+}

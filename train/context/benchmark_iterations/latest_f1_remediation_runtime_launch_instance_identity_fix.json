@@ -1,0 +1,33 @@
+{
+  "artifact": "latest_f1_remediation_runtime_launch_instance_identity_fix",
+  "classification": "bounded_runtime_launch_instance_identity_fix_verified_no_rerun",
+  "created_at": "2026-04-26T11:01:53+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/runtime-launch-instance-identity-fix.json",
+  "summary": {
+    "affected_module_tests": {
+      "command": "/home/user/TcKaiwuFinal/.conda-numpy/bin/python -m unittest tests.test_curriculum_and_checkpoint_score",
+      "result": "PASS",
+      "tests": 117
+    },
+    "docker_started_by_this_task": false,
+    "env_var": "KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID",
+    "files_changed_by_this_fix": [
+      "train/run_training_phase.py",
+      "train/.docker-compose.yaml",
+      "code/agent_ppo/workflow/train_workflow.py",
+      "code/tests/test_curriculum_and_checkpoint_score.py"
+    ],
+    "focused_tests": {
+      "command": "/home/user/TcKaiwuFinal/.conda-numpy/bin/python -m unittest tests.test_curriculum_and_checkpoint_score.CurriculumAndCheckpointScoreTests.test_primary_helper_reuses_initialized_manifest_for_same_launch_instance tests.test_curriculum_and_checkpoint_score.CurriculumAndCheckpointScoreTests.test_primary_helper_creates_fresh_manifest_for_different_launch_instance_same_label tests.test_curriculum_and_checkpoint_score.CurriculumAndCheckpointScoreTests.test_secondary_helper_rejects_same_label_different_launch_instance tests.test_curriculum_and_checkpoint_score.CurriculumAndCheckpointScoreTests.test_primary_helper_claim_run_session_initializes_current_manifest_and_state tests.test_curriculum_and_checkpoint_score.CurriculumAndCheckpointScoreTests.test_secondary_helper_rejects_uninitialized_current_manifest tests.test_curriculum_and_checkpoint_score.CurriculumAndCheckpointScoreTests.test_docker_compose_propagates_phase_run_label_to_services tests.test_curriculum_and_checkpoint_score.CurriculumAndCheckpointScoreTests.test_run_training_phase_builds_unique_launch_instance_ids",
+      "result": "PASS",
+      "tests": 7
+    },
+    "next_action": "Ask Oracle before any Docker/training rerun, benchmark, checkpoint promotion, F1 approval, or original-task completion claim.",
+    "oracle_verdict": "APPROVE_ONE_BOUNDED_ACTION",
+    "py_compile": {
+      "command": "/home/user/TcKaiwuFinal/.conda-numpy/bin/python -m py_compile train/run_training_phase.py code/agent_ppo/workflow/train_workflow.py code/tests/test_curriculum_and_checkpoint_score.py",
+      "result": "PASS"
+    },
+    "stale_104351_metrics_non_promotable": true
+  }
+}

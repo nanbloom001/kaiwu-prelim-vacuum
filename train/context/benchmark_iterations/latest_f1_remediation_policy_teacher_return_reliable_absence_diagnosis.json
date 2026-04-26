@@ -1,0 +1,84 @@
+{
+  "artifact": "latest_f1_remediation_policy_teacher_return_reliable_absence_diagnosis",
+  "classification": {
+    "components": {
+      "instrumentation_bug": false,
+      "instrumentation_semantics": true,
+      "readiness_gating": true,
+      "route_phase_gating": true,
+      "source_selection": true
+    },
+    "primary": "combination",
+    "summary": "return_reliable is nearly absent because route-phase source tagging can mark return_reliable only when current_mode is CONTRACT/RETURN and return_action_reliable is true; return_action_reliable itself requires strict target_reliable plus legal/safe suggested action and action margin. When in route phase without reliable/anchor/target signals and battery_state is critical, the non-simplified s1_survival path labels critical_fallback. Outside-route timing dominance is from the separate return_action_teacher head, whose mask is emitted whenever return_action_reliable is true and is not gated to current route phase; the source and timing counters are therefore related diagnostics but not a single joined event."
+  },
+  "created_at": "2026-04-26T08:57:20+08:00",
+  "decision": "read_only_diagnosis_complete_one_hypothesis_no_implementation",
+  "mirrors_evidence_artifact": ".sisyphus/evidence/benchmark-900/policy-teacher-return-reliable-absence-diagnosis.json",
+  "narrow_future_implementation_hypothesis": {
+    "exact_files_functions_likely_needing_change": [
+      "code/agent_ppo/feature/preprocessor.py: reward payload teacher-label construction around lines 2080-2094, to gate return_action_teacher_mask for plain s1_survival using current_mode or evaluate_simplified_return_readiness-derived readiness",
+      "code/tests/test_curriculum_and_checkpoint_score.py or a focused preprocessor/expert unit test file: add tests covering outside-route return_action_teacher_mask suppression and route-phase preservation"
+    ],
+    "focused_test_plan": [
+      "Create a minimal preprocessor/expert-guidance test stub where current_mode is MODE_HARVEST, battery_state is planning/critical, and return_action_reliable is true; assert future implementation keeps return_action_teacher action value available but sets return_action_teacher_mask to 0.0 when not pre_return_ready/return_now.",
+      "Create a paired stub where current_mode is MODE_CONTRACT or MODE_RETURN with return_action_reliable true; assert return_action_teacher_mask remains >0 and route_phase_teacher_from_return_reliable is set instead of critical_fallback.",
+      "Create a critical route-phase stub with return_action_reliable/anchor_reliable/target_reliable false; assert critical_fallback behavior remains unchanged so the change is narrow and does not remove emergency fallback.",
+      "Keep existing aggregation tests for route_source and return_timing rates passing; no training/benchmark required for implementation verification."
+    ],
+    "hypothesis_id": "gate_return_action_teacher_to_route_or_readiness_v1",
+    "not_authorized_to_implement_now": true,
+    "statement": "In plain s1_survival, return_action_teacher supervision should be emitted only when the current mode is CONTRACT/RETURN or when the same simplified readiness logic says pre_return_ready/return_now; otherwise the return-action teacher creates mostly depart/harvest outside-route advice that the policy rarely adopts while route-phase reliable source remains absent."
+  },
+  "next_action": "Ask Oracle before implementing the single hypothesis, running tests beyond artifact validation, starting Docker/training, benchmarking, changing phase/config/runtime, promoting checkpoints, or claiming F1/original task completion.",
+  "oracle_verdict_followed": "APPROVE_ONE_READ_ONLY_DIAGNOSIS",
+  "read_only_scope": {
+    "benchmark_run": false,
+    "checkpoint_promoted": false,
+    "config_or_phase_modified": false,
+    "docker_started": false,
+    "kaiwu_return_action_teacher_weight_inferred_or_set": false,
+    "runtime_state_modified": false,
+    "source_code_modified": false,
+    "tests_modified": false,
+    "training_or_rerun_started": false
+  },
+  "root_cause_summary": {
+    "outside_route_timing": "The outside-route metric is produced from return_action_teacher_mask, not route_phase_action_teacher_mask. In plain s1_survival, return_action_teacher_mask is copied from return_action_reliable guidance and may be boosted when battery_state is planning/critical regardless of current mode. Since route-phase source labels are separately gated to CONTRACT/RETURN, the run can simultaneously show route-phase source critical_fallback dominance and return-action teacher timing mostly outside route phase.",
+    "return_reliable_absence": "At global_40 only 6 of 2139 route-phase teacher labels are from return_reliable because return_reliable requires the strict return_action_reliable source inside the route-phase source-label branch. return_action_reliable requires target_reliable, legal/safe suggested action, and action margin >= 1.0; target_reliable additionally requires stable, low-unknown, sufficiently separated charger target. In the critical battery route-phase path, when those reliability gates fail, preprocessor.py falls through to critical_fallback instead."
+  },
+  "run_under_diagnosis": {
+    "battery_fail_rate": 0.85,
+    "missing_return_pair_rate": 0.9971949509116409,
+    "missing_route_pair_rate": 0.9884169884169884,
+    "mode_usage_contract": 0.005487948633591281,
+    "mode_usage_return": 0.18984904200470243,
+    "return_teacher_count": 518.0,
+    "return_teacher_in_route_phase_count": 6.0,
+    "return_teacher_outside_route_phase_count": 512.0,
+    "return_teacher_outside_route_phase_rate": 0.9884169884169884,
+    "return_timing_outside_route_phase_policy_planner_divergence_rate": 0.896484375,
+    "return_timing_outside_route_phase_policy_teacher_adoption_rate": 0.103515625,
+    "route_phase_teacher_count": 2139.0,
+    "route_phase_teacher_from_critical_fallback_count": 2041.0,
+    "route_phase_teacher_from_critical_fallback_rate": 0.9541841982234689,
+    "route_phase_teacher_from_return_reliable_count": 6.0,
+    "route_phase_teacher_from_return_reliable_rate": 0.002805049088359046,
+    "route_source_critical_fallback_policy_planner_divergence_rate": 0.8549730524252818,
+    "route_source_critical_fallback_policy_teacher_adoption_rate": 0.14502694757471826,
+    "run_session_id": "20260426-084214",
+    "win_rate": 0.125,
+    "window": "global_40",
+    "zero_charge_battery_fail_rate": 0.8
+  },
+  "safety_flags": {
+    "benchmark_run": false,
+    "canonical_serial_benchmark_run": false,
+    "checkpoint_promoted": false,
+    "continued_to_global80": false,
+    "f1_approved": false,
+    "original_task_incomplete": true,
+    "parallel_benchmark_run": false,
+    "promotion_allowed": false
+  },
+  "schema_version": 1
+}

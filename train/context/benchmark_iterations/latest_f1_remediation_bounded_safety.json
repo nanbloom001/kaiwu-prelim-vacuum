@@ -1,0 +1,30 @@
+{
+  "schema": "latest_f1_remediation_bounded_safety_v1",
+  "updated_at": "2026-04-26T03:08:00+08:00",
+  "baseline_run_id": "20260421-134719",
+  "run_session_id": "20260426-025919",
+  "phase": "s1_survival_bounded_safety_v1",
+  "sample_point": "global_40",
+  "global_episode_count_observed_after_stop": 42,
+  "decision": "revert",
+  "promotion_allowed": false,
+  "checkpoint_promoted": false,
+  "continuation_allowed_past_global_40": false,
+  "canonical_serial_benchmark_run": false,
+  "evidence_path": ".sisyphus/evidence/benchmark-900/bounded-safety-global40-20260426-025919.json",
+  "comparison_output": ".sisyphus/evidence/benchmark-900/bounded-safety-global40-compare.json",
+  "sample_point_status": {
+    "bootstrap_10": "early_stop_warning",
+    "bootstrap_20": "early_stop_warning",
+    "global_40": "main_fail"
+  },
+  "behavior_metrics": {
+    "avg_clean_per_step": 0.3894163849838894,
+    "battery_fail_rate": 0.3,
+    "zero_charge_battery_fail_rate": 0.25,
+    "route_phase_return_stall_rate": 0.34433264502811295,
+    "planner_policy_divergence_rate": 0.8225536277484599,
+    "win_rate": 0.7
+  },
+  "no_promotion_reason": "global_40 main_fail; bounded safety improved over the previous route-source collapse but remains below baseline thresholds"
+}

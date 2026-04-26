@@ -1,0 +1,96 @@
+{
+  "artifact": "latest_f1_remediation_targeted_attribution_diff_blocker",
+  "classification": "targeted_attribution_diff_blocks_algorithm_edits_no_promotion",
+  "code_basis": [
+    {
+      "file": "code/agent_ppo/feature/preprocessor.py",
+      "finding": "Plain s1_survival return-action masks are gated to CONTRACT/RETURN or readiness; action values can remain visible while the mask is zeroed.",
+      "lines": "64-77, 2112-2143"
+    },
+    {
+      "file": "code/agent_ppo/feature/preprocessor.py",
+      "finding": "Route-source fallback is still tagged, including critical fallback when return-reliable/anchor/target sources are absent.",
+      "lines": "2149-2184"
+    },
+    {
+      "file": "code/agent_ppo/feature/expert.py",
+      "finding": "return_action_reliable requires target_reliable, suggested_action, legal_and_safe, and action_margin >= TEACHER_RETURN_ACTION_MARGIN_MIN.",
+      "lines": "271-276"
+    },
+    {
+      "file": "code/agent_ppo/feature/expert.py",
+      "finding": "target_reliable is stricter still: reachable finite charger target, legal/safe suggestion, sufficient NPC/slack/unknown-path/stability/target-gap conditions.",
+      "lines": "1005-1032"
+    }
+  ],
+  "created_at": "2026-04-26T12:08:02+08:00",
+  "decision": "block_algorithm_edits_no_rerun_no_benchmark_no_promotion",
+  "docker_stopped_at_documentation": true,
+  "evidence_path": ".sisyphus/evidence/benchmark-900/targeted-attribution-diff-blocker.json",
+  "future_evidence_needed_but_not_approved_now": [
+    "Oracle-approved protocol-compliant fresh run",
+    "Offline joined per-episode source\u00d7timing\u00d7battery-failure attribution"
+  ],
+  "key_metric_basis": {
+    "084214": {
+      "battery_fail_rate": 0.85,
+      "interpretation": "Supports why the gate helped suppress noisy outside-route labels, not why fresh strict runs collapsed.",
+      "outside_route_teacher_timing_rate": 0.9884169884169884,
+      "route_phase_teacher_from_critical_fallback_rate": 0.9541841982234689,
+      "route_phase_teacher_from_return_reliable_rate": 0.002805049088359046,
+      "status": "older_diagnostic_only_poor_context",
+      "win_rate": 0.125,
+      "zero_charge_battery_fail_rate": 0.8
+    },
+    "090735": {
+      "battery_fail_rate": 0.375,
+      "outside_route_teacher_timing_rate": 0.0,
+      "return_action_teacher_mask_nonzero_rate": 0.0,
+      "route_phase_teacher_from_critical_fallback_rate": 0.9799240368963646,
+      "route_phase_teacher_from_return_reliable_rate": 0.0,
+      "status": "overrun_diagnostic_only_better_outcome_not_success_or_promotion",
+      "win_rate": 0.6,
+      "zero_charge_battery_fail_rate": 0.2
+    },
+    "110457": {
+      "avg_clean_per_step": 0.4524491484872807,
+      "avg_clean_score": 143.875,
+      "battery_fail_rate": 1.0,
+      "return_action_teacher_mask_nonzero_rate": 0.0,
+      "route_phase_teacher_from_anchor_or_target_rate": 0.07109004739336493,
+      "route_phase_teacher_from_critical_fallback_rate": 0.9289099526066351,
+      "route_phase_teacher_from_return_reliable_rate": 0.0,
+      "status": "fresh_bound_failure_global40_diagnostic_only_due_bootstrap_stop_gate_overrun",
+      "win_rate": 0.0,
+      "zero_charge_battery_fail_rate": 0.825
+    },
+    "112317": {
+      "avg_clean_per_step": 0.42888790060471205,
+      "avg_clean_score": 129.5,
+      "battery_fail_rate": 1.0,
+      "return_action_teacher_mask_nonzero_rate": 0.0,
+      "route_phase_teacher_from_anchor_or_target_rate": 0.032520325203252036,
+      "route_phase_teacher_from_critical_fallback_rate": 0.967479674796748,
+      "route_phase_teacher_from_return_reliable_rate": 0.0,
+      "status": "fresh_bound_stop_gated_bootstrap20_severe_collapse_failure",
+      "win_rate": 0.0,
+      "zero_charge_battery_fail_rate": 0.9
+    }
+  },
+  "not_approved": {
+    "benchmark": true,
+    "checkpoint_promotion": true,
+    "f1_approval": true,
+    "original_completion_claim": true,
+    "rerun": true,
+    "rollback_or_config_change": true
+  },
+  "schema_version": 1,
+  "summary": "Evidence remains insufficient to justify rollback, source-selection relaxation, teacher-weight/config restore, rerun, benchmark, checkpoint promotion, or another behavior edit.",
+  "verification": {
+    "docker_recheck_output_lines": [],
+    "docker_recheck_stopped": true,
+    "json_validation": true,
+    "json_validation_command": "python3 -m json.tool \"/home/user/TcKaiwuFinal/train/context/benchmark_iterations/latest_f1_remediation_targeted_attribution_diff_blocker.json\""
+  }
+}

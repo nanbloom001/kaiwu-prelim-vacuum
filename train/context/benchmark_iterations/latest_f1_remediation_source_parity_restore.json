@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_source_parity_restore",
+  "created_at": "2026-04-25T21:54:58Z",
+  "action": "source_parity_restore",
+  "source_audit": ".sisyphus/evidence/benchmark-900/baseline-drift-parity-audit-after-charge-slack.json",
+  "decision": {
+    "value": "parity_restored_no_promotion",
+    "promotion_allowed": false,
+    "checkpoint_promoted": false,
+    "canonical_serial_benchmark_run": false,
+    "f1_approved": false,
+    "reason": "Failed charge-slack scalar drift and failed bounded-safety candidate hooks were removed from active source before any further controlled replicate."
+  },
+  "source_drift_paths": [
+    "code/agent_ppo/conf/conf.py",
+    "code/agent_ppo/feature/preprocessor.py",
+    "code/agent_ppo/agent.py",
+    "code/agent_ppo/utils/return_readiness.py"
+  ],
+  "exact_changes": [
+    "Config.SCALAR_DIM restored to 128.",
+    "reachable_charger_reserve_slack scalar feature and helper removed from active preprocessing.",
+    "bounded_safety_active hook removed from Agent unsafe_slack_return action gating.",
+    "BOUNDED_SAFETY_PHASES and bounded_safety_active() removed from return_readiness.py.",
+    "Candidate-only charge-slack test removed from active test discovery."
+  ],
+  "verification": {
+    "focused_tests": {
+      "command": "cd code && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/user/TcKaiwuFinal/.conda-numpy/bin/python -m pytest tests/test_task7_eval_safety.py -q",
+      "result": "6 passed, 3 subtests passed"
+    },
+    "full_tests": {
+      "command": "cd code && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/user/TcKaiwuFinal/.conda-numpy/bin/python -m pytest tests/ -q",
+      "result": "243 passed, 1 skipped, 5 warnings, 11 subtests passed"
+    },
+    "docker_stopped": true,
+    "json_validated": true
+  },
+  "evidence": ".sisyphus/evidence/benchmark-900/source-parity-restore-after-charge-slack.json",
+  "next_action": "controlled_plain_s1_survival_reproducibility_replicate"
+}

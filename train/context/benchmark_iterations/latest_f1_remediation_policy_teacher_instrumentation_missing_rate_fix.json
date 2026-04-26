@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_policy_teacher_instrumentation_missing_rate_fix",
+  "mirrors_evidence_artifact": ".sisyphus/evidence/benchmark-900/policy-teacher-instrumentation-missing-rate-fix.json",
+  "created_at": "2026-04-26T09:05:00+08:00",
+  "oracle_verdict_followed": "APPROVE_MINIMAL_INSTRUMENTATION_FIX",
+  "decision": "minimal_instrumentation_only_missing_rate_key_fix_implemented_no_rerun",
+  "root_cause": "AISRV KeyError for route_source_return_reliable_policy_planner_divergence_rate during _handle_episode_end metrics expansion in run 20260426-075439.",
+  "fix_summary": "Non-empty EpisodeRunner._episode_sequence_diagnostics now applies derived count/rate completion before returning diagnostics, and includes a local battery_fail_count denominator for per-episode battery attribution rates. Scope correction removed accidental helper calls from sampled profile and runtime progress payload builders.",
+  "modified_code_files": [
+    "code/agent_ppo/workflow/train_workflow.py",
+    "code/tests/test_curriculum_and_checkpoint_score.py"
+  ],
+  "curriculum_state_modified": false,
+  "verification_summary": {
+    "focused_tests": "104 passed in 1.60s",
+    "py_compile_exit_code": 0,
+    "lsp_diagnostics_status": "not_clean_preexisting_environment_noise",
+    "json_validation": true,
+    "docker_stopped_pre": true,
+    "docker_stopped_post": true
+  },
+  "behavior_change_guarantee": {
+    "instrumentation_only": true,
+    "reward_action_model_teacher_phase_runtime_behavior_changed": false,
+    "sampled_profile_or_runtime_payload_broadened": false,
+    "training_or_benchmark_executed": false,
+    "checkpoint_promoted": false,
+    "kaiwu_return_action_teacher_weight_inferred_or_set": false
+  },
+  "safety_flags": {
+    "promotion_allowed": false,
+    "checkpoint_promoted": false,
+    "benchmark_run": false,
+    "canonical_serial_benchmark_run": false,
+    "parallel_benchmark_run": false,
+    "f1_approved": false,
+    "original_task_incomplete": true,
+    "continued_to_global80": false
+  },
+  "next_action": "Oracle approval is required before any rerun, benchmark, behavior intervention, or promotion."
+}

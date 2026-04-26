@@ -1,0 +1,4567 @@
+{
+  "schema_version": 1,
+  "artifact": "baseline-20260421-config-recovery-search",
+  "created_at": "2026-04-25T23:07:32.396751Z",
+  "baseline_run": "20260421-134719",
+  "task": "exhaustive_local_and_non_destructive_git_history_search_for_exact_historical_baseline_config",
+  "result_classification": "partial_config_found",
+  "result_summary": "Exact full launch env/config for run 20260421-134719 was not found. Partial exact evidence was found: runtime curriculum profile weights are preserved, and git history contains a 2026-04-21 baseline-era s1_survival.env reward/teacher scalar set. Missing launch-manifest proof and KAIWU_RETURN_ACTION_TEACHER_WEIGHT prevent exact_config_found.",
+  "docker_policy": "docker_must_remain_stopped; no training, benchmark, promotion, compose, checkout, reset, merge, stash, cherry-pick, or runtime-state mutation performed",
+  "required_keys": [
+    "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+    "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+    "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+    "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+    "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+    "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+    "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+    "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+    "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+    "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+    "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+    "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+    "KAIWU_RETURN_ACTION_TEACHER_WEIGHT",
+    "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+    "KAIWU_CURRICULUM_PROFILE_MILD",
+    "KAIWU_CURRICULUM_PROFILE_BROAD"
+  ],
+  "key_findings": {
+    "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.24",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.16",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.08",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.05",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_BATTERY_TERMINAL_COST_SCALE": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "40.0",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_EPISODE_BATTERY_FAIL_BONUS": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "-16.0",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.95",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_RETURN_PROGRESS_SHAPING_SCALE": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.208",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_SKIP_NEEDED_CHARGE_PENALTY": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.28",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.12",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_NECESSARY_CHARGE_BONUS_SCALE": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "1.15",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT": {
+      "status": "partial_exact_baseline_era_git_evidence_not_launch_proven",
+      "value": "0.55",
+      "evidence": "git show 86b86b75b4e23881ce2f17643c70f12f601f7b9e:train/phases/s1_survival.env",
+      "caveat": "Commit date is 2026-04-21T20:07:19+08:00, after run 20260421-134719 was created; it is baseline-era captured config evidence, not retained launch-manifest proof."
+    },
+    "KAIWU_RETURN_ACTION_TEACHER_WEIGHT": {
+      "status": "not_found_exact_baseline_value",
+      "value": null,
+      "evidence": null,
+      "caveat": "No retained run artifact or inspected git history entry proved this exact key for baseline 20260421-134719."
+    },
+    "KAIWU_CURRICULUM_PROFILE_ANCHOR": {
+      "status": "exact_runtime_state_evidence_not_env_launch_file",
+      "value": "0.60",
+      "evidence": "code/runtime_state/runs/20260421-134719/curriculum_state.json and resume curriculum snapshots",
+      "caveat": "Runtime state proves effective curriculum profile weights, but not original env variable source; curriculum parity using these weights alone already bootstrap-collapsed."
+    },
+    "KAIWU_CURRICULUM_PROFILE_MILD": {
+      "status": "exact_runtime_state_evidence_not_env_launch_file",
+      "value": "0.30",
+      "evidence": "code/runtime_state/runs/20260421-134719/curriculum_state.json and resume curriculum snapshots",
+      "caveat": "Runtime state proves effective curriculum profile weights, but not original env variable source; curriculum parity using these weights alone already bootstrap-collapsed."
+    },
+    "KAIWU_CURRICULUM_PROFILE_BROAD": {
+      "status": "exact_runtime_state_evidence_not_env_launch_file",
+      "value": "0.10",
+      "evidence": "code/runtime_state/runs/20260421-134719/curriculum_state.json and resume curriculum snapshots",
+      "caveat": "Runtime state proves effective curriculum profile weights, but not original env variable source; curriculum parity using these weights alone already bootstrap-collapsed."
+    }
+  },
+  "partial_evidence": {
+    "runtime_effective_curriculum_weights": {
+      "values": {
+        "anchor": 0.6,
+        "mild": 0.3,
+        "broad": 0.1,
+        "broad_eval": 0.0
+      },
+      "paths": [
+        "code/runtime_state/runs/20260421-134719/curriculum_state.json",
+        "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0007698.curriculum.json",
+        "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0011531.curriculum.json",
+        "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142308.curriculum.json"
+      ],
+      "classification": "exact_runtime_effective_value_not_safe_alone"
+    },
+    "baseline_era_phase_env_commit": {
+      "commit": "86b86b75b4e23881ce2f17643c70f12f601f7b9e",
+      "date": "2026-04-21T20:07:19+08:00",
+      "subject": "feat: capture survival-phase baseline and planning",
+      "path": "train/phases/s1_survival.env",
+      "values": {
+        "KAIWU_BATTERY_TERMINAL_COST_SCALE": "40.0",
+        "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE": "0.24",
+        "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE": "0.08",
+        "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": "0.16",
+        "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": "0.05",
+        "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST": "0.95",
+        "KAIWU_EPISODE_BATTERY_FAIL_BONUS": "-16.0",
+        "KAIWU_RETURN_PROGRESS_SHAPING_SCALE": "0.208",
+        "KAIWU_SKIP_NEEDED_CHARGE_PENALTY": "0.28",
+        "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY": "0.12",
+        "KAIWU_NECESSARY_CHARGE_BONUS_SCALE": "1.15",
+        "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT": "0.55"
+      },
+      "classification": "partial_exact_git_evidence_not_launch_proven"
+    },
+    "baseline_resume_metadata": {
+      "training_start_mode": "scratch",
+      "preload_enabled": false,
+      "resume_global_step_base": 0,
+      "checkpoint_id": "75488",
+      "checkpoint_path": "/workspace/code/runtime_state/runs/20260421-134719/resume/latest/model.pkl",
+      "evidence": "code/runtime_state/runs/20260421-134719/resume/latest/resume.state.json"
+    }
+  },
+  "negative_findings": [
+    "No retained launch manifest or env dump was found under code/runtime_state/runs/20260421-134719.",
+    "No exact KAIWU_RETURN_ACTION_TEACHER_WEIGHT value for baseline 20260421-134719 was found; only later/current phase variants and conf defaults mention it.",
+    "train/.env git history yielded no required key matches in inspected commits.",
+    "Runtime reward share/scheduled examples are not used to infer missing scalar values except as unsafe contextual evidence.",
+    "Curriculum parity alone already failed in run 20260426-064152 and remains halted."
+  ],
+  "dry_run_restoration_candidate": {
+    "candidate_id": "baseline_20260421_partial_git_env_plus_runtime_curriculum_dry_run_only_v1",
+    "scope": "dry_run_prep_only_no_training_no_benchmark_no_promotion",
+    "reason": "Partial exact evidence exists for a same-day captured s1_survival.env scalar set plus runtime effective curriculum weights, but no retained launch env proves this was the full baseline config.",
+    "exact_keys_to_set": {
+      "KAIWU_CURRICULUM_PROFILE_ANCHOR": "0.60",
+      "KAIWU_CURRICULUM_PROFILE_MILD": "0.30",
+      "KAIWU_CURRICULUM_PROFILE_BROAD": "0.10",
+      "KAIWU_BATTERY_TERMINAL_COST_SCALE": "40.0",
+      "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE": "0.24",
+      "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE": "0.08",
+      "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": "0.16",
+      "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": "0.05",
+      "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST": "0.95",
+      "KAIWU_EPISODE_BATTERY_FAIL_BONUS": "-16.0",
+      "KAIWU_RETURN_PROGRESS_SHAPING_SCALE": "0.208",
+      "KAIWU_SKIP_NEEDED_CHARGE_PENALTY": "0.28",
+      "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY": "0.12",
+      "KAIWU_NECESSARY_CHARGE_BONUS_SCALE": "1.15",
+      "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT": "0.55"
+    },
+    "intentionally_unset_due_missing_exact_evidence": [
+      "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+    ],
+    "required_guardrails": [
+      "prepare manifest/phase audit only",
+      "do not run training",
+      "do not run benchmark",
+      "do not promote checkpoint",
+      "request Oracle review before any execution"
+    ]
+  },
+  "recommendation": "Preserve blocker. Do not train, benchmark, promote, or claim F1 success. If the orchestrator accepts partial evidence, the only next action is one dry-run-only restoration prep for the listed exact keys, with KAIWU_RETURN_ACTION_TEACHER_WEIGHT intentionally unset and Oracle review before execution.",
+  "inspected_local_paths": [
+    {
+      "path": "code/runtime_state/runs/20260421-134719",
+      "files_inspected": 383,
+      "hit_file_count": 282,
+      "yielded_exact_baseline_evidence": "partial",
+      "hit_files": [
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_state.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/run_session.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-1-pid-439.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-458.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-2-pid-456.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-462.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-446.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-1-pid-456.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-1-pid-441.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-1-pid-447.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-463.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-449.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-450.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-1-pid-445.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-456.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-1-pid-454.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-448.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-2-pid-446.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-452.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-2-pid-445.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-2-pid-454.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-2-pid-459.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-465.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-447.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-2-pid-448.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-454.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-2-pid-443.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-2-pid-441.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-3-pid-445.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-1-pid-442.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/curriculum_signals/aisrv-1-pid-451.json",
+          "keys": [],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/latest/resume.meta.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/latest/resume.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/latest/curriculum_state.snapshot.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-144544.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-145437.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0016006.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0019858.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-144520.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-154409.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-135734.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0042166.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142935.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151059.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0047962.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153733.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0040893.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151215.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143611.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0028780.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0066646.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0043454.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0034511.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-155220.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-152442.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-150827.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-150607.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-150607.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0055616.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0073554.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0008348.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0023053.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0051159.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0023688.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151215.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0020504.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151059.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-145242.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-140826.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0007698.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0059322.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-140853.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142645.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143958.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0064817.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0021770.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0071003.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151728.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0056223.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0030696.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0063609.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0023688.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153122.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-155220.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-152825.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142200.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0048603.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0007059.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0063000.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143456.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0042825.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143434.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-140006.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-145350.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153121.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143611.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0020504.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153733.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0037060.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-135925.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143434.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-152943.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-145836.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-141354.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-141119.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-135933.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0015365.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143426.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-140003.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153233.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153039.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0016006.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0030696.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-140954.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0049881.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-150827.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-144631.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0059937.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-150356.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151038.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0049881.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142434.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0035143.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153121.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-154505.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0056223.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0011531.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142200.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143426.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0014087.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-152514.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-135933.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-140003.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143305.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142230.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0017298.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-140954.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143902.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0048603.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0037060.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142645.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-144541.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-141549.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0041522.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151909.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153039.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151545.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-145603.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0046656.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0031327.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0059322.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0011531.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0023053.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142308.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0049239.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0007698.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142102.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-143456.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151038.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-135925.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-135758.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-154104.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0051159.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0062391.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-151545.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0047301.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0072923.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0021770.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-135758.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0066646.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-150356.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0072923.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0015365.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-141549.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-154104.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0019858.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0065433.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-150425.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0064817.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-140826.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0028138.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-152943.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0040247.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-154721.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0041522.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-145820.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0055616.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0014087.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-154721.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-141128.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0040247.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0053083.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-155221.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0065433.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0073554.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-154157.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-152442.curriculum.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-154237.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0071003.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-153122.state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "train/context",
+      "files_inspected": 117,
+      "hit_file_count": 30,
+      "yielded_exact_baseline_evidence": "context_only",
+      "hit_files": [
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_non_source_parity_audit.json",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": [
+            "curriculum_profile_weights",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_baseline_drift_audit.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_return_teacher_aligned.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_bounded_safety_commit.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_s1_survival_reset.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_bounded_safety_charge_entry.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_route_source_simplify.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_curriculum_parity_prep.json",
+          "keys": [
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_curriculum_parity_blocker.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_return_teacher_labelquality.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_baseline_historical_config.json",
+          "keys": [
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_curriculum_parity_global40.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_state.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_charge_slack_feature.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/training-attempt-20260425-193501.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_charge_entry_cooldown.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_charge_release.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_safe_clean_deferral.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_charge_entry_replicate_global80.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_v2.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_plain_parity_replicate.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_return_teacher_v1.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_return_teacher_maskobs.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_return_teacher_w006.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_bounded_safety.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/benchmark_iterations/latest_f1_remediation_bounded_safety_v2.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": "train/context/diagnosis/MULTI_AGENT_SYNTHESIS_REPORT_20260421.md",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights"
+          ]
+        },
+        {
+          "path": "train/context/optimization/SLICE2A_BATCH_A_CO_PRIMARY_FIX_PLAN_20260423.md",
+          "keys": [
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": [
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale"
+          ]
+        },
+        {
+          "path": "train/context/optimization/SURVIVAL_CPS_STABILIZATION_PLAN_20260421_1903.md",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights"
+          ]
+        }
+      ]
+    },
+    {
+      "path": ".sisyphus/evidence",
+      "files_inspected": 186,
+      "hit_file_count": 59,
+      "yielded_exact_baseline_evidence": "context_only",
+      "hit_files": [
+        {
+          "path": ".sisyphus/evidence/benchmark-900/charge-entry-cooldown-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-charge-entry-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/charge-entry-cooldown-global40-20260426-045054.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/aligned-phase-global40-20260426-000354.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/source-bucket-diagnostic-20260425-233014.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/compare-20260425-224353-return-teacher-labelquality.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-200217-v2-report.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-193501-report.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-commit-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-230405-return-teacher-rawcounts-report.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/compare-20260425-212733-return-teacher-v1.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/comparison-20260425-230405-return-teacher-rawcounts.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/charge-entry-replicate-global80-20260426-040713.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/return-teacher-w006-regression-diagnosis.json",
+          "keys": [
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/safe-clean-deferral-global40-20260426-051445.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/route-source-simplify-global40-20260426-024234.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/s1_survival_return_teacher_v1-prep.json",
+          "keys": [
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/safe-clean-deferral-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/compare-20260425-214802-return-teacher-maskobs.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/compare-20260425-221249-return-teacher-w006.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-global40-20260426-025919.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/charge-entry-replicate-global80-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/charge-release-global40-20260426-043349.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-commit-global40-20260426-032934.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/return-readiness-control-diagnosis.json",
+          "keys": [
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/charge-release-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-charge-entry-phase-prep.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-200217-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/f1-next-intervention-diagnosis.json",
+          "keys": [
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/curriculum-parity-bootstrap-blocker.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/curriculum-parity-phase-prep.json",
+          "keys": [
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-224353-return-teacher-labelquality-report.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-v2-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/return-teacher-aligned-phase-prep.json",
+          "keys": [
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": []
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/s1-survival-reset-global40-20260426-015729.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/baseline-20260421-historical-config-reconstruction.json",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/aligned-phase-global40-compare-20260426-000354.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/non-source-parity-audit-after-plain-replicate.json",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": [
+            "curriculum_profile_weights",
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-charge-entry-global40-20260426-035002.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/teacher-label-quality-diagnosis.json",
+          "keys": [
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": []
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/source-bucket-monitor-snapshot.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/route-source-simplify-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/return-teacher-wiring-diagnosis.json",
+          "keys": [
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": []
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/charge-slack-feature-global40-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/s1_survival_target_reward_v2-prep.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/curriculum-parity-global40.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/plain-s1-survival-parity-replicate-global40.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-221249-return-teacher-w006-report.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/aligned-global40-monitor-snapshot-authoritative.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-212733-return-teacher-v1-report.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-214802-return-teacher-maskobs-report.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/aligned-global40-monitor-snapshot.json",
+          "keys": [],
+          "extra": [
+            "curriculum_profile_weights",
+            "scheduled_battery_fail_task_reward_scale",
+            "scheduled_early_battery_fail_task_reward_scale"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/training-attempt-20260425-193501-compare.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/charge-slack-feature-global40-20260426-053353.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/s1_survival_return_teacher_w006_v1-prep.json",
+          "keys": [
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": []
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/bounded-safety-v2-global40-20260426-031454.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/baseline-drift-parity-audit-after-charge-slack.json",
+          "keys": [],
+          "extra": [
+            "20260421-134719"
+          ]
+        },
+        {
+          "path": ".sisyphus/evidence/benchmark-900/return-teacher-aligned-phase-gate-fix.json",
+          "keys": [
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT"
+          ],
+          "extra": []
+        }
+      ]
+    },
+    {
+      "path": "train/phases",
+      "files_inspected": 14,
+      "hit_file_count": 14,
+      "yielded_exact_baseline_evidence": "context_only",
+      "hit_files": [
+        {
+          "path": "train/phases/s1_survival_bounded_safety_charge_entry_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_target_reward_v2.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_strong_heuristic_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_curriculum_parity_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_cps_align_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_target_reward_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_control_simplify_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_strong_heuristic_slice2a_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_return_teacher_w006_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_charge_slack_feature_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_strong_heuristic_slice2a_fixed8_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_return_teacher_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_RETURN_ACTION_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        },
+        {
+          "path": "train/phases/s1_survival_bounded_safety_v1.env",
+          "keys": [
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE",
+            "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK",
+            "KAIWU_BATTERY_TERMINAL_COST_SCALE",
+            "KAIWU_EPISODE_BATTERY_FAIL_BONUS",
+            "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST",
+            "KAIWU_RETURN_PROGRESS_SHAPING_SCALE",
+            "KAIWU_SKIP_NEEDED_CHARGE_PENALTY",
+            "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY",
+            "KAIWU_NECESSARY_CHARGE_BONUS_SCALE",
+            "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT",
+            "KAIWU_CURRICULUM_PROFILE_ANCHOR",
+            "KAIWU_CURRICULUM_PROFILE_MILD",
+            "KAIWU_CURRICULUM_PROFILE_BROAD"
+          ],
+          "extra": []
+        }
+      ]
+    }
+  ],
+  "inspected_git_commits": [
+    {
+      "path": "train/.env",
+      "commit": "ea12f276f9b889e585154d885d2c0f371af7cfe4",
+      "date": "2026-04-11T22:08:13+08:00",
+      "subject": "Initial commit on cyy branch",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "train/.env",
+      "commit": "803c2bc2607443b512600c883ab9e6773ae06403",
+      "date": "2026-04-11T21:52:40+08:00",
+      "subject": "yjy: 只修改奖励函数与权重",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "train/phases/s1_survival.env",
+      "commit": "901b48c24bb072f870d33d7f9fd53e641a924ce9",
+      "date": "2026-04-23T23:22:31+08:00",
+      "subject": "chore(linux-yjy): freeze linux infrastructure baseline",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 5,
+          "text": "KAIWU_CURRICULUM_PROFILE_ANCHOR=0.20"
+        },
+        {
+          "line": 6,
+          "text": "KAIWU_CURRICULUM_PROFILE_MILD=0.40"
+        },
+        {
+          "line": 7,
+          "text": "KAIWU_CURRICULUM_PROFILE_BROAD=0.40"
+        },
+        {
+          "line": 18,
+          "text": "KAIWU_BATTERY_TERMINAL_COST_SCALE=41.0"
+        },
+        {
+          "line": 19,
+          "text": "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE=0.22"
+        },
+        {
+          "line": 20,
+          "text": "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE=0.07"
+        },
+        {
+          "line": 21,
+          "text": "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.14"
+        },
+        {
+          "line": 22,
+          "text": "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.04"
+        },
+        {
+          "line": 23,
+          "text": "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST=0.95"
+        },
+        {
+          "line": 24,
+          "text": "KAIWU_EPISODE_BATTERY_FAIL_BONUS=-16.0"
+        },
+        {
+          "line": 27,
+          "text": "KAIWU_RETURN_PROGRESS_SHAPING_SCALE=0.28"
+        },
+        {
+          "line": 28,
+          "text": "KAIWU_SKIP_NEEDED_CHARGE_PENALTY=0.20"
+        },
+        {
+          "line": 29,
+          "text": "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY=0.12"
+        },
+        {
+          "line": 30,
+          "text": "KAIWU_NECESSARY_CHARGE_BONUS_SCALE=1.00"
+        },
+        {
+          "line": 33,
+          "text": "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.50"
+        }
+      ]
+    },
+    {
+      "path": "train/phases/s1_survival.env",
+      "commit": "86b86b75b4e23881ce2f17643c70f12f601f7b9e",
+      "date": "2026-04-21T20:07:19+08:00",
+      "subject": "feat: capture survival-phase baseline and planning",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 13,
+          "text": "KAIWU_BATTERY_TERMINAL_COST_SCALE=40.0"
+        },
+        {
+          "line": 14,
+          "text": "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE=0.24"
+        },
+        {
+          "line": 15,
+          "text": "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE=0.08"
+        },
+        {
+          "line": 16,
+          "text": "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.16"
+        },
+        {
+          "line": 17,
+          "text": "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK=0.05"
+        },
+        {
+          "line": 18,
+          "text": "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST=0.95"
+        },
+        {
+          "line": 19,
+          "text": "KAIWU_EPISODE_BATTERY_FAIL_BONUS=-16.0"
+        },
+        {
+          "line": 20,
+          "text": "KAIWU_RETURN_PROGRESS_SHAPING_SCALE=0.208"
+        },
+        {
+          "line": 21,
+          "text": "KAIWU_SKIP_NEEDED_CHARGE_PENALTY=0.28"
+        },
+        {
+          "line": 22,
+          "text": "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY=0.12"
+        },
+        {
+          "line": 23,
+          "text": "KAIWU_NECESSARY_CHARGE_BONUS_SCALE=1.15"
+        },
+        {
+          "line": 24,
+          "text": "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT=0.55"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "2931a10fe985a171e7b1c3a6ecb505eee8d2b9eb",
+      "date": "2026-04-25T23:50:53+08:00",
+      "subject": "feat: add benchmark intervention iteration workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 137,
+          "text": "BATTERY_TERMINAL_COST_SCALE = _env_float(\"KAIWU_BATTERY_TERMINAL_COST_SCALE\", \"39.0\")"
+        },
+        {
+          "line": 143,
+          "text": "RETURN_ACTION_TEACHER_WEIGHT = _env_float(\"KAIWU_RETURN_ACTION_TEACHER_WEIGHT\", \"0.06\")"
+        },
+        {
+          "line": 144,
+          "text": "ROUTE_PHASE_POLICY_TEACHER_WEIGHT = _env_float(\"KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT\", \"0.35\")"
+        },
+        {
+          "line": 184,
+          "text": "RETURN_PROGRESS_REWARD_SCALE = _env_float(\"KAIWU_RETURN_PROGRESS_REWARD_SCALE\", \"0.35\")"
+        },
+        {
+          "line": 239,
+          "text": "RETURN_PROGRESS_SHAPING_SCALE = _env_float(\"KAIWU_RETURN_PROGRESS_SHAPING_SCALE\", \"0.208\")"
+        },
+        {
+          "line": 242,
+          "text": "NECESSARY_CHARGE_BONUS_SCALE = _env_float(\"KAIWU_NECESSARY_CHARGE_BONUS_SCALE\", \"1.05\")"
+        },
+        {
+          "line": 246,
+          "text": "SKIP_NEEDED_CHARGE_PENALTY = _env_float(\"KAIWU_SKIP_NEEDED_CHARGE_PENALTY\", \"0.22\")"
+        },
+        {
+          "line": 247,
+          "text": "HIGH_NEED_RETURN_STALL_PENALTY = _env_float(\"KAIWU_HIGH_NEED_RETURN_STALL_PENALTY\", \"0.12\")"
+        },
+        {
+          "line": 294,
+          "text": "TARGET_SAFE_RETURN_PROGRESS_BONUS_SCALE = _env_float(\"KAIWU_TARGET_SAFE_RETURN_PROGRESS_BONUS_SCALE\", \"0.12\")"
+        },
+        {
+          "line": 301,
+          "text": "BATTERY_FAIL_TASK_REWARD_SCALE = _env_float(\"KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE\", \"0.28\")"
+        },
+        {
+          "line": 302,
+          "text": "EARLY_BATTERY_FAIL_TASK_REWARD_SCALE = _env_float(\"KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE\", \"0.10\")"
+        },
+        {
+          "line": 303,
+          "text": "ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST = _env_float(\"KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST\", \"0.75\")"
+        },
+        {
+          "line": 309,
+          "text": "NECESSARY_CHARGE_BONUS_SCALE_PEAK = _env_float(\"KAIWU_NECESSARY_CHARGE_BONUS_SCALE_PEAK\", \"1.40\")"
+        },
+        {
+          "line": 310,
+          "text": "BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = _env_float(\"KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK\", \"0.18\")"
+        },
+        {
+          "line": 311,
+          "text": "EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = _env_float(\"KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK\", \"0.06\")"
+        },
+        {
+          "line": 315,
+          "text": "EPISODE_BATTERY_FAIL_BONUS = _env_float(\"KAIWU_EPISODE_BATTERY_FAIL_BONUS\", \"-12.0\")"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "044b773df388de8df81d2dac5689ee98f8a76c66",
+      "date": "2026-04-24T17:09:10+08:00",
+      "subject": "yjy: tune go16 charge safety and charger exploration rewards",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "901b48c24bb072f870d33d7f9fd53e641a924ce9",
+      "date": "2026-04-23T23:22:31+08:00",
+      "subject": "chore(linux-yjy): freeze linux infrastructure baseline",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 137,
+          "text": "BATTERY_TERMINAL_COST_SCALE = _env_float(\"KAIWU_BATTERY_TERMINAL_COST_SCALE\", \"39.0\")"
+        },
+        {
+          "line": 143,
+          "text": "RETURN_ACTION_TEACHER_WEIGHT = _env_float(\"KAIWU_RETURN_ACTION_TEACHER_WEIGHT\", \"0.06\")"
+        },
+        {
+          "line": 144,
+          "text": "ROUTE_PHASE_POLICY_TEACHER_WEIGHT = _env_float(\"KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT\", \"0.35\")"
+        },
+        {
+          "line": 184,
+          "text": "RETURN_PROGRESS_REWARD_SCALE = _env_float(\"KAIWU_RETURN_PROGRESS_REWARD_SCALE\", \"0.35\")"
+        },
+        {
+          "line": 239,
+          "text": "RETURN_PROGRESS_SHAPING_SCALE = _env_float(\"KAIWU_RETURN_PROGRESS_SHAPING_SCALE\", \"0.208\")"
+        },
+        {
+          "line": 242,
+          "text": "NECESSARY_CHARGE_BONUS_SCALE = _env_float(\"KAIWU_NECESSARY_CHARGE_BONUS_SCALE\", \"1.05\")"
+        },
+        {
+          "line": 246,
+          "text": "SKIP_NEEDED_CHARGE_PENALTY = _env_float(\"KAIWU_SKIP_NEEDED_CHARGE_PENALTY\", \"0.22\")"
+        },
+        {
+          "line": 247,
+          "text": "HIGH_NEED_RETURN_STALL_PENALTY = _env_float(\"KAIWU_HIGH_NEED_RETURN_STALL_PENALTY\", \"0.12\")"
+        },
+        {
+          "line": 290,
+          "text": "BATTERY_FAIL_TASK_REWARD_SCALE = _env_float(\"KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE\", \"0.28\")"
+        },
+        {
+          "line": 291,
+          "text": "EARLY_BATTERY_FAIL_TASK_REWARD_SCALE = _env_float(\"KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE\", \"0.10\")"
+        },
+        {
+          "line": 292,
+          "text": "ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST = _env_float(\"KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST\", \"0.75\")"
+        },
+        {
+          "line": 298,
+          "text": "NECESSARY_CHARGE_BONUS_SCALE_PEAK = _env_float(\"KAIWU_NECESSARY_CHARGE_BONUS_SCALE_PEAK\", \"1.40\")"
+        },
+        {
+          "line": 299,
+          "text": "BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = _env_float(\"KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK\", \"0.18\")"
+        },
+        {
+          "line": 300,
+          "text": "EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = _env_float(\"KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK\", \"0.06\")"
+        },
+        {
+          "line": 304,
+          "text": "EPISODE_BATTERY_FAIL_BONUS = _env_float(\"KAIWU_EPISODE_BATTERY_FAIL_BONUS\", \"-12.0\")"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "09b2a690731220d1da270de468e5d4fd5392ebba",
+      "date": "2026-04-22T10:58:11+08:00",
+      "subject": "yjy: sync go10 ppo planner version",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "86b86b75b4e23881ce2f17643c70f12f601f7b9e",
+      "date": "2026-04-21T20:07:19+08:00",
+      "subject": "feat: capture survival-phase baseline and planning",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 121,
+          "text": "BATTERY_TERMINAL_COST_SCALE = float(os.getenv(\"KAIWU_BATTERY_TERMINAL_COST_SCALE\", \"39.0\"))"
+        },
+        {
+          "line": 129,
+          "text": "os.getenv(\"KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT\", \"0.35\")"
+        },
+        {
+          "line": 172,
+          "text": "RETURN_PROGRESS_REWARD_SCALE = float(os.getenv(\"KAIWU_RETURN_PROGRESS_REWARD_SCALE\", \"0.35\"))"
+        },
+        {
+          "line": 243,
+          "text": "RETURN_PROGRESS_SHAPING_SCALE = float(os.getenv(\"KAIWU_RETURN_PROGRESS_SHAPING_SCALE\", \"0.208\"))"
+        },
+        {
+          "line": 248,
+          "text": "NECESSARY_CHARGE_BONUS_SCALE = float(os.getenv(\"KAIWU_NECESSARY_CHARGE_BONUS_SCALE\", \"1.05\"))"
+        },
+        {
+          "line": 252,
+          "text": "SKIP_NEEDED_CHARGE_PENALTY = float(os.getenv(\"KAIWU_SKIP_NEEDED_CHARGE_PENALTY\", \"0.22\"))"
+        },
+        {
+          "line": 253,
+          "text": "HIGH_NEED_RETURN_STALL_PENALTY = float(os.getenv(\"KAIWU_HIGH_NEED_RETURN_STALL_PENALTY\", \"0.12\"))"
+        },
+        {
+          "line": 273,
+          "text": "BATTERY_FAIL_TASK_REWARD_SCALE = float(os.getenv(\"KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE\", \"0.28\"))"
+        },
+        {
+          "line": 274,
+          "text": "EARLY_BATTERY_FAIL_TASK_REWARD_SCALE = float("
+        },
+        {
+          "line": 275,
+          "text": "os.getenv(\"KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE\", \"0.10\")"
+        },
+        {
+          "line": 278,
+          "text": "os.getenv(\"KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST\", \"0.75\")"
+        },
+        {
+          "line": 286,
+          "text": "os.getenv(\"KAIWU_NECESSARY_CHARGE_BONUS_SCALE_PEAK\", \"1.40\")"
+        },
+        {
+          "line": 288,
+          "text": "BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = float("
+        },
+        {
+          "line": 289,
+          "text": "os.getenv(\"KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK\", \"0.18\")"
+        },
+        {
+          "line": 291,
+          "text": "EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = float("
+        },
+        {
+          "line": 292,
+          "text": "os.getenv(\"KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK\", \"0.06\")"
+        },
+        {
+          "line": 297,
+          "text": "EPISODE_BATTERY_FAIL_BONUS = float(os.getenv(\"KAIWU_EPISODE_BATTERY_FAIL_BONUS\", \"-12.0\"))"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c",
+      "date": "2026-04-20T19:31:59+08:00",
+      "subject": "feat: harden scratch and resume training workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 119,
+          "text": "BATTERY_TERMINAL_COST_SCALE = float(os.getenv(\"KAIWU_BATTERY_TERMINAL_COST_SCALE\", \"30.0\"))"
+        },
+        {
+          "line": 165,
+          "text": "RETURN_PROGRESS_REWARD_SCALE = float(os.getenv(\"KAIWU_RETURN_PROGRESS_REWARD_SCALE\", \"0.35\"))"
+        },
+        {
+          "line": 236,
+          "text": "RETURN_PROGRESS_SHAPING_SCALE = float(os.getenv(\"KAIWU_RETURN_PROGRESS_SHAPING_SCALE\", \"0.16\"))"
+        },
+        {
+          "line": 237,
+          "text": "NECESSARY_CHARGE_BONUS_SCALE = float(os.getenv(\"KAIWU_NECESSARY_CHARGE_BONUS_SCALE\", \"1.05\"))"
+        },
+        {
+          "line": 241,
+          "text": "SKIP_NEEDED_CHARGE_PENALTY = float(os.getenv(\"KAIWU_SKIP_NEEDED_CHARGE_PENALTY\", \"0.22\"))"
+        },
+        {
+          "line": 242,
+          "text": "HIGH_NEED_RETURN_STALL_PENALTY = float(os.getenv(\"KAIWU_HIGH_NEED_RETURN_STALL_PENALTY\", \"0.12\"))"
+        },
+        {
+          "line": 262,
+          "text": "BATTERY_FAIL_TASK_REWARD_SCALE = float(os.getenv(\"KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE\", \"0.50\"))"
+        },
+        {
+          "line": 263,
+          "text": "EARLY_BATTERY_FAIL_TASK_REWARD_SCALE = float("
+        },
+        {
+          "line": 264,
+          "text": "os.getenv(\"KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE\", \"0.30\")"
+        },
+        {
+          "line": 267,
+          "text": "os.getenv(\"KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST\", \"0.35\")"
+        },
+        {
+          "line": 275,
+          "text": "os.getenv(\"KAIWU_NECESSARY_CHARGE_BONUS_SCALE_PEAK\", \"1.40\")"
+        },
+        {
+          "line": 277,
+          "text": "BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = float("
+        },
+        {
+          "line": 278,
+          "text": "os.getenv(\"KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK\", \"0.40\")"
+        },
+        {
+          "line": 280,
+          "text": "EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK = float("
+        },
+        {
+          "line": 281,
+          "text": "os.getenv(\"KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK\", \"0.20\")"
+        },
+        {
+          "line": 286,
+          "text": "EPISODE_BATTERY_FAIL_BONUS = float(os.getenv(\"KAIWU_EPISODE_BATTERY_FAIL_BONUS\", \"-12.0\"))"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "21583eca382fb83f4dd8ffa3fc46cf4ead69ae12",
+      "date": "2026-04-18T19:22:11+08:00",
+      "subject": "feat: redesign charging reward for scratch retrain",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 155,
+          "text": "RETURN_PROGRESS_REWARD_SCALE = float(os.getenv(\"KAIWU_RETURN_PROGRESS_REWARD_SCALE\", \"0.35\"))"
+        },
+        {
+          "line": 219,
+          "text": "EPISODE_BATTERY_FAIL_BONUS = float(os.getenv(\"KAIWU_EPISODE_BATTERY_FAIL_BONUS\", \"-12.0\"))"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "98d9e5a540e40b5984b02ddd1212c0d5fee692c0",
+      "date": "2026-04-18T15:22:44+08:00",
+      "subject": "feat: add scratch retrain controls and adaptive curriculum",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 155,
+          "text": "RETURN_PROGRESS_REWARD_SCALE = 0.25"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "c40ef4db5cf22268e53480de20300694a7711a55",
+      "date": "2026-04-18T11:28:37+08:00",
+      "subject": "feat: refine curriculum scoring and benchmark workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 155,
+          "text": "RETURN_PROGRESS_REWARD_SCALE = 0.25"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "c54306ba271b77878c603d2af3f9e7b9237f5539",
+      "date": "2026-04-16T23:45:24+08:00",
+      "subject": "feat: add geometry-aware long-term planning training",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 154,
+          "text": "RETURN_PROGRESS_REWARD_SCALE = 0.25"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "0c2bb6fd5417d79540f159475d3a00932877e4b9",
+      "date": "2026-04-16T23:25:06+08:00",
+      "subject": "chore: snapshot ltsppo state before geometry planning changes",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "e708dd820fa326928a5e05ad5bffed6e0f2fa5ac",
+      "date": "2026-04-16T17:51:35+08:00",
+      "subject": "feat: implement LTSPPO training pipeline",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "7976282ac85d06ab928ebfe47d2b5b5cf8613514",
+      "date": "2026-04-16T11:23:47+08:00",
+      "subject": "chore: snapshot workspace before parallel benchmark",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "7542d68436df64dbff15cb6159174158f7088fad",
+      "date": "2026-04-15T18:59:47+08:00",
+      "subject": "feat: rolling window metrics + new monitoring panels",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "3c89c927c0047f5ff0005e3dda9b48b955b38db1",
+      "date": "2026-04-15T17:56:50+08:00",
+      "subject": "feat: Phase 3 — charger proximity reward, expert annealing, curriculum tuning",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "89458d02ec59b22ebed4562373a9d5083d8a1652",
+      "date": "2026-04-15T16:21:32+08:00",
+      "subject": "feat: proportional entropy floor + dynamic curriculum advancement",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "d769c754243f474f36969ef23297152c81b1beb3",
+      "date": "2026-04-15T13:45:36+08:00",
+      "subject": "feat: Phase 1 training adjustments — reward shaping, trajectory heatmap, gradient isolation",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "e8885025326fe2dc3c6f396569b9e089144f7292",
+      "date": "2026-04-15T01:13:14+08:00",
+      "subject": "docs: add training session report (2026-04-14) with death trajectory analysis",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "a3a9a1cacaa1f9527c77323bf0e62f41b56b0f06",
+      "date": "2026-04-14T22:12:14+08:00",
+      "subject": "fix: correct conf.py hyperparameters to match win branch",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "708463d69d64e71247ded56f0b9511ccfb1f9de9",
+      "date": "2026-04-14T21:54:57+08:00",
+      "subject": "feat: merge algorithm improvements from win branch",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "740378f64b30cc9763a238852cdae385c33a17fb",
+      "date": "2026-04-14T21:10:40+08:00",
+      "subject": "feat: AMP, ZMQ, mem_buffer hot-patch, and code review fixes",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "7c32f8cad56a0b73ac72a970326cc0dd84ddcff5",
+      "date": "2026-04-14T21:08:04+08:00",
+      "subject": "v5.3+v5.4 optimization: Expert fixes, reward rebalance, battery death diagnosis",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "2780d9b8f493eb067bc2e77574360e14b83fa60f",
+      "date": "2026-04-13T22:57:44+08:00",
+      "subject": "feat: add expert features, model signer, and training optimizations",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "e2e66beef5f3f898b6b9d33270513b7a0a9da332",
+      "date": "2026-04-13T22:08:20+08:00",
+      "subject": "Sync win branch: v51 checkpoint, extracted_code, training logs + analysis",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "2155a1cae37d5632c1c6b410e05ee51838a4fb94",
+      "date": "2026-04-13T02:28:10+08:00",
+      "subject": "Comprehensive optimization v4: param revert + reward rebalance + Expert Logit Bias",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "9c1083bf4979548a3496e596791db7187c202c8b",
+      "date": "2026-04-12T16:32:24+08:00",
+      "subject": "Expert charging overhaul: state machine + A* distance + blocked cells",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "2715e42fbf5748bf1e4e688ec63880d00d9412c7",
+      "date": "2026-04-12T13:08:36+08:00",
+      "subject": "Fix coordinate mapping bug + expert framework + charging rewards",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "769987abf1d0eadbd42c4b51c10d955ab5395a22",
+      "date": "2026-04-12T06:42:48+08:00",
+      "subject": "BETA 0.005→0.007: entropy dropped to 0.215, increase to prevent premature convergence",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "02858780e2ac4e9be0bfb6cbc58388c0ee9cf881",
+      "date": "2026-04-12T05:29:42+08:00",
+      "subject": "auto-iter: increase entropy BETA 0.003→0.005 (prevent convergence)",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "b11d4cda3553596a1d3ed6fbcf9a7342bf958815",
+      "date": "2026-04-12T04:21:42+08:00",
+      "subject": "Reduce entropy: BETA 0.01→0.003 (10x→3x original)",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "34128024b4deee36f595aee94d708baa54d8d0e3",
+      "date": "2026-04-12T04:03:40+08:00",
+      "subject": "Fix policy collapse: LR×0.33 + entropy×10 + stuck penalty×1.67",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "ea12f276f9b889e585154d885d2c0f371af7cfe4",
+      "date": "2026-04-11T22:08:13+08:00",
+      "subject": "Initial commit on cyy branch",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "803c2bc2607443b512600c883ab9e6773ae06403",
+      "date": "2026-04-11T21:52:40+08:00",
+      "subject": "yjy: 只修改奖励函数与权重",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "7bf1ea1604f31affe25e7421181dd90208672859",
+      "date": "2026-04-11T20:12:41+08:00",
+      "subject": "Expert override + per-session best model + 一键打包签名脚本",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "2b5f5b3ca553afb9bb1e7f1d0808ecd276d223f4",
+      "date": "2026-04-10T18:49:36+08:00",
+      "subject": "save",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "8556b912f2af5475df37ee189f757daea6afd667",
+      "date": "2026-04-09T17:59:45+08:00",
+      "subject": "Prepare Linux training workflow sync",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/conf/conf.py",
+      "commit": "7b8f88570bb1d4c0b8393cb532a36ed43af15a08",
+      "date": "2026-04-09T00:53:13+08:00",
+      "subject": "方案A: 强化充电奖励",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "2931a10fe985a171e7b1c3a6ecb505eee8d2b9eb",
+      "date": "2026-04-25T23:50:53+08:00",
+      "subject": "feat: add benchmark intervention iteration workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1686,
+          "text": "Config.RETURN_PROGRESS_SHAPING_SCALE"
+        },
+        {
+          "line": 1693,
+          "text": "Config.TARGET_SAFE_RETURN_PROGRESS_BONUS_SCALE"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "044b773df388de8df81d2dac5689ee98f8a76c66",
+      "date": "2026-04-24T17:09:10+08:00",
+      "subject": "yjy: tune go16 charge safety and charger exploration rewards",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "8f5f6b973cc94ef54ea73679d4e28de49dd59f1d",
+      "date": "2026-04-24T10:39:33+08:00",
+      "subject": "fix(linux-yjy): address post-validation integration regressions",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1685,
+          "text": "Config.RETURN_PROGRESS_SHAPING_SCALE"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "901b48c24bb072f870d33d7f9fd53e641a924ce9",
+      "date": "2026-04-23T23:22:31+08:00",
+      "subject": "chore(linux-yjy): freeze linux infrastructure baseline",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1679,
+          "text": "Config.RETURN_PROGRESS_SHAPING_SCALE"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "09b2a690731220d1da270de468e5d4fd5392ebba",
+      "date": "2026-04-22T10:58:11+08:00",
+      "subject": "yjy: sync go10 ppo planner version",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "86b86b75b4e23881ce2f17643c70f12f601f7b9e",
+      "date": "2026-04-21T20:07:19+08:00",
+      "subject": "feat: capture survival-phase baseline and planning",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1547,
+          "text": "Config.RETURN_PROGRESS_SHAPING_SCALE"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c",
+      "date": "2026-04-20T19:31:59+08:00",
+      "subject": "feat: harden scratch and resume training workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1522,
+          "text": "Config.RETURN_PROGRESS_SHAPING_SCALE"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "21583eca382fb83f4dd8ffa3fc46cf4ead69ae12",
+      "date": "2026-04-18T19:22:11+08:00",
+      "subject": "feat: redesign charging reward for scratch retrain",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1262,
+          "text": "return_progress_reward = Config.RETURN_PROGRESS_REWARD_SCALE * progress"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "98d9e5a540e40b5984b02ddd1212c0d5fee692c0",
+      "date": "2026-04-18T15:22:44+08:00",
+      "subject": "feat: add scratch retrain controls and adaptive curriculum",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1262,
+          "text": "return_progress_reward = Config.RETURN_PROGRESS_REWARD_SCALE * progress"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "c40ef4db5cf22268e53480de20300694a7711a55",
+      "date": "2026-04-18T11:28:37+08:00",
+      "subject": "feat: refine curriculum scoring and benchmark workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1257,
+          "text": "return_progress_reward = Config.RETURN_PROGRESS_REWARD_SCALE * progress"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "c54306ba271b77878c603d2af3f9e7b9237f5539",
+      "date": "2026-04-16T23:45:24+08:00",
+      "subject": "feat: add geometry-aware long-term planning training",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1072,
+          "text": "return_progress_reward = Config.RETURN_PROGRESS_REWARD_SCALE * progress"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "0c2bb6fd5417d79540f159475d3a00932877e4b9",
+      "date": "2026-04-16T23:25:06+08:00",
+      "subject": "chore: snapshot ltsppo state before geometry planning changes",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "e708dd820fa326928a5e05ad5bffed6e0f2fa5ac",
+      "date": "2026-04-16T17:51:35+08:00",
+      "subject": "feat: implement LTSPPO training pipeline",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "3c89c927c0047f5ff0005e3dda9b48b955b38db1",
+      "date": "2026-04-15T17:56:50+08:00",
+      "subject": "feat: Phase 3 — charger proximity reward, expert annealing, curriculum tuning",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "d769c754243f474f36969ef23297152c81b1beb3",
+      "date": "2026-04-15T13:45:36+08:00",
+      "subject": "feat: Phase 1 training adjustments — reward shaping, trajectory heatmap, gradient isolation",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "708463d69d64e71247ded56f0b9511ccfb1f9de9",
+      "date": "2026-04-14T21:54:57+08:00",
+      "subject": "feat: merge algorithm improvements from win branch",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "7c32f8cad56a0b73ac72a970326cc0dd84ddcff5",
+      "date": "2026-04-14T21:08:04+08:00",
+      "subject": "v5.3+v5.4 optimization: Expert fixes, reward rebalance, battery death diagnosis",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "2780d9b8f493eb067bc2e77574360e14b83fa60f",
+      "date": "2026-04-13T22:57:44+08:00",
+      "subject": "feat: add expert features, model signer, and training optimizations",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "e2e66beef5f3f898b6b9d33270513b7a0a9da332",
+      "date": "2026-04-13T22:08:20+08:00",
+      "subject": "Sync win branch: v51 checkpoint, extracted_code, training logs + analysis",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "2155a1cae37d5632c1c6b410e05ee51838a4fb94",
+      "date": "2026-04-13T02:28:10+08:00",
+      "subject": "Comprehensive optimization v4: param revert + reward rebalance + Expert Logit Bias",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "9c1083bf4979548a3496e596791db7187c202c8b",
+      "date": "2026-04-12T16:32:24+08:00",
+      "subject": "Expert charging overhaul: state machine + A* distance + blocked cells",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "2715e42fbf5748bf1e4e688ec63880d00d9412c7",
+      "date": "2026-04-12T13:08:36+08:00",
+      "subject": "Fix coordinate mapping bug + expert framework + charging rewards",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "34128024b4deee36f595aee94d708baa54d8d0e3",
+      "date": "2026-04-12T04:03:40+08:00",
+      "subject": "Fix policy collapse: LR×0.33 + entropy×10 + stuck penalty×1.67",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "30989cc2abe9863590eb671be68907066d3f9849",
+      "date": "2026-04-12T03:54:33+08:00",
+      "subject": "Reward平衡 + 专家提前启动 + resume最佳模型(47491)",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "a18340a8ee04d77a24efd3bb4e9a2a341fcedfa2",
+      "date": "2026-04-12T03:24:04+08:00",
+      "subject": "Add charger path exploration reward + resume from best model",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "54461a4f0c3f1888038b58dae59f89d12f05a855",
+      "date": "2026-04-12T03:11:33+08:00",
+      "subject": "Optimization Round 2: Dijkstra专家策略 + reward重塑 + 泛化监控",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "ea12f276f9b889e585154d885d2c0f371af7cfe4",
+      "date": "2026-04-11T22:08:13+08:00",
+      "subject": "Initial commit on cyy branch",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "803c2bc2607443b512600c883ab9e6773ae06403",
+      "date": "2026-04-11T21:52:40+08:00",
+      "subject": "yjy: 只修改奖励函数与权重",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "7bf1ea1604f31affe25e7421181dd90208672859",
+      "date": "2026-04-11T20:12:41+08:00",
+      "subject": "Expert override + per-session best model + 一键打包签名脚本",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "ba1a492a59001d2a84ae9505692555a9fa7a2345",
+      "date": "2026-04-10T10:40:23+08:00",
+      "subject": "禁用bias + 添加TensorBoard可视化: 纯reward驱动，tb_writer从日志全量读取",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "8556b912f2af5475df37ee189f757daea6afd667",
+      "date": "2026-04-09T17:59:45+08:00",
+      "subject": "Prepare Linux training workflow sync",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "d4aea5eb6b2083245bb88074fac79d21630de01a",
+      "date": "2026-04-09T06:08:41+08:00",
+      "subject": "提高充电引导: 阈值30%→50%, 继续已有模型训练",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "bd0933e73c4d884013436824ec2a5539cc4fda09",
+      "date": "2026-04-09T05:10:31+08:00",
+      "subject": "平衡充电奖励: 提高到1.0 + 添加低电量惩罚",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "4730ce27f00ff9444ae08481204c21ecc27a77d3",
+      "date": "2026-04-09T04:36:58+08:00",
+      "subject": "修复充电奖励过强导致的charging exploit",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "cdfc6f8e4e84a9f312d4f1483bf485969abf1748",
+      "date": "2026-04-09T01:45:27+08:00",
+      "subject": "方案A+: 超激进充电奖励",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/feature/preprocessor.py",
+      "commit": "7b8f88570bb1d4c0b8393cb532a36ed43af15a08",
+      "date": "2026-04-09T00:53:13+08:00",
+      "subject": "方案A: 强化充电奖励",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_policy.py",
+      "commit": "901b48c24bb072f870d33d7f9fd53e641a924ce9",
+      "date": "2026-04-23T23:22:31+08:00",
+      "subject": "chore(linux-yjy): freeze linux infrastructure baseline",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_policy.py",
+      "commit": "86b86b75b4e23881ce2f17643c70f12f601f7b9e",
+      "date": "2026-04-21T20:07:19+08:00",
+      "subject": "feat: capture survival-phase baseline and planning",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_policy.py",
+      "commit": "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c",
+      "date": "2026-04-20T19:31:59+08:00",
+      "subject": "feat: harden scratch and resume training workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_policy.py",
+      "commit": "21583eca382fb83f4dd8ffa3fc46cf4ead69ae12",
+      "date": "2026-04-18T19:22:11+08:00",
+      "subject": "feat: redesign charging reward for scratch retrain",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_policy.py",
+      "commit": "98d9e5a540e40b5984b02ddd1212c0d5fee692c0",
+      "date": "2026-04-18T15:22:44+08:00",
+      "subject": "feat: add scratch retrain controls and adaptive curriculum",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_policy.py",
+      "commit": "c40ef4db5cf22268e53480de20300694a7711a55",
+      "date": "2026-04-18T11:28:37+08:00",
+      "subject": "feat: refine curriculum scoring and benchmark workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_state.py",
+      "commit": "2931a10fe985a171e7b1c3a6ecb505eee8d2b9eb",
+      "date": "2026-04-25T23:50:53+08:00",
+      "subject": "feat: add benchmark intervention iteration workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 1079,
+          "text": "\"curriculum_profile_weights\": {"
+        },
+        {
+          "line": 1213,
+          "text": "\"curriculum_profile_weights\","
+        },
+        {
+          "line": 1537,
+          "text": "state[\"curriculum_profile_weights\"] = deepcopy(profile_plan[\"weight_map\"])"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_state.py",
+      "commit": "901b48c24bb072f870d33d7f9fd53e641a924ce9",
+      "date": "2026-04-23T23:22:31+08:00",
+      "subject": "chore(linux-yjy): freeze linux infrastructure baseline",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 906,
+          "text": "\"curriculum_profile_weights\": {"
+        },
+        {
+          "line": 1040,
+          "text": "\"curriculum_profile_weights\","
+        },
+        {
+          "line": 1364,
+          "text": "state[\"curriculum_profile_weights\"] = deepcopy(profile_plan[\"weight_map\"])"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_state.py",
+      "commit": "86b86b75b4e23881ce2f17643c70f12f601f7b9e",
+      "date": "2026-04-21T20:07:19+08:00",
+      "subject": "feat: capture survival-phase baseline and planning",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 728,
+          "text": "\"curriculum_profile_weights\": {"
+        },
+        {
+          "line": 860,
+          "text": "\"curriculum_profile_weights\","
+        },
+        {
+          "line": 1156,
+          "text": "state[\"curriculum_profile_weights\"] = deepcopy(profile_plan[\"weight_map\"])"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_state.py",
+      "commit": "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c",
+      "date": "2026-04-20T19:31:59+08:00",
+      "subject": "feat: harden scratch and resume training workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 667,
+          "text": "\"curriculum_profile_weights\": {"
+        },
+        {
+          "line": 780,
+          "text": "\"curriculum_profile_weights\","
+        },
+        {
+          "line": 1056,
+          "text": "state[\"curriculum_profile_weights\"] = deepcopy(profile_plan[\"weight_map\"])"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_state.py",
+      "commit": "98d9e5a540e40b5984b02ddd1212c0d5fee692c0",
+      "date": "2026-04-18T15:22:44+08:00",
+      "subject": "feat: add scratch retrain controls and adaptive curriculum",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": true,
+      "matches": [
+        {
+          "line": 332,
+          "text": "\"curriculum_profile_weights\": {"
+        },
+        {
+          "line": 529,
+          "text": "state[\"curriculum_profile_weights\"] = deepcopy(profile_plan[\"weight_map\"])"
+        }
+      ]
+    },
+    {
+      "path": "code/agent_ppo/workflow/curriculum_state.py",
+      "commit": "c40ef4db5cf22268e53480de20300694a7711a55",
+      "date": "2026-04-18T11:28:37+08:00",
+      "subject": "feat: refine curriculum scoring and benchmark workflow",
+      "available": true,
+      "yielded_exact_or_relevant_evidence": false,
+      "matches": []
+    }
+  ],
+  "git_key_log_G": {
+    "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_BATTERY_TERMINAL_COST_SCALE": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_EPISODE_BATTERY_FAIL_BONUS": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "21583eca382fb83f4dd8ffa3fc46cf4ead69ae12\t2026-04-18T19:22:11+08:00\tfeat: redesign charging reward for scratch retrain"
+    ],
+    "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_RETURN_PROGRESS_SHAPING_SCALE": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_SKIP_NEEDED_CHARGE_PENALTY": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_NECESSARY_CHARGE_BONUS_SCALE": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning",
+      "d41ccc3f9fb5753a4466b9bf98334a67ad6f554c\t2026-04-20T19:31:59+08:00\tfeat: harden scratch and resume training workflow"
+    ],
+    "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline",
+      "86b86b75b4e23881ce2f17643c70f12f601f7b9e\t2026-04-21T20:07:19+08:00\tfeat: capture survival-phase baseline and planning"
+    ],
+    "KAIWU_RETURN_ACTION_TEACHER_WEIGHT": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline"
+    ],
+    "KAIWU_CURRICULUM_PROFILE_ANCHOR": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline"
+    ],
+    "KAIWU_CURRICULUM_PROFILE_MILD": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline"
+    ],
+    "KAIWU_CURRICULUM_PROFILE_BROAD": [
+      "901b48c24bb072f870d33d7f9fd53e641a924ce9\t2026-04-23T23:22:31+08:00\tchore(linux-yjy): freeze linux infrastructure baseline"
+    ]
+  },
+  "selected_runtime_extracts": {
+    "code/runtime_state/runs/20260421-134719/curriculum_state.json": {
+      "curriculum_profile_weights": {
+        "anchor": 0.6,
+        "broad": 0.1,
+        "broad_eval": 0.0,
+        "mild": 0.3
+      },
+      "training_start_mode": "scratch",
+      "preload_enabled": false,
+      "top_level_keys": [
+        "consecutive_fail_windows",
+        "consecutive_pass_windows",
+        "curriculum_profile_weights",
+        "curriculum_progress",
+        "curriculum_stage_idx",
+        "curriculum_stagnation_level",
+        "curriculum_stagnation_reason",
+        "degraded_mainline",
+        "degraded_mainline_windows",
+        "entered_global_step",
+        "entered_wall_clock_ts",
+        "global_episode_count",
+        "global_step_since_resume",
+        "in_transition_guard",
+        "initial_stage",
+        "invalid_for_promotion",
+        "last_bootstrap_metrics",
+        "last_global_metrics",
+        "last_learning_metrics",
+        "last_promotion_reason",
+        "last_stage_transition_global_step",
+        "lite_benchmark_metrics",
+        "lite_benchmark_used",
+        "observation_phase_active",
+        "pending_stage",
+        "preload_enabled",
+        "promotion_eligibility_snapshot",
+        "promotion_timeout_steps",
+        "recent_episodes",
+        "requires_reward_revision"
+      ]
+    },
+    "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0007698.curriculum.json": {
+      "curriculum_profile_weights": {
+        "anchor": 0.6,
+        "broad": 0.1,
+        "broad_eval": 0.0,
+        "mild": 0.3
+      },
+      "run_session_id": "20260421-134719",
+      "training_start_mode": "scratch",
+      "preload_enabled": false,
+      "top_level_keys": [
+        "checkpoint_global_step",
+        "consecutive_fail_windows",
+        "consecutive_pass_windows",
+        "curriculum_profile_weights",
+        "curriculum_progress",
+        "curriculum_stage_idx",
+        "curriculum_stagnation_level",
+        "curriculum_stagnation_reason",
+        "degraded_mainline",
+        "degraded_mainline_windows",
+        "entered_global_step",
+        "entered_wall_clock_ts",
+        "global_episode_count",
+        "global_step_since_resume",
+        "in_transition_guard",
+        "initial_stage",
+        "invalid_for_promotion",
+        "last_bootstrap_metrics",
+        "last_global_metrics",
+        "last_learning_metrics",
+        "last_promotion_reason",
+        "last_stage_transition_global_step",
+        "lite_benchmark_metrics",
+        "lite_benchmark_used",
+        "observation_phase_active",
+        "pending_stage",
+        "preload_enabled",
+        "promotion_eligibility_snapshot",
+        "promotion_timeout_steps",
+        "recent_episodes"
+      ]
+    },
+    "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0011531.curriculum.json": {
+      "curriculum_profile_weights": {
+        "anchor": 0.6,
+        "broad": 0.1,
+        "broad_eval": 0.0,
+        "mild": 0.3
+      },
+      "run_session_id": "20260421-134719",
+      "training_start_mode": "scratch",
+      "preload_enabled": false,
+      "top_level_keys": [
+        "checkpoint_global_step",
+        "consecutive_fail_windows",
+        "consecutive_pass_windows",
+        "curriculum_profile_weights",
+        "curriculum_progress",
+        "curriculum_stage_idx",
+        "curriculum_stagnation_level",
+        "curriculum_stagnation_reason",
+        "degraded_mainline",
+        "degraded_mainline_windows",
+        "entered_global_step",
+        "entered_wall_clock_ts",
+        "global_episode_count",
+        "global_step_since_resume",
+        "in_transition_guard",
+        "initial_stage",
+        "invalid_for_promotion",
+        "last_bootstrap_metrics",
+        "last_global_metrics",
+        "last_learning_metrics",
+        "last_promotion_reason",
+        "last_stage_transition_global_step",
+        "lite_benchmark_metrics",
+        "lite_benchmark_used",
+        "observation_phase_active",
+        "pending_stage",
+        "preload_enabled",
+        "promotion_eligibility_snapshot",
+        "promotion_timeout_steps",
+        "recent_episodes"
+      ]
+    },
+    "code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142308.curriculum.json": {
+      "curriculum_profile_weights": {
+        "anchor": 0.6,
+        "broad": 0.1,
+        "broad_eval": 0.0,
+        "mild": 0.3
+      },
+      "run_session_id": "20260421-134719",
+      "training_start_mode": "scratch",
+      "preload_enabled": false,
+      "top_level_keys": [
+        "checkpoint_global_step",
+        "consecutive_fail_windows",
+        "consecutive_pass_windows",
+        "curriculum_profile_weights",
+        "curriculum_progress",
+        "curriculum_stage_idx",
+        "curriculum_stagnation_level",
+        "curriculum_stagnation_reason",
+        "degraded_mainline",
+        "degraded_mainline_windows",
+        "entered_global_step",
+        "entered_wall_clock_ts",
+        "global_episode_count",
+        "global_step_since_resume",
+        "in_transition_guard",
+        "initial_stage",
+        "invalid_for_promotion",
+        "last_bootstrap_metrics",
+        "last_global_metrics",
+        "last_learning_metrics",
+        "last_promotion_reason",
+        "last_stage_transition_global_step",
+        "lite_benchmark_metrics",
+        "lite_benchmark_used",
+        "observation_phase_active",
+        "pending_stage",
+        "preload_enabled",
+        "promotion_eligibility_snapshot",
+        "promotion_timeout_steps",
+        "recent_episodes"
+      ]
+    },
+    "code/runtime_state/runs/20260421-134719/resume/latest/resume.meta.json": {
+      "run_session_id": "20260421-134719",
+      "top_level_keys": [
+        "clean_score",
+        "curriculum_state_snapshot_path",
+        "episode_cnt",
+        "global_step",
+        "helper_session_id",
+        "pid",
+        "resume_state_metadata_path",
+        "run_session_id",
+        "saved_at",
+        "trigger"
+      ]
+    },
+    "code/runtime_state/runs/20260421-134719/resume/latest/resume.state.json": {
+      "session_id": "20260421-134719",
+      "training_start_mode": "scratch",
+      "resume_global_step_base": 0,
+      "checkpoint_id": "75488",
+      "checkpoint_path": "/workspace/code/runtime_state/runs/20260421-134719/resume/latest/model.pkl",
+      "top_level_keys": [
+        "checkpoint_id",
+        "checkpoint_path",
+        "clean_score",
+        "curriculum_state_snapshot_path",
+        "episode_cnt",
+        "global_step",
+        "global_step_since_resume",
+        "helper_session_id",
+        "last_learning_metrics",
+        "resume_global_step_base",
+        "saved_at",
+        "session_id",
+        "training_start_mode",
+        "trigger"
+      ]
+    },
+    "code/runtime_state/runs/20260421-134719/run_session.json": {
+      "run_session_id": "20260421-134719",
+      "top_level_keys": [
+        "created_at",
+        "helper_session_id",
+        "run_session_id",
+        "source_id"
+      ]
+    }
+  },
+  "source_search_summary_file": "/home/user/.local/share/opencode/tool-output/tool_dc6e4f6a4001j7rKYXLvHQfIrY",
+  "success_claimed": false,
+  "f1_approved": false,
+  "checkpoint_promoted": false,
+  "canonical_serial_benchmark_run": false,
+  "benchmark_run": false,
+  "training_run": false,
+  "docker_started": false,
+  "next_action": "hold_blocker_or_prepare_exactly_one_dry_run_only_partial_restoration_candidate_after_oracle_review"
+}

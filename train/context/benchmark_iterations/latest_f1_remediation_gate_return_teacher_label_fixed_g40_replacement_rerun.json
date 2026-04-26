@@ -1,0 +1,43 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_teacher_label_fixed_g40_replacement_rerun",
+  "classification": "label_fixed_replacement_rerun_stale_session_reuse_bootstrap20_non_promotable",
+  "created_at": "2026-04-26T10:55:03+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/gate-return-teacher-label-fixed-g40-replacement-rerun.json",
+  "next_action": "Ask Oracle before approving any bounded fix/diagnosis, Docker/training rerun, benchmark, checkpoint promotion, F1 approval, or original-task completion claim.",
+  "summary": {
+    "bootstrap20_non_promotable": {
+      "_count": 20,
+      "battery_fail_rate": 0.9,
+      "win_rate": 0.1,
+      "zero_charge_battery_fail_rate": 0.7
+    },
+    "bound_run_session": null,
+    "command_start_wall_time": 1777171772.4944546,
+    "docker_stopped_now": true,
+    "exact_command": "cd train && /home/user/TcKaiwuFinal/.conda-numpy/bin/python run_training_phase.py s1_survival --seed-label gate-return-teacher-route-readiness-label-fixed-g40",
+    "expected_label": "s1_survival_gate-return-teacher-route-readiness-label-fixed-g40",
+    "global_episode_count": 29,
+    "global_step_since_resume": 290,
+    "monitor_classification": "runtime_initialization_timeout",
+    "safety_flags": {
+      "benchmark_run": false,
+      "canonical_serial_benchmark_run": false,
+      "checkpoint_promoted": false,
+      "config_runtime_or_phase_files_edited": false,
+      "docker_cleanup_by_atlas_recorded": true,
+      "docker_started_by_this_task": false,
+      "f1_approved": false,
+      "original_task_incomplete": true,
+      "parallel_benchmark_run": false,
+      "performance_improvement_claimed": false,
+      "promotion_allowed": false,
+      "source_code_edited": false,
+      "tests_run": false,
+      "training_or_rerun_started_by_this_task": false,
+      "used_104351_metrics_as_success_or_promotion": false
+    },
+    "source_session_id": "20260426-104351",
+    "stale_run_created_at": 1777171431.242731,
+    "stale_run_session_id": "20260426-104351"
+  }
+}

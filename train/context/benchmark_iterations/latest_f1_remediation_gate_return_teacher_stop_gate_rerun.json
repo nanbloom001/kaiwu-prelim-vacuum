@@ -1,0 +1,55 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_teacher_stop_gate_rerun",
+  "classification": "fresh_launch_instance_stop_gate_rerun_bootstrap20_severe_collapse_no_promotion",
+  "created_at": "2026-04-26T11:27:47+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/gate-return-teacher-stop-gate-rerun.json",
+  "summary": {
+    "current_post_cleanup_summary": {
+      "bootstrap_20_residual_snapshot": {
+        "_count": 20,
+        "avg_clean_per_step": 0.4271577418745534,
+        "avg_clean_score": 137.6,
+        "battery_fail_rate": 0.95,
+        "return_action_teacher_mask_nonzero_rate": 0.0,
+        "route_phase_teacher_from_anchor_or_target_rate": 0.03311867525298988,
+        "route_phase_teacher_from_critical_fallback_rate": 0.9668813247470102,
+        "route_phase_teacher_from_return_reliable_rate": 0.0,
+        "win_rate": 0.05,
+        "zero_charge_battery_fail_rate": 0.85
+      },
+      "explanation": "Post-cleanup current state advanced to global_episode_count=21 and has residual bootstrap20 values that differ slightly from the terminal helper snapshot; terminal helper snapshot is the stop evidence.",
+      "global_episode_count": 21,
+      "global_step_since_resume": 0,
+      "has_global_40_window": false,
+      "last_global_metrics_empty": true,
+      "sample_window_keys": [
+        "bootstrap_10",
+        "bootstrap_20"
+      ],
+      "source_session_id": "20260426-112317"
+    },
+    "docker_stopped_now": true,
+    "fresh_run_session_id": "20260426-112317",
+    "helper_enforced_stop_before_global40": true,
+    "launch_instance_id": "s1_survival-20260426-112244-baa0f3f9e5f8",
+    "next_action": "Ask Oracle for the next bounded diagnosis/action before any rerun, benchmark, checkpoint promotion, F1 approval, or original-task completion claim.",
+    "promotion_evidence": false,
+    "terminal_bootstrap_20_snapshot": {
+      "_count": 20,
+      "avg_clean_per_step": 0.42888790060471205,
+      "avg_clean_score": 129.5,
+      "battery_fail_rate": 1.0,
+      "return_action_teacher_mask_nonzero_rate": 0.0,
+      "route_phase_teacher_from_anchor_or_target_rate": 0.032520325203252036,
+      "route_phase_teacher_from_critical_fallback_rate": 0.967479674796748,
+      "route_phase_teacher_from_return_reliable_rate": 0.0,
+      "win_rate": 0.0,
+      "zero_charge_battery_fail_rate": 0.9
+    },
+    "terminal_decision": "STOP_BOOTSTRAP20_SEVERE_COLLAPSE",
+    "terminal_sample_window_keys": [
+      "bootstrap_10",
+      "bootstrap_20"
+    ]
+  }
+}

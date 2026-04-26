@@ -1,0 +1,25 @@
+{
+  "schema": "latest_f1_remediation_bounded_safety_v2_v1",
+  "updated_at": "2026-04-26T03:23:00+08:00",
+  "baseline_run_id": "20260421-134719",
+  "run_session_id": "20260426-031454",
+  "phase": "s1_survival_bounded_safety_v2",
+  "sample_point": "global_40",
+  "global_episode_count_observed_after_stop": 40,
+  "decision": "revert",
+  "promotion_allowed": false,
+  "checkpoint_promoted": false,
+  "continuation_allowed_past_global_40": false,
+  "canonical_serial_benchmark_run": false,
+  "evidence_path": ".sisyphus/evidence/benchmark-900/bounded-safety-v2-global40-20260426-031454.json",
+  "comparison_output": ".sisyphus/evidence/benchmark-900/bounded-safety-v2-global40-compare.json",
+  "behavior_metrics": {
+    "avg_clean_per_step": 0.38053167287625006,
+    "battery_fail_rate": 0.35,
+    "zero_charge_battery_fail_rate": 0.3,
+    "route_phase_return_stall_rate": 0.3292192154460043,
+    "planner_policy_divergence_rate": 0.8412814860056906,
+    "win_rate": 0.65
+  },
+  "no_promotion_reason": "global_40 main_fail; v2 earlier slack margin worsened battery and zero-charge versus bounded safety v1"
+}

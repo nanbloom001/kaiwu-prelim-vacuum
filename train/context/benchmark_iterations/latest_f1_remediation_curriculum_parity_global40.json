@@ -1,0 +1,142 @@
+{
+  "artifact": "curriculum-parity-global40",
+  "baseline_run": "20260421-134719",
+  "benchmark_run": false,
+  "canonical_serial_benchmark_run": false,
+  "checkpoint_promoted": false,
+  "comparison": {
+    "sample_statuses": {
+      "bootstrap_10": {
+        "actual_global_episode_count": 10,
+        "delta_vs_baseline": {
+          "avg_clean_per_step": -0.17731017573097435,
+          "battery_fail_rate": 0.8,
+          "planner_policy_divergence_rate": 0.027971241711548855,
+          "route_phase_return_stall_rate": 0.20409967111242505,
+          "win_rate": -0.8,
+          "zero_charge_battery_fail_rate": 0.8
+        },
+        "metrics": {
+          "avg_clean_per_step": 0.37820982426902566,
+          "battery_fail_rate": 1.0,
+          "planner_policy_divergence_rate": 0.8728548789459515,
+          "route_phase_return_stall_rate": 0.5570165339409371,
+          "win_rate": 0.0,
+          "zero_charge_battery_fail_rate": 0.9
+        },
+        "status": "early_stop_warning"
+      },
+      "bootstrap_20": {
+        "actual_global_episode_count": 20,
+        "delta_vs_baseline": {
+          "avg_clean_per_step": -0.25536594254043976,
+          "battery_fail_rate": 0.5,
+          "planner_policy_divergence_rate": 0.042730730309776144,
+          "route_phase_return_stall_rate": 0.16386756661625512,
+          "win_rate": -0.5,
+          "zero_charge_battery_fail_rate": 0.6
+        },
+        "metrics": {
+          "avg_clean_per_step": 0.3591590436574064,
+          "battery_fail_rate": 0.95,
+          "planner_policy_divergence_rate": 0.874533426805083,
+          "route_phase_return_stall_rate": 0.5565869023337364,
+          "win_rate": 0.05,
+          "zero_charge_battery_fail_rate": 0.8
+        },
+        "status": "early_stop_warning"
+      },
+      "global_40": {
+        "actual_global_episode_count": null,
+        "delta_vs_baseline": {
+          "avg_clean_per_step": null,
+          "battery_fail_rate": null,
+          "planner_policy_divergence_rate": null,
+          "route_phase_return_stall_rate": null,
+          "win_rate": null,
+          "zero_charge_battery_fail_rate": null
+        },
+        "metrics": null,
+        "status": "missing_local"
+      }
+    },
+    "target_run": "20260426-064152",
+    "target_train_phase": "s1_survival_curriculum_parity_v1",
+    "target_window_origin": "scratch_local"
+  },
+  "comparison_command": "/home/user/TcKaiwuFinal/.conda-numpy/bin/python compare_training_runs.py 20260421-134719 current --json",
+  "created_at": "2026-04-25T22:55:13.547696+00:00",
+  "decision": "blocked_runtime_timeout",
+  "decision_rationale": "The run/session matched the requested phase, but global_episode_count was still below 40 at the required 12-minute monitoring timeout, so Docker was stopped and no global_40 promotion decision can be made.",
+  "docker_cleanup": {
+    "command": "docker ps --filter name=kaiwu-train --format '{{.Names}} {{.Status}}'",
+    "proof_stdout": [],
+    "stopped": true
+  },
+  "global_40_gate_evaluation": {
+    "reason": "global_40 sample missing because hard timeout stopped run below 40 episodes",
+    "status": "not_evaluated",
+    "survival_gate_failed": null
+  },
+  "json_validation": {
+    "commands": [
+      "python3 -m json.tool /home/user/TcKaiwuFinal/.sisyphus/evidence/benchmark-900/curriculum-parity-global40.json",
+      "python3 -m json.tool /home/user/TcKaiwuFinal/train/context/benchmark_iterations/latest_f1_remediation_curriculum_parity_global40.json"
+    ],
+    "status": "passed",
+    "validated_at": "2026-04-25T22:55:28.247592+00:00"
+  },
+  "launcher_command": "/home/user/TcKaiwuFinal/.conda-numpy/bin/python run_training_phase.py s1_survival_curriculum_parity_v1 --seed-label curriculum-parity-g40",
+  "monitoring": {
+    "final_observed_global_episode_count": 34,
+    "hard_timeout_seconds_after_launcher_return": 720,
+    "monitor_end_utc": "2026-04-25T22:53:50.281106+00:00",
+    "monitor_start_utc": "2026-04-25T22:41:49.959944+00:00",
+    "poll_interval_seconds": 15,
+    "reached_global_40": false,
+    "reached_stop_threshold": false,
+    "stop_reason": "hard_timeout_12m",
+    "stop_threshold": "global_episode_count >= 42"
+  },
+  "next_action": "record_blocker_and_await_oracle_or_runtime_diagnosis",
+  "phase": "s1_survival_curriculum_parity_v1",
+  "promotion_allowed": false,
+  "required_global_40_gates": {
+    "avg_clean_per_step": {
+      "op": ">=",
+      "value": 0.45
+    },
+    "battery_fail_rate": {
+      "op": "<=",
+      "value": 0.1
+    },
+    "route_phase_return_stall_rate": {
+      "op": "<=",
+      "value": 0.3178254180203925
+    },
+    "win_rate_trajectory": {
+      "op": "toward >=",
+      "value": 0.9
+    },
+    "zero_charge_battery_fail_rate": {
+      "op": "<=",
+      "value": 0.05
+    }
+  },
+  "run_id": "20260426-064152",
+  "run_session_consistency": {
+    "accepted": true,
+    "curriculum_phase": "s1_survival_curriculum_parity_v1",
+    "curriculum_run_id": "20260426-064152",
+    "expected_phase": "s1_survival_curriculum_parity_v1",
+    "run_id": "20260426-064152",
+    "run_session_phase": "s1_survival_curriculum_parity_v1",
+    "stale_initial_snapshot_discarded": {
+      "global_episode_count": 154,
+      "phase": "s1_survival",
+      "run_id": "20260426-055834"
+    }
+  },
+  "schema_version": 1,
+  "seed_label": "curriculum-parity-g40"
+}

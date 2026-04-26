@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_curriculum_parity_blocker",
+  "created_at": "2026-04-26T06:57:45+08:00",
+  "baseline_run": "20260421-134719",
+  "run_id": "20260426-064152",
+  "phase": "s1_survival_curriculum_parity_v1",
+  "phase_matched": true,
+  "decision": "bootstrap_failed_blocker_no_rerun",
+  "decision_label": "bootstrap_failed_blocker_no_rerun",
+  "decision_rationale": "Run 20260426-064152 matched phase s1_survival_curriculum_parity_v1, stopped at global_episode_count=34, and never produced a local global_40 sample. The missing_local global_40 prevents a formal global40 revert label, but bootstrap_10 and bootstrap_20 already show severe survival collapse, so the honest outcome is a bootstrap-failed blocker with no rerun and no branch continuation.",
+  "status_summary": {
+    "run": "20260426-064152",
+    "phase": "s1_survival_curriculum_parity_v1",
+    "phase_matched": true,
+    "stopped_at_global_episode_count": 34,
+    "global_40": "missing_local"
+  },
+  "bootstrap_evidence": {
+    "bootstrap_10": {
+      "battery_fail_rate": 1.0,
+      "zero_charge_battery_fail_rate": 0.9,
+      "win_rate": 0.0,
+      "avg_clean_per_step": 0.37820982426902566
+    },
+    "bootstrap_20": {
+      "battery_fail_rate": 0.95,
+      "zero_charge_battery_fail_rate": 0.8,
+      "win_rate": 0.05,
+      "avg_clean_per_step": 0.3591590436574064
+    }
+  },
+  "prep_evidence": {
+    "source_artifact": ".sisyphus/evidence/benchmark-900/curriculum-parity-phase-prep.json",
+    "phase_name_change": {
+      "from": "s1_survival",
+      "to": "s1_survival_curriculum_parity_v1"
+    },
+    "curriculum_weights": {
+      "anchor": 0.6,
+      "mild": 0.3,
+      "broad": 0.1
+    },
+    "scope_statement": "Only the phase name and curriculum profile weights changed in prep."
+  },
+  "runtime_caveat": {
+    "hard_timeout_seconds_after_launcher_return": 720,
+    "final_observed_global_episode_count": 34,
+    "global_40": "missing_local",
+    "statement": "The 12-minute timeout at 34 episodes is a blocker but not a reason to keep the candidate alive."
+  },
+  "branch_halt": {
+    "branch_halted": true,
+    "rerun_allowed": false,
+    "extension_allowed": false,
+    "new_oracle_directed_rationale_required": true,
+    "statement": "This branch is halted; no extension or rerun should be performed without new Oracle-directed rationale."
+  },
+  "promotion_allowed": false,
+  "checkpoint_promoted": false,
+  "canonical_serial_benchmark_run": false,
+  "success_claimed": false,
+  "f1_approved": false,
+  "benchmark_run": false,
+  "global_40_gate_label": "missing_local",
+  "formal_global40_revert_claimed": false,
+  "next_action": "await_new_oracle_directed_branch_or_diagnosis"
+}

@@ -1,0 +1,26 @@
+{
+  "phase": "s1_survival_bounded_safety_charge_entry_v1",
+  "target_run": "20260426-040713",
+  "baseline_run": "20260421-134719",
+  "original_charge_entry_run": "20260426-035002",
+  "run_type": "fresh_scratch_replicate_not_continuation",
+  "no_resume_rationale": "resume_best.py latest returned no prepared resume bundle; stale 2026-04-20 checkpoints were not used",
+  "decision": {
+    "value": "revert",
+    "promotion_allowed": false,
+    "checkpoint_promoted": false,
+    "canonical_serial_benchmark_run": false,
+    "continuation_allowed_past_global80": false,
+    "reason": "global80 missed CPS and win-rate gates despite survival/stall gains"
+  },
+  "gate_results": {
+    "battery_fail_rate": true,
+    "zero_charge_battery_fail_rate": true,
+    "win_rate": false,
+    "route_phase_return_stall_rate": true,
+    "avg_clean_per_step": false
+  },
+  "notes": {
+    "resume_decision": "no guidance to resume; evidence supports revert"
+  }
+}

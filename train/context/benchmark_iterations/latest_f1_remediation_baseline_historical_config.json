@@ -1,0 +1,22 @@
+{
+  "artifact": "latest_f1_remediation_baseline_historical_config",
+  "baseline_run": "20260421-134719",
+  "candidate_restoration_scope": {
+    "do_not_implement": true,
+    "exactly_one": true,
+    "reason": "No safe restoration candidate exists from retained artifacts: the only concrete baseline-like env keys (KAIWU_CURRICULUM_PROFILE_ANCHOR=0.60, KAIWU_CURRICULUM_PROFILE_MILD=0.30, KAIWU_CURRICULUM_PROFILE_BROAD=0.10) already failed in the halted curriculum-parity branch, while reward and teacher scalar baseline values are unknown/unavailable or unsafe to infer from reward shares without training evidence.",
+    "scope": "no_safe_candidate_restoration_scope"
+  },
+  "canonical_serial_benchmark_run": false,
+  "checkpoint_promoted": false,
+  "checkpoint_resume_direction_statement": "Checkpoint/resume mismatch is not the selected direction unless new evidence contradicts non-source-parity-audit-after-plain-replicate.json; that audit found checkpoint_resume_mismatch_not_found with scratch_local windows, resume_global_step_base=0, and preload_enabled=false.",
+  "created_at": "2026-04-25T23:03:01.642554Z",
+  "decision": "historical_config_partially_reconstructed_no_safe_restoration_candidate",
+  "diagnosis_only": true,
+  "f1_approved": false,
+  "next_action": "hold_for_new_evidence_or_oracle_direction; do_not_train_benchmark_promote_or_rerun_curriculum_parity_from_this_artifact",
+  "promotion_allowed": false,
+  "schema_version": 1,
+  "source_evidence_path": "/home/user/TcKaiwuFinal/.sisyphus/evidence/benchmark-900/baseline-20260421-historical-config-reconstruction.json",
+  "success_claimed": false
+}

@@ -1,0 +1,51 @@
+{
+  "artifact": "latest_f1_remediation_current_blocked_status",
+  "canonical_success_criteria_absent": {
+    "no_canonical_serial_30_benchmark_average_ge_900": true,
+    "no_maps_1_to_10_each_exactly_3_times_validation_success": true,
+    "no_promoted_checkpoint": true,
+    "no_validator_integrity_success_package": true,
+    "original_benchmark_goal_unmet": true
+  },
+  "classification": "benchmark_900_current_blocked_status_f1_reject_blocked",
+  "created_at": "2026-04-26T12:17:51+08:00",
+  "currently_approved_actions": {
+    "algorithm_edit": false,
+    "benchmark_or_canonical_benchmark": false,
+    "checkpoint_promotion": false,
+    "config_restore": false,
+    "f1_approval": false,
+    "final_wave_pass_claim": false,
+    "original_completion_claim": false,
+    "plan_checkbox_update": false,
+    "reward_or_ppo_change": false,
+    "source_selection_change": false,
+    "teacher_weight_change": false,
+    "training_rerun": false
+  },
+  "decision": "blocked_no_further_action_approved",
+  "docker_stopped_at_documentation": true,
+  "evidence_path": ".sisyphus/evidence/benchmark-900/current-blocked-status.json",
+  "f1_plan_compliance_audit_verdict": "REJECT_BLOCKED",
+  "latest_blocker_classification": "targeted_attribution_diff_blocks_algorithm_edits_no_promotion",
+  "latest_stop_gate_rerun_classification": "fresh_launch_instance_stop_gate_rerun_bootstrap20_severe_collapse_no_promotion",
+  "latest_stop_gate_run_session_id": "20260426-112317",
+  "plan_checkboxes": {
+    "f1": "unchecked",
+    "f2": "unchecked",
+    "f3": "unchecked",
+    "f4": "unchecked",
+    "must_remain_unchecked_until_future_evidence_and_explicit_user_okay": true,
+    "plan_file_edited_by_this_task": false,
+    "plan_lines": "820-824",
+    "plan_path": ".sisyphus/plans/benchmark-900-iteration.md",
+    "plan_rule": "Never mark F1-F4 as checked before getting user's okay."
+  },
+  "schema_version": 1,
+  "verification": {
+    "docker_recheck_output_lines": [],
+    "docker_recheck_stopped": true,
+    "json_validation": true,
+    "json_validation_command": "python3 -m json.tool \"/home/user/TcKaiwuFinal/train/context/benchmark_iterations/latest_f1_remediation_current_blocked_status.json\""
+  }
+}

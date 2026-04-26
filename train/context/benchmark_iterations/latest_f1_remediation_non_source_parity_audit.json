@@ -1,0 +1,337 @@
+{
+  "artifact": "non-source-parity-audit-after-plain-replicate",
+  "artifact_paths": {
+    "baseline_20260421_134719": {
+      "comparison_samples": null,
+      "curriculum_state": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719/curriculum_state.json",
+      "global_120_source": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719/resume/snapshots/resume-time-20260421-142308.curriculum.json",
+      "global_40_source": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0007698.curriculum.json",
+      "global_80_source": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719/resume/snapshots/resume-step-step0011531.curriculum.json",
+      "resume_latest_checkpoint": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719/resume/latest/model.pkl",
+      "resume_latest_meta": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719/resume/latest/resume.meta.json",
+      "resume_latest_state": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719/resume/latest/resume.state.json",
+      "run_dir": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719",
+      "run_session": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260421-134719/run_session.json"
+    },
+    "compare_output_capture": "/home/user/.local/share/opencode/tool-output/tool_dc6c63bdd001K0BITpqu58rL2d",
+    "target_20260426_055834": {
+      "comparison_samples": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/comparison_samples.json",
+      "curriculum_state": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/curriculum_state.json",
+      "global_120_source": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/comparison_samples.json#sample_points.global_120",
+      "global_40_source": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/comparison_samples.json#sample_points.global_40",
+      "global_80_source": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/comparison_samples.json#sample_points.global_80",
+      "resume_latest_checkpoint": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/resume/latest/model.pkl",
+      "resume_latest_meta": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/resume/latest/resume.meta.json",
+      "resume_latest_state": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/resume/latest/resume.state.json",
+      "run_dir": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834",
+      "run_session": "/home/user/TcKaiwuFinal/code/runtime_state/runs/20260426-055834/run_session.json"
+    }
+  },
+  "baseline_run": "20260421-134719",
+  "canonical_serial_benchmark_run": false,
+  "checkpoint_promoted": false,
+  "checkpoint_resume_audit": {
+    "baseline": {
+      "checkpoint_id_latest": "75488",
+      "checkpoint_path_latest": "/workspace/code/runtime_state/runs/20260421-134719/resume/latest/model.pkl",
+      "preload_enabled": false,
+      "resume_global_step_base": 0,
+      "resumed_from_session_id_global_40": null,
+      "training_start_mode": "scratch"
+    },
+    "classification": "checkpoint_resume_mismatch_not_found",
+    "rationale": "Both compared windows are scratch_local, resume_global_step_base is 0, preload_enabled is false, and no resumed_from_session_id is present at global_40.",
+    "target": {
+      "checkpoint_id_latest": "9805",
+      "checkpoint_path_latest": "/workspace/code/runtime_state/runs/20260426-055834/resume/latest/model.pkl",
+      "current_training_start_mode": "scratch",
+      "preload_enabled": false,
+      "resume_global_step_base": 0,
+      "resumed_from_session_id_global_40": null,
+      "training_start_mode": "scratch"
+    }
+  },
+  "checkpoint_resume_mismatch_likely": false,
+  "compare_command": "/home/user/TcKaiwuFinal/.conda-numpy/bin/python compare_training_runs.py 20260421-134719 20260426-055834 --json",
+  "created_at": "2026-04-25T22:34:54.542803Z",
+  "curriculum_reward_default_audit": {
+    "classification": "curriculum_reward_default_drift",
+    "findings": [
+      "Baseline final curriculum weights are anchor=0.6, mild=0.3, broad=0.1; target/current restored-source run uses anchor=0.2, mild=0.4, broad=0.4 from s1_survival.env.",
+      "Target global_40 local window samples profiles anchor=0.1, mild=0.45, broad=0.45, while baseline global_40 local profile-rate fields are zero/unpopulated in the older artifact; this prevents proving curriculum-default parity.",
+      "Target global_40 exposes nonzero return/route teacher masks and critical-fallback route teacher source rate=1.0; baseline global_40 records zero/unavailable teacher-mask/source buckets, so teacher/default parity is not established.",
+      "Target global_40 reward attribution shifts away from baseline CPS/necessary-charge shares: reward_positive_share_cps_bonus 0.054927 vs 0.173762 and reward_charging_positive_share_necessary_charge_bonus 0.0 vs 0.152761.",
+      "Target-reward alignment components remain inactive/zero or unavailable, so the drift is not attributed to the previously reverted target_reward_v1 overlay."
+    ],
+    "global_40_visible_fields": {
+      "baseline_20260421_134719": {
+        "avg_reward_charge_reward_shadow_only_active": 0.0,
+        "avg_reward_charger_progress_arrival_bonus": null,
+        "avg_reward_clean_per_step_efficiency_bonus": null,
+        "avg_reward_risk_growth_while_clean_penalty": 0.0,
+        "avg_reward_route_phase_risk_growth_penalty": 0.0,
+        "avg_reward_safe_return_progress_bonus": null,
+        "battery_positive_reward_rate": 1.0,
+        "curriculum_progress": null,
+        "curriculum_stage_idx": null,
+        "return_action_teacher_mask_nonzero_rate": 0.0,
+        "reward_charging_positive_share_necessary_charge_bonus": 0.15276119951708717,
+        "reward_negative_share_skip_needed_charge_penalty": 0.22691323010385267,
+        "reward_positive_share_cleaning": 0.45756808470652105,
+        "reward_positive_share_cps_bonus": 0.17376167985999352,
+        "reward_positive_share_return_progress_shaping_bonus": 0.006384912584431619,
+        "route_phase_action_teacher_mask_nonzero_rate": 0.0,
+        "route_phase_teacher_from_anchor_or_target_rate": 0.0,
+        "route_phase_teacher_from_critical_fallback_rate": 0.0,
+        "route_phase_teacher_from_return_reliable_rate": 0.0,
+        "sampled_profile_anchor_count": 0.0,
+        "sampled_profile_anchor_rate": 0.0,
+        "sampled_profile_broad_count": 0.0,
+        "sampled_profile_broad_rate": 0.0,
+        "sampled_profile_mild_count": 0.0,
+        "sampled_profile_mild_rate": 0.0
+      },
+      "field": "curriculum_reward_teacher_defaults_visible_at_global_40",
+      "target_20260426_055834": {
+        "avg_reward_charge_reward_shadow_only_active": 0.0,
+        "avg_reward_charger_progress_arrival_bonus": null,
+        "avg_reward_clean_per_step_efficiency_bonus": null,
+        "avg_reward_risk_growth_while_clean_penalty": 0.0,
+        "avg_reward_route_phase_risk_growth_penalty": 0.0,
+        "avg_reward_safe_return_progress_bonus": null,
+        "battery_positive_reward_rate": 0.0,
+        "curriculum_progress": null,
+        "curriculum_stage_idx": null,
+        "return_action_teacher_mask_nonzero_rate": 0.047420903385068595,
+        "reward_charging_positive_share_necessary_charge_bonus": 0.0,
+        "reward_negative_share_skip_needed_charge_penalty": 0.22499885428964594,
+        "reward_positive_share_cleaning": 0.4553832950514296,
+        "reward_positive_share_cps_bonus": 0.05492708736866875,
+        "reward_positive_share_return_progress_shaping_bonus": 0.02336131976533599,
+        "route_phase_action_teacher_mask_nonzero_rate": 0.18994624377652813,
+        "route_phase_teacher_from_anchor_or_target_rate": 0.0,
+        "route_phase_teacher_from_critical_fallback_rate": 1.0,
+        "route_phase_teacher_from_return_reliable_rate": 0.0,
+        "sampled_profile_anchor_count": 2.0,
+        "sampled_profile_anchor_rate": 0.1,
+        "sampled_profile_broad_count": 9.0,
+        "sampled_profile_broad_rate": 0.45,
+        "sampled_profile_mild_count": 9.0,
+        "sampled_profile_mild_rate": 0.45
+      }
+    }
+  },
+  "decision": "hold_f1_rejected_no_promotion",
+  "docker_policy": "Docker was not started by this diagnosis task and must remain stopped.",
+  "evidence_table": [
+    {
+      "baseline_20260421_134719": {
+        "avg_clean_per_step": 0.5882771765271766,
+        "battery_fail_rate": 0.05,
+        "planner_policy_divergence_rate": 0.8445435352412538,
+        "route_phase_return_stall_rate": 0.3178254180203926,
+        "win_rate": 0.9,
+        "zero_charge_battery_fail_rate": 0.0
+      },
+      "delta_target_minus_baseline": {
+        "avg_clean_per_step": -0.18703360680029374,
+        "battery_fail_rate": 0.7999999999999999,
+        "planner_policy_divergence_rate": 0.018159843378842355,
+        "route_phase_return_stall_rate": 0.11477948071006622,
+        "win_rate": -0.8,
+        "zero_charge_battery_fail_rate": 0.8
+      },
+      "field": "global_40_metrics",
+      "target_20260426_055834": {
+        "avg_clean_per_step": 0.40124356972688285,
+        "battery_fail_rate": 0.85,
+        "planner_policy_divergence_rate": 0.8627033786200962,
+        "route_phase_return_stall_rate": 0.4326048987304588,
+        "win_rate": 0.1,
+        "zero_charge_battery_fail_rate": 0.8
+      }
+    },
+    {
+      "baseline_20260421_134719": {
+        "compare_train_phase": "",
+        "manifest_train_phase": null,
+        "preload_enabled": false,
+        "resume_global_step_base": 0,
+        "resumed_from_session_id": null,
+        "training_start_mode": "scratch",
+        "window_origin": "scratch_local"
+      },
+      "field": "start_metadata",
+      "target_20260426_055834": {
+        "compare_train_phase": "s1_survival",
+        "current_train_phase": "s1_survival",
+        "manifest_train_phase": "s1_survival",
+        "preload_enabled": false,
+        "resume_global_step_base": 0,
+        "resumed_from_session_id": null,
+        "training_start_mode": "scratch",
+        "window_origin": "scratch_local"
+      }
+    },
+    {
+      "baseline_20260421_134719": {
+        "avg_reward_charge_reward_shadow_only_active": 0.0,
+        "avg_reward_charger_progress_arrival_bonus": null,
+        "avg_reward_clean_per_step_efficiency_bonus": null,
+        "avg_reward_risk_growth_while_clean_penalty": 0.0,
+        "avg_reward_route_phase_risk_growth_penalty": 0.0,
+        "avg_reward_safe_return_progress_bonus": null,
+        "battery_positive_reward_rate": 1.0,
+        "curriculum_progress": null,
+        "curriculum_stage_idx": null,
+        "return_action_teacher_mask_nonzero_rate": 0.0,
+        "reward_charging_positive_share_necessary_charge_bonus": 0.15276119951708717,
+        "reward_negative_share_skip_needed_charge_penalty": 0.22691323010385267,
+        "reward_positive_share_cleaning": 0.45756808470652105,
+        "reward_positive_share_cps_bonus": 0.17376167985999352,
+        "reward_positive_share_return_progress_shaping_bonus": 0.006384912584431619,
+        "route_phase_action_teacher_mask_nonzero_rate": 0.0,
+        "route_phase_teacher_from_anchor_or_target_rate": 0.0,
+        "route_phase_teacher_from_critical_fallback_rate": 0.0,
+        "route_phase_teacher_from_return_reliable_rate": 0.0,
+        "sampled_profile_anchor_count": 0.0,
+        "sampled_profile_anchor_rate": 0.0,
+        "sampled_profile_broad_count": 0.0,
+        "sampled_profile_broad_rate": 0.0,
+        "sampled_profile_mild_count": 0.0,
+        "sampled_profile_mild_rate": 0.0
+      },
+      "field": "curriculum_reward_teacher_defaults_visible_at_global_40",
+      "target_20260426_055834": {
+        "avg_reward_charge_reward_shadow_only_active": 0.0,
+        "avg_reward_charger_progress_arrival_bonus": null,
+        "avg_reward_clean_per_step_efficiency_bonus": null,
+        "avg_reward_risk_growth_while_clean_penalty": 0.0,
+        "avg_reward_route_phase_risk_growth_penalty": 0.0,
+        "avg_reward_safe_return_progress_bonus": null,
+        "battery_positive_reward_rate": 0.0,
+        "curriculum_progress": null,
+        "curriculum_stage_idx": null,
+        "return_action_teacher_mask_nonzero_rate": 0.047420903385068595,
+        "reward_charging_positive_share_necessary_charge_bonus": 0.0,
+        "reward_negative_share_skip_needed_charge_penalty": 0.22499885428964594,
+        "reward_positive_share_cleaning": 0.4553832950514296,
+        "reward_positive_share_cps_bonus": 0.05492708736866875,
+        "reward_positive_share_return_progress_shaping_bonus": 0.02336131976533599,
+        "route_phase_action_teacher_mask_nonzero_rate": 0.18994624377652813,
+        "route_phase_teacher_from_anchor_or_target_rate": 0.0,
+        "route_phase_teacher_from_critical_fallback_rate": 1.0,
+        "route_phase_teacher_from_return_reliable_rate": 0.0,
+        "sampled_profile_anchor_count": 2.0,
+        "sampled_profile_anchor_rate": 0.1,
+        "sampled_profile_broad_count": 9.0,
+        "sampled_profile_broad_rate": 0.45,
+        "sampled_profile_mild_count": 9.0,
+        "sampled_profile_mild_rate": 0.45
+      }
+    }
+  ],
+  "f1_approved": false,
+  "input_evidence": {
+    "current_curriculum_state": "code/runtime_state/current/curriculum_state.json",
+    "current_run_session": "code/runtime_state/current/run_session.json",
+    "phase_env": "train/phases/s1_survival.env",
+    "plain_replicate": ".sisyphus/evidence/benchmark-900/plain-s1-survival-parity-replicate-global40.json",
+    "run_training_phase": "train/run_training_phase.py",
+    "source_parity_restore": ".sisyphus/evidence/benchmark-900/source-parity-restore-after-charge-slack.json"
+  },
+  "non_source_drift_likely": true,
+  "phase_env_and_start_metadata_audit": {
+    "baseline_curriculum_profile_weights_final_state": {
+      "anchor": 0.6,
+      "broad": 0.1,
+      "broad_eval": 0.0,
+      "mild": 0.3
+    },
+    "baseline_curriculum_stage_progress": {
+      "initial_stage": "warmup",
+      "progress": 0.5823,
+      "stage_idx": 0
+    },
+    "baseline_manifest_has_phase": false,
+    "current_phase_file": "train/phases/s1_survival.env",
+    "current_runtime_curriculum_profile_weights": {
+      "anchor": 0.2,
+      "broad": 0.4,
+      "broad_eval": 0.0,
+      "mild": 0.4
+    },
+    "phase_overlay_keys": {
+      "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE": "0.22",
+      "KAIWU_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": "0.14",
+      "KAIWU_BATTERY_TERMINAL_COST_SCALE": "41.0",
+      "KAIWU_CHARGE_MARGIN_WARN": "17.0",
+      "KAIWU_CONTRACT_BATTERY_RATIO": "0.27",
+      "KAIWU_CONTRACT_RECOVERABILITY_THRESHOLD": "0.12",
+      "KAIWU_CONTRACT_ROUTE_PRESSURE_THRESHOLD": "0.52",
+      "KAIWU_CONTRACT_SOFT_TRIGGER_MIN_HITS": "2",
+      "KAIWU_CURRICULUM_FIXED_STAGE": "warmup",
+      "KAIWU_CURRICULUM_LITE": "1",
+      "KAIWU_CURRICULUM_PROFILE_ANCHOR": "0.20",
+      "KAIWU_CURRICULUM_PROFILE_BROAD": "0.40",
+      "KAIWU_CURRICULUM_PROFILE_MILD": "0.40",
+      "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE": "0.07",
+      "KAIWU_EARLY_BATTERY_FAIL_TASK_REWARD_SCALE_PEAK": "0.04",
+      "KAIWU_EPISODE_BATTERY_FAIL_BONUS": "-16.0",
+      "KAIWU_HIGH_NEED_RETURN_STALL_PENALTY": "0.12",
+      "KAIWU_NECESSARY_CHARGE_BONUS_SCALE": "1.00",
+      "KAIWU_PREPARE_RETURN_SLACK_THRESHOLD": "7.5",
+      "KAIWU_RETURN_PROGRESS_SHAPING_SCALE": "0.28",
+      "KAIWU_ROUTE_PHASE_POLICY_TEACHER_WEIGHT": "0.50",
+      "KAIWU_SKIP_NEEDED_CHARGE_PENALTY": "0.20",
+      "KAIWU_TRAIN_PHASE": "s1_survival",
+      "KAIWU_ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST": "0.95"
+    },
+    "target_curriculum_profile_weights_final_state": {
+      "anchor": 0.2,
+      "broad": 0.4,
+      "broad_eval": 0.0,
+      "mild": 0.4
+    },
+    "target_curriculum_stage_progress": {
+      "initial_stage": "warmup",
+      "progress": 0.492,
+      "stage_idx": 0
+    },
+    "target_manifest_phase": "s1_survival"
+  },
+  "promotion_allowed": false,
+  "recommended_next_action": "Prepare one baseline-curriculum-parity dry-run manifest/phase audit that changes only the s1_survival curriculum profile weights to the baseline-visible anchor=0.60, mild=0.30, broad=0.10 values; do not train, benchmark, or promote in that preparation step.",
+  "reward_curriculum_default_drift_likely": true,
+  "schema_version": 1,
+  "source_restore_context": {
+    "f1_approved": false,
+    "plain_replicate_decision": "revert",
+    "plain_replicate_f1_approved": false,
+    "post_restore_git_diff_relevant_paths": "empty for audited source/test paths",
+    "source_drift_paths_restored": [
+      "code/agent_ppo/conf/conf.py",
+      "code/agent_ppo/feature/preprocessor.py",
+      "code/agent_ppo/agent.py",
+      "code/agent_ppo/utils/return_readiness.py"
+    ],
+    "source_parity_restore_artifact": "source-parity-restore-after-charge-slack"
+  },
+  "success_claimed": false,
+  "target_run": "20260426-055834",
+  "task": "diagnosis_only_phase_env_curriculum_reward_default_parity_audit_after_restored_source_plain_s1_survival_failure",
+  "unresolved_stochastic_runtime_instability": {
+    "rationale": "A scratch RL run can vary stochastically, but concrete phase/curriculum/reward-default differences are present, so stochastic instability is not the primary unresolved classification.",
+    "still_possible": true
+  },
+  "verdict": [
+    "phase_env_drift",
+    "curriculum_reward_default_drift"
+  ],
+  "verdict_enum_options": [
+    "phase_env_drift",
+    "checkpoint_resume_mismatch",
+    "curriculum_reward_default_drift",
+    "no_non_source_drift_found"
+  ]
+}

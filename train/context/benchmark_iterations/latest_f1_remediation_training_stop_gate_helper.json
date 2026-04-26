@@ -1,0 +1,37 @@
+{
+  "artifact": "latest_f1_remediation_training_stop_gate_helper",
+  "classification": "bounded_local_training_stop_gate_helper_verified_no_rerun",
+  "created_at": "2026-04-26T11:20:22+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/training-stop-gate-helper.json",
+  "summary": {
+    "current_runtime_smoke_check": {
+      "command": "/home/user/TcKaiwuFinal/.conda-numpy/bin/python train/tools/training_stop_gate.py --expected-run-session-id 20260426-110457 --expected-launch-label s1_survival_gate-return-teacher-route-readiness-label-fixed-g40 --expected-launch-instance-id s1_survival-20260426-110427-5012b82ffc43",
+      "decision": "STOP_BOOTSTRAP20_SEVERE_COLLAPSE",
+      "run_session_id": "20260426-110457",
+      "sample_window_keys": [
+        "bootstrap_10",
+        "bootstrap_20",
+        "global_40"
+      ],
+      "source_session_id": "20260426-110457"
+    },
+    "decisions": [
+      "STOP_BINDING_MISMATCH",
+      "STOP_BOOTSTRAP20_SEVERE_COLLAPSE",
+      "STOP_GLOBAL40_ACCEPTED",
+      "STOP_TIMEOUT_MISSING_WINDOWS",
+      "WAITING_FOR_WINDOWS"
+    ],
+    "docker_stopped_now": true,
+    "helper": "train/tools/training_stop_gate.py",
+    "next_action": "Ask Oracle before wiring this helper into any Atlas/Docker control path or before any rerun, benchmark, checkpoint promotion, F1 approval, or original-task completion claim.",
+    "oracle_verdict": "APPROVE_ONE_BOUNDED_ACTION",
+    "pure_local_tests": {
+      "command": "/home/user/TcKaiwuFinal/.conda-numpy/bin/python -m unittest tests.test_training_stop_gate",
+      "result": "PASS",
+      "tests": 5
+    },
+    "test_file": "code/tests/test_training_stop_gate.py",
+    "thresholds": "Severe collapse uses battery_fail_rate >= 0.90, zero_charge_battery_fail_rate >= 0.70, and win_rate <= 0.10."
+  }
+}

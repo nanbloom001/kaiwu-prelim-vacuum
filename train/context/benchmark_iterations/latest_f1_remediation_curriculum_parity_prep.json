@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_curriculum_parity_prep",
+  "created_at": "2026-04-26T06:37:00+08:00",
+  "source_evidence": ".sisyphus/evidence/benchmark-900/curriculum-parity-phase-prep.json",
+  "diagnosis_only": true,
+  "phase_prep_only": true,
+  "base_phase_path": "train/phases/s1_survival.env",
+  "prepared_phase_path": "train/phases/s1_survival_curriculum_parity_v1.env",
+  "prepared_phase": "s1_survival_curriculum_parity_v1",
+  "decision": {
+    "value": "hold_f1_rejected_prepare_curriculum_parity_replicate",
+    "promotion_allowed": false,
+    "checkpoint_promoted": false,
+    "canonical_serial_benchmark_run": false,
+    "continuation_allowed_past_global40": false,
+    "reason": "This step only prepares a baseline-curriculum-parity phase for a later controlled replicate; F1 remains rejected and no checkpoint or benchmark evidence was produced."
+  },
+  "changed_keys": {
+    "KAIWU_TRAIN_PHASE": "s1_survival -> s1_survival_curriculum_parity_v1",
+    "KAIWU_CURRICULUM_PROFILE_ANCHOR": "0.20 -> 0.60",
+    "KAIWU_CURRICULUM_PROFILE_MILD": "0.40 -> 0.30",
+    "KAIWU_CURRICULUM_PROFILE_BROAD": "0.40 -> 0.10"
+  },
+  "verification": {
+    "phase_diff_clean_scope": true,
+    "dry_run_succeeded": true,
+    "docker_stopped": true,
+    "json_tool_required": true
+  },
+  "status": {
+    "f1_approved": false,
+    "success_claimed": false,
+    "benchmark_progress_claimed": false
+  },
+  "next_action": "controlled_curriculum_parity_global40_replicate"
+}

@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_baseline_drift_audit",
+  "created_at": "2026-04-26T00:00:00Z",
+  "source_evidence": ".sisyphus/evidence/benchmark-900/baseline-drift-parity-audit-after-charge-slack.json",
+  "diagnosis_only": true,
+  "classification": {
+    "likely_regression_source": [
+      "source_drift",
+      "stochastic_scratch_instability",
+      "insufficient_evidence"
+    ],
+    "primary": "source_drift"
+  },
+  "decision": {
+    "value": "hold_for_baseline_parity_restore",
+    "promotion_allowed": false,
+    "checkpoint_promoted": false,
+    "canonical_serial_benchmark_run": false,
+    "continuation_allowed_past_global40": false,
+    "reason": "active source drift and failed plain s1_survival reproducibility make another lever unsafe before parity attribution"
+  },
+  "runs_compared": [
+    {
+      "run_id": "20260421-134719",
+      "phase": "baseline_reference",
+      "avg_clean_per_step": 0.5882771765271765,
+      "battery_fail_rate": 0.05,
+      "zero_charge_battery_fail_rate": 0.0,
+      "route_phase_return_stall_rate": 0.3178254180203925,
+      "planner_policy_divergence_rate": 0.8445435352412536,
+      "win_rate": 0.9
+    },
+    {
+      "run_id": "20260426-015729",
+      "phase": "s1_survival",
+      "decision": "revert",
+      "avg_clean_per_step": 0.37959295559482753,
+      "battery_fail_rate": 0.75,
+      "zero_charge_battery_fail_rate": 0.5,
+      "route_phase_return_stall_rate": 0.44251026186014136,
+      "planner_policy_divergence_rate": 0.8690616398919987,
+      "win_rate": 0.25,
+      "checkpoint_promoted": false,
+      "canonical_serial_benchmark_run": false
+    },
+    {
+      "run_id": "20260426-053353",
+      "phase": "s1_survival_charge_slack_feature_v1",
+      "decision": "revert",
+      "avg_clean_per_step": 0.44278963908898117,
+      "battery_fail_rate": 1.0,
+      "zero_charge_battery_fail_rate": 0.95,
+      "route_phase_return_stall_rate": 0.5621322404277922,
+      "planner_policy_divergence_rate": 0.8650948951573894,
+      "win_rate": 0.0,
+      "checkpoint_promoted": false,
+      "canonical_serial_benchmark_run": false
+    }
+  ],
+  "phase_env_drift": {
+    "numeric_training_parameter_drift_found": false,
+    "only_effective_difference": "KAIWU_TRAIN_PHASE changes from s1_survival to s1_survival_charge_slack_feature_v1; numeric parameters match base s1_survival."
+  },
+  "active_source_drift_paths": [
+    "code/agent_ppo/agent.py",
+    "code/agent_ppo/conf/conf.py",
+    "code/agent_ppo/feature/preprocessor.py",
+    "code/agent_ppo/utils/return_readiness.py"
+  ],
+  "runtime_state_check": {
+    "current_run_session_id": "20260426-053353",
+    "current_phase": "s1_survival_charge_slack_feature_v1",
+    "training_start_mode": "scratch",
+    "mismatch_assessment": "matches latest charge-slack evidence; stale for any future plain-baseline attribution unless reset or resnapshotted"
+  },
+  "next_action": "Restore active source parity by reverting the currently identified failed-candidate source drift in code/agent_ppo/conf/conf.py, code/agent_ppo/feature/preprocessor.py, code/agent_ppo/agent.py, and code/agent_ppo/utils/return_readiness.py before any further training, benchmark, or promotion.",
+  "verification": {
+    "json_tool_required": true,
+    "docker_stopped": true
+  }
+}

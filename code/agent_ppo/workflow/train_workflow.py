@@ -291,6 +291,51 @@ TEACHER_LABEL_QUALITY_COUNT_KEYS = (
     "return_teacher_reliability_invariant_satisfied_count",
     "return_teacher_reliability_invariant_violated_count",
 )
+ROUTE_TEACHER_SOURCE_BUCKETS = (
+    "return_reliable",
+    "anchor_or_target",
+    "critical_fallback",
+)
+RETURN_LABEL_TIMING_BUCKETS = (
+    "inside_route_phase",
+    "outside_route_phase",
+    "mode_depart",
+    "mode_expand",
+    "mode_harvest",
+    "mode_contract",
+    "mode_return",
+    "mode_evade",
+    "mode_other",
+)
+ROUTE_SOURCE_FAILURE_BUCKETS = (*ROUTE_TEACHER_SOURCE_BUCKETS, "none")
+RETURN_TIMING_FAILURE_BUCKETS = (*RETURN_LABEL_TIMING_BUCKETS, "none")
+POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS = tuple(
+    key
+    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS
+    for key in (
+        f"route_source_{bucket}_policy_planner_divergence_count",
+        f"route_source_{bucket}_return_stall_count",
+        f"route_source_{bucket}_policy_teacher_adoption_count",
+    )
+) + tuple(
+    key
+    for bucket in RETURN_LABEL_TIMING_BUCKETS
+    for key in (
+        f"return_timing_{bucket}_policy_planner_divergence_count",
+        f"return_timing_{bucket}_return_stall_count",
+        f"return_timing_{bucket}_policy_teacher_adoption_count",
+    )
+) + tuple(
+    key
+    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS
+    for key in (
+        f"battery_fail_last_route_source_{bucket}_count",
+        f"zero_charge_battery_fail_last_route_source_{bucket}_count",
+    )
+) + tuple(
+    f"battery_fail_last_return_timing_{bucket}_count"
+    for bucket in RETURN_TIMING_FAILURE_BUCKETS
+)
 TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS = (
     "return_route_teacher_active_pair_rate",
     "return_route_teacher_agreement_rate",
@@ -318,9 +363,38 @@ TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS = (
     "return_teacher_reliability_invariant_satisfied_rate",
     "return_teacher_reliability_invariant_violated_rate",
 )
+POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_RATE_KEYS = tuple(
+    key
+    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS
+    for key in (
+        f"route_source_{bucket}_policy_planner_divergence_rate",
+        f"route_source_{bucket}_return_stall_rate",
+        f"route_source_{bucket}_policy_teacher_adoption_rate",
+    )
+) + tuple(
+    key
+    for bucket in RETURN_LABEL_TIMING_BUCKETS
+    for key in (
+        f"return_timing_{bucket}_policy_planner_divergence_rate",
+        f"return_timing_{bucket}_return_stall_rate",
+        f"return_timing_{bucket}_policy_teacher_adoption_rate",
+    )
+) + tuple(
+    key
+    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS
+    for key in (
+        f"battery_fail_last_route_source_{bucket}_rate",
+        f"zero_charge_battery_fail_last_route_source_{bucket}_rate",
+    )
+) + tuple(
+    f"battery_fail_last_return_timing_{bucket}_rate"
+    for bucket in RETURN_TIMING_FAILURE_BUCKETS
+)
 TEACHER_LABEL_QUALITY_METRIC_KEYS = (
     *TEACHER_LABEL_QUALITY_COUNT_KEYS,
+    *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS,
     *TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS,
+    *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_RATE_KEYS,
     "return_teacher_target_stable_rate",
     "return_teacher_target_unstable_rate",
     "return_teacher_suggested_legal_safe_rate",
@@ -409,6 +483,44 @@ def _apply_teacher_label_quality_count_rates(payload: dict[str, Any]) -> dict[st
     payload["return_teacher_reliability_invariant_violated_rate"] = _ratio(
         "return_teacher_reliability_invariant_violated_count", "return_teacher_count"
     )
+    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS:
+        denominator_key = f"route_phase_teacher_from_{bucket}_count"
+        payload[f"route_source_{bucket}_policy_planner_divergence_rate"] = _ratio(
+            f"route_source_{bucket}_policy_planner_divergence_count", denominator_key
+        )
+        payload[f"route_source_{bucket}_return_stall_rate"] = _ratio(
+            f"route_source_{bucket}_return_stall_count", denominator_key
+        )
+        payload[f"route_source_{bucket}_policy_teacher_adoption_rate"] = _ratio(
+            f"route_source_{bucket}_policy_teacher_adoption_count", denominator_key
+        )
+    for bucket in RETURN_LABEL_TIMING_BUCKETS:
+        if bucket == "inside_route_phase":
+            denominator_key = "return_teacher_in_route_phase_count"
+        elif bucket == "outside_route_phase":
+            denominator_key = "return_teacher_outside_route_phase_count"
+        else:
+            denominator_key = f"return_teacher_{bucket}_count"
+        payload[f"return_timing_{bucket}_policy_planner_divergence_rate"] = _ratio(
+            f"return_timing_{bucket}_policy_planner_divergence_count", denominator_key
+        )
+        payload[f"return_timing_{bucket}_return_stall_rate"] = _ratio(
+            f"return_timing_{bucket}_return_stall_count", denominator_key
+        )
+        payload[f"return_timing_{bucket}_policy_teacher_adoption_rate"] = _ratio(
+            f"return_timing_{bucket}_policy_teacher_adoption_count", denominator_key
+        )
+    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS:
+        payload[f"battery_fail_last_route_source_{bucket}_rate"] = _ratio(
+            f"battery_fail_last_route_source_{bucket}_count", "battery_fail_count"
+        )
+        payload[f"zero_charge_battery_fail_last_route_source_{bucket}_rate"] = _ratio(
+            f"zero_charge_battery_fail_last_route_source_{bucket}_count", "battery_fail_count"
+        )
+    for bucket in RETURN_TIMING_FAILURE_BUCKETS:
+        payload[f"battery_fail_last_return_timing_{bucket}_rate"] = _ratio(
+            f"battery_fail_last_return_timing_{bucket}_count", "battery_fail_count"
+        )
     return payload
 
 _LEARNER_LOG_FLOAT_PATTERNS = {
@@ -1013,6 +1125,10 @@ class EpisodeRunner:
         if override:
             return override
         aisrv_index = str(os.getenv("KAIWU_AISRV_INDEX", "") or "").strip()
+        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
+        training_start_mode = self.training_start_mode
+        launch_label = str(os.getenv("KAIWU_PHASE_RUN_LABEL", "") or "").strip()
+        launch_instance_id = str(os.getenv("KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID", "") or "").strip()
         manifest_path = self._run_session_manifest_path()
         lock_path = self._run_session_lock_path()
         lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1027,14 +1143,58 @@ class EpisodeRunner:
             session_value = str(payload.get("run_session_id") or "").strip()
             return session_value or None
 
+        def _read_existing_payload():
+            try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
+            if not bool(payload.get("state_initialized")):
+                return None
+            session_value = str(payload.get("run_session_id") or "").strip()
+            if not session_value:
+                return None
+            return payload
+
+        def _matches_current_launch(payload):
+            if not payload:
+                return False
+            manifest_mode = str(payload.get("training_start_mode") or "").strip().lower()
+            manifest_phase = str(payload.get("train_phase") or "").strip().lower()
+            manifest_label = str(payload.get("launch_label") or "").strip()
+            manifest_launch_instance_id = str(payload.get("launch_instance_id") or "").strip()
+            if manifest_mode and manifest_mode != training_start_mode:
+                return False
+            if manifest_phase and train_phase and manifest_phase != train_phase:
+                return False
+            if launch_label or manifest_label:
+                if launch_label and launch_instance_id:
+                    return manifest_label == launch_label and manifest_launch_instance_id == launch_instance_id
+                return manifest_label == launch_label
+            return False
+
+        def _read_existing_for_current_launch():
+            payload = _read_existing_payload()
+            if payload is None:
+                return None
+            if not _matches_current_launch(payload):
+                return None
+            return str(payload.get("run_session_id") or "").strip() or None
+
+        def _read_existing_for_helper():
+            if launch_label:
+                return _read_existing_for_current_launch()
+            return _read_existing()
+
         def _write_manifest(run_session_id, *, state_initialized):
             payload = {
                 "run_session_id": run_session_id,
-                "train_phase": str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower(),
+                "train_phase": train_phase,
                 "created_at": time.time(),
                 "created_by_helper_session_id": fallback_id,
                 "created_by_source_id": self.signal_source_id,
-                "training_start_mode": self.training_start_mode,
+                "training_start_mode": training_start_mode,
+                "launch_label": launch_label,
+                "launch_instance_id": launch_instance_id,
                 "state_initialized": bool(state_initialized),
             }
             tmp = manifest_path.parent / f".{manifest_path.name}.{os.getpid()}.{time.time_ns()}.tmp"
@@ -1043,6 +1203,9 @@ class EpisodeRunner:
             return payload
 
         def _write_new():
+            existing = _read_existing_for_current_launch()
+            if existing:
+                return existing
             if is_scratch_mode(os.environ):
                 clear_current_runtime_state(self.code_path, os.environ, clear_legacy_current=True)
             elif is_resume_mode(os.environ):
@@ -1070,7 +1233,7 @@ class EpisodeRunner:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
         if fcntl is None:
-            existing = _read_existing()
+            existing = _read_existing_for_helper()
             if existing:
                 return existing
             raise RuntimeError("shared run_session manifest is not initialized yet")
@@ -1080,7 +1243,7 @@ class EpisodeRunner:
             with lock_path.open("a+", encoding="utf-8") as handle:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
                 try:
-                    existing = _read_existing()
+                    existing = _read_existing_for_helper()
                     if existing:
                         return existing
                 finally:
@@ -1467,12 +1630,12 @@ class EpisodeRunner:
             ) / n,
             **{
                 key: sum(ep.get(key, 0.0) for ep in buf)
-                for key in TEACHER_LABEL_QUALITY_COUNT_KEYS
+                for key in (*TEACHER_LABEL_QUALITY_COUNT_KEYS, *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS)
             },
             **{
                 key: sum(ep.get(key, 0.0) for ep in buf) / n
                 for key in TEACHER_LABEL_QUALITY_METRIC_KEYS
-                if key not in TEACHER_LABEL_QUALITY_COUNT_KEYS
+                if key not in {*TEACHER_LABEL_QUALITY_COUNT_KEYS, *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS}
             },
             "late_return_rate": sum(ep.get("late_return_rate", 0.0) for ep in buf) / n,
             "late_contract_rate": sum(ep.get("late_contract_rate", 0.0) for ep in buf) / n,
@@ -1538,6 +1701,7 @@ class EpisodeRunner:
             "mode_usage_evade": sum(ep.get("mode_usage_evade", 0.0) for ep in buf) / n,
             **reward_component_means,
             "battery_fail_rate": sum(1 for ep in buf if ep["result"] == "battery") / n,
+            "battery_fail_count": float(len(battery_fails)),
             "collision_fail_rate": sum(1 for ep in buf if ep["result"] == "collision") / n,
             "battery_positive_reward_count": sum(
                 1
@@ -2075,6 +2239,7 @@ class EpisodeRunner:
                         "mode": runtime_mode,
                         "target": runtime_target,
                         "charger_slack": float(getattr(self.agent.preprocessor, "charger_slack", 0.0)),
+                        "charge_count": float(getattr(self.agent.preprocessor, "charge_count", 0.0)),
                         "mode_teacher": int(reward_payload["mode_teacher"]),
                         "route_anchor_teacher": int(reward_payload["route_anchor_teacher"]),
                         "target_teacher": int(reward_payload["target_teacher"]),
@@ -2889,6 +3054,12 @@ class EpisodeRunner:
             selected = [1.0 for idx in indices if predicate(idx)]
             return float(sum(selected) / max(len(indices), 1))
 
+        def _sum_flag(indices, values):
+            return float(sum(float(values[idx]) for idx in indices))
+
+        def _count_matching(indices, predicate):
+            return float(sum(1 for idx in indices if predicate(idx)))
+
         target_steps = [t for t in targets if t > 0]
         target_switches = sum(1 for a, b in zip(target_steps, target_steps[1:]) if a != b)
         target_switch_rate = target_switches / max(len(target_steps) - 1, 1)
@@ -3032,8 +3203,32 @@ class EpisodeRunner:
         route_phase_teacher_from_critical_fallback_count = sum(
             1 for idx in route_phase_teacher_indices if route_phase_teacher_from_critical_fallback_flags[idx] > 0.0
         )
+        route_source_indices = {
+            "return_reliable": [
+                idx for idx in route_phase_teacher_indices
+                if route_phase_teacher_from_return_reliable_flags[idx] > 0.0
+            ],
+            "anchor_or_target": [
+                idx for idx in route_phase_teacher_indices
+                if route_phase_teacher_from_anchor_or_target_flags[idx] > 0.0
+            ],
+            "critical_fallback": [
+                idx for idx in route_phase_teacher_indices
+                if route_phase_teacher_from_critical_fallback_flags[idx] > 0.0
+            ],
+        }
         return_teacher_in_route_phase_count = sum(1 for idx in return_teacher_indices if modes[idx] in (3, 4))
         return_teacher_outside_route_phase_count = return_teacher_count - return_teacher_in_route_phase_count
+        return_timing_indices = {
+            "inside_route_phase": [idx for idx in return_teacher_indices if modes[idx] in (3, 4)],
+            "outside_route_phase": [idx for idx in return_teacher_indices if modes[idx] not in (3, 4)],
+            "mode_depart": [idx for idx in return_teacher_indices if modes[idx] == 0],
+            "mode_expand": [idx for idx in return_teacher_indices if modes[idx] == 1],
+            "mode_harvest": [idx for idx in return_teacher_indices if modes[idx] == 2],
+            "mode_contract": [idx for idx in return_teacher_indices if modes[idx] == 3],
+            "mode_return": [idx for idx in return_teacher_indices if modes[idx] == 4],
+            "mode_evade": [idx for idx in return_teacher_indices if modes[idx] == 5],
+        }
         return_teacher_mode_counts = {
             "depart": sum(1 for idx in return_teacher_indices if modes[idx] == 0),
             "expand": sum(1 for idx in return_teacher_indices if modes[idx] == 1),
@@ -3043,6 +3238,73 @@ class EpisodeRunner:
             "evade": sum(1 for idx in return_teacher_indices if modes[idx] == 5),
         }
         return_teacher_mode_counts["other"] = return_teacher_count - sum(return_teacher_mode_counts.values())
+        return_timing_indices["mode_other"] = [
+            idx for idx in return_teacher_indices if modes[idx] not in (0, 1, 2, 3, 4, 5)
+        ]
+        last_route_source_bucket = "none"
+        for idx in reversed(route_phase_teacher_indices):
+            if route_phase_teacher_from_return_reliable_flags[idx] > 0.0:
+                last_route_source_bucket = "return_reliable"
+                break
+            if route_phase_teacher_from_anchor_or_target_flags[idx] > 0.0:
+                last_route_source_bucket = "anchor_or_target"
+                break
+            if route_phase_teacher_from_critical_fallback_flags[idx] > 0.0:
+                last_route_source_bucket = "critical_fallback"
+                break
+        last_return_timing_bucket = "none"
+        if return_teacher_indices:
+            last_return_idx = return_teacher_indices[-1]
+            if modes[last_return_idx] in (3, 4):
+                last_return_timing_bucket = "inside_route_phase"
+            elif modes[last_return_idx] == 0:
+                last_return_timing_bucket = "mode_depart"
+            elif modes[last_return_idx] == 1:
+                last_return_timing_bucket = "mode_expand"
+            elif modes[last_return_idx] == 2:
+                last_return_timing_bucket = "mode_harvest"
+            elif modes[last_return_idx] == 5:
+                last_return_timing_bucket = "mode_evade"
+            else:
+                last_return_timing_bucket = "outside_route_phase"
+        terminal_record = step_records[-1]
+        episode_battery_failed = bool(terminal_record.get("battery_fail_type"))
+        episode_zero_charge_battery_failed = bool(
+            episode_battery_failed
+            and float(terminal_record.get("charge_count", terminal_record.get("episode_charge_count", 1.0)) or 0.0) <= 0.0
+        )
+        policy_teacher_divergence_diagnostics = {}
+        for bucket, indices in route_source_indices.items():
+            policy_teacher_divergence_diagnostics[f"route_source_{bucket}_policy_planner_divergence_count"] = _sum_flag(
+                indices, planner_divergence_flags
+            )
+            policy_teacher_divergence_diagnostics[f"route_source_{bucket}_return_stall_count"] = _sum_flag(
+                indices, route_phase_stall_flags
+            )
+            policy_teacher_divergence_diagnostics[f"route_source_{bucket}_policy_teacher_adoption_count"] = _count_matching(
+                indices, lambda idx: int(step_records[idx].get("act", -1)) == route_phase_action_teachers[idx]
+            )
+        for bucket, indices in return_timing_indices.items():
+            policy_teacher_divergence_diagnostics[f"return_timing_{bucket}_policy_planner_divergence_count"] = _sum_flag(
+                indices, planner_divergence_flags
+            )
+            policy_teacher_divergence_diagnostics[f"return_timing_{bucket}_return_stall_count"] = _sum_flag(
+                indices, route_phase_stall_flags
+            )
+            policy_teacher_divergence_diagnostics[f"return_timing_{bucket}_policy_teacher_adoption_count"] = _count_matching(
+                indices, lambda idx: int(step_records[idx].get("act", -1)) == return_action_teachers[idx]
+            )
+        for bucket in ROUTE_SOURCE_FAILURE_BUCKETS:
+            policy_teacher_divergence_diagnostics[f"battery_fail_last_route_source_{bucket}_count"] = float(
+                episode_battery_failed and last_route_source_bucket == bucket
+            )
+            policy_teacher_divergence_diagnostics[f"zero_charge_battery_fail_last_route_source_{bucket}_count"] = float(
+                episode_zero_charge_battery_failed and last_route_source_bucket == bucket
+            )
+        for bucket in RETURN_TIMING_FAILURE_BUCKETS:
+            policy_teacher_divergence_diagnostics[f"battery_fail_last_return_timing_{bucket}_count"] = float(
+                episode_battery_failed and last_return_timing_bucket == bucket
+            )
         return_route_teacher_active_pair_rate = float(active_pair_count / max(return_teacher_count, 1))
         return_route_teacher_agreement_rate = float(agree_pair_count / max(active_pair_count, 1))
         return_route_teacher_disagreement_rate = float(disagree_pair_count / max(active_pair_count, 1))
@@ -3151,7 +3413,7 @@ class EpisodeRunner:
             readiness_to_return_transition_rate = None
             direct_return_without_readiness_rate = None
 
-        return {
+        payload = {
             "late_return_rate": float(late_return_rate),
             "late_contract_rate": float(late_contract_rate),
             "anchor_switch_rate": float(anchor_switch_rate),
@@ -3213,6 +3475,8 @@ class EpisodeRunner:
             "return_teacher_action_margin_invariant_violated_count": float(len(action_margin_invariant_violated_indices)),
             "return_teacher_reliability_invariant_satisfied_count": float(len(reliability_invariant_satisfied_indices)),
             "return_teacher_reliability_invariant_violated_count": float(len(reliability_invariant_violated_indices)),
+            "battery_fail_count": float(episode_battery_failed),
+            **policy_teacher_divergence_diagnostics,
             "return_route_teacher_active_pair_rate": return_route_teacher_active_pair_rate,
             "return_route_teacher_agreement_rate": return_route_teacher_agreement_rate,
             "return_route_teacher_disagreement_rate": return_route_teacher_disagreement_rate,
@@ -3334,6 +3598,8 @@ class EpisodeRunner:
                 for key in REWARD_COMPONENT_MONITOR_KEYS
             },
         }
+        _apply_teacher_label_quality_count_rates(payload)
+        return payload
 
     def _build_monitor_payload(self, reward):
         m = self._window_metrics()

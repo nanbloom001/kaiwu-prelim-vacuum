@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_policy_teacher_instrumented_diagnostic_run",
+  "mirrors_evidence_artifact": ".sisyphus/evidence/benchmark-900/policy-teacher-instrumented-diagnostic-run.json",
+  "created_at": "2026-04-26T08:24:30+08:00",
+  "oracle_verdict_followed": "APPROVE_ONE_INSTRUMENTED_DIAGNOSTIC_RUN",
+  "decision": "one_non_promotable_instrumented_diagnostic_run_executed_but_no_metrics_before_process_stop",
+  "run_session_id": "20260426-075439",
+  "train_phase": "s1_survival",
+  "seed_label": "policy-teacher-instrumented-diagnostic",
+  "command_start_wall_time": 1777161251.634236,
+  "fresh_runtime_bound": true,
+  "runtime_binding_summary": {
+    "created_at": 1777161279.7790205,
+    "created_after_command_start": true,
+    "state_initialized": true,
+    "curriculum_source_session_id": "20260426-075439",
+    "curriculum_phase_match": true
+  },
+  "outcome_summary": {
+    "status": "no_metrics_process_stop_before_bootstrap",
+    "global_episode_count": 0,
+    "bootstrap_10_collected": false,
+    "bootstrap_20_collected": false,
+    "global_40_collected": false,
+    "global_80_reached_or_collected": false,
+    "new_counter_snapshots_available": false,
+    "source_timing_failure_attribution_explained": false,
+    "reason": "Bound runtime initialized, but no accepted episodes or metric windows were written; learner observed process_stop.done and exited with code 1 before bootstrap metrics."
+  },
+  "safety_flags": {
+    "promotion_allowed": false,
+    "checkpoint_promoted": false,
+    "benchmark_run": false,
+    "canonical_serial_benchmark_run": false,
+    "parallel_benchmark_run": false,
+    "f1_approved": false,
+    "original_task_incomplete": true,
+    "continued_to_global80": false
+  },
+  "verification_summary": {
+    "docker_stopped_post": true,
+    "json_validation": true
+  },
+  "next_action": "Oracle should review the no-metrics process_stop-before-bootstrap failure before any further training, behavior intervention, benchmark, or promotion."
+}

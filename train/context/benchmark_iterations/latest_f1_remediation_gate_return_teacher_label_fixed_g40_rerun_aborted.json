@@ -1,0 +1,36 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_teacher_label_fixed_g40_rerun_aborted",
+  "classification": "label_fixed_rerun_user_aborted_no_metrics_no_promotion",
+  "created_at": "2026-04-26T10:46:36+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/gate-return-teacher-label-fixed-g40-rerun-aborted.json",
+  "next_action": "Ask Oracle before approving any additional Docker/training rerun, benchmark, checkpoint promotion, F1 approval, or original-task completion claim.",
+  "summary": {
+    "accepted_metrics_collected": false,
+    "binding_initialization_succeeded_after_label_fix": true,
+    "docker_stopped_now": true,
+    "exact_command": "cd train && /home/user/TcKaiwuFinal/.conda-numpy/bin/python run_training_phase.py s1_survival --seed-label gate-return-teacher-route-readiness-label-fixed-g40",
+    "launch_label": "s1_survival_gate-return-teacher-route-readiness-label-fixed-g40",
+    "non_promotable": true,
+    "run_session_id": "20260426-104351",
+    "safety_flags": {
+      "benchmark_run": false,
+      "canonical_serial_benchmark_run": false,
+      "checkpoint_promoted": false,
+      "config_runtime_or_phase_files_edited": false,
+      "docker_cleanup_by_atlas_recorded": true,
+      "docker_started_by_this_task": false,
+      "f1_approved": false,
+      "original_task_incomplete": true,
+      "parallel_benchmark_run": false,
+      "performance_improvement_claimed": false,
+      "promotion_allowed": false,
+      "source_code_edited": false,
+      "tests_run": false,
+      "training_or_rerun_started_by_this_task": false,
+      "used_104351_as_success_or_promotion": false,
+      "user_aborted_run": true
+    },
+    "scratch_rebind_initialized_correctly": true,
+    "source_session_id": "20260426-104351"
+  }
+}

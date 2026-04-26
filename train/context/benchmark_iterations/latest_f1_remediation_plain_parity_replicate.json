@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_plain_parity_replicate",
+  "created_at": "2026-04-25T22:00:00Z",
+  "source_evidence": ".sisyphus/evidence/benchmark-900/plain-s1-survival-parity-replicate-global40.json",
+  "source_parity_restore_evidence": ".sisyphus/evidence/benchmark-900/source-parity-restore-after-charge-slack.json",
+  "baseline_run": "20260421-134719",
+  "target_run": "20260426-055834",
+  "phase": "s1_survival",
+  "training_start_mode": "scratch",
+  "seed_label": "parity-replicate-g40",
+  "current_global_episode_count": 154,
+  "monitoring_note": "Previous delegated monitor timed out and did not stop at global_40; Atlas observed Docker still running and stopped the stack.",
+  "sample_statuses_reached": [
+    "bootstrap_10:early_stop_warning",
+    "bootstrap_20:early_stop_warning",
+    "global_40:main_fail",
+    "global_80:review_reversal"
+  ],
+  "baseline_global_40_metrics": {
+    "avg_clean_per_step": 0.5882771765271765,
+    "battery_fail_rate": 0.05,
+    "zero_charge_battery_fail_rate": 0.0,
+    "route_phase_return_stall_rate": 0.3178254180203925,
+    "planner_policy_divergence_rate": 0.8445435352412536,
+    "win_rate": 0.9
+  },
+  "global_40_metrics": {
+    "avg_clean_per_step": 0.40124356972688285,
+    "battery_fail_rate": 0.85,
+    "zero_charge_battery_fail_rate": 0.8,
+    "route_phase_return_stall_rate": 0.4326048987304588,
+    "planner_policy_divergence_rate": 0.8627033786200962,
+    "win_rate": 0.1
+  },
+  "global_40_delta_vs_baseline": {
+    "avg_clean_per_step": -0.18703360680029365,
+    "battery_fail_rate": 0.7999999999999999,
+    "zero_charge_battery_fail_rate": 0.8,
+    "route_phase_return_stall_rate": 0.1147794807100663,
+    "planner_policy_divergence_rate": 0.018159843378842592,
+    "win_rate": -0.8
+  },
+  "global_80_metrics": {
+    "avg_clean_per_step": 0.3927562868369158,
+    "battery_fail_rate": 0.6,
+    "zero_charge_battery_fail_rate": 0.55,
+    "route_phase_return_stall_rate": 0.4178888061752251,
+    "planner_policy_divergence_rate": 0.8663556285465036,
+    "win_rate": 0.35
+  },
+  "gate_failures": [
+    "avg_clean_per_step",
+    "battery_fail_rate",
+    "zero_charge_battery_fail_rate",
+    "route_phase_return_stall_rate",
+    "win_rate_trajectory"
+  ],
+  "decision": "revert",
+  "promotion_allowed": false,
+  "checkpoint_promoted": false,
+  "canonical_serial_benchmark_run": false,
+  "continuation_allowed_past_global40": false,
+  "f1_approved": false,
+  "docker_stopped": true,
+  "next_action": "ask_oracle_for_next_diagnosis_before_any_restart_or_new_lever"
+}

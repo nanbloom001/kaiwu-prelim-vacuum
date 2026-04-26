@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import subprocess
 import tempfile
+import time
+import uuid
 from pathlib import Path
 
 
@@ -113,6 +115,12 @@ def build_training_mode_overrides(start_mode: str, resume_bundle_dir: str = "") 
     raise ValueError(f"unsupported start mode: {start_mode}")
 
 
+def build_launch_instance_id(phase: str) -> str:
+    phase_slug = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(phase or "phase"))
+    phase_slug = phase_slug.strip("-") or "phase"
+    return f"{phase_slug}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:12]}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start a training phase using an env overlay")
     parser.add_argument("phase", help="Phase name, e.g. s1_survival")
@@ -141,6 +149,7 @@ def main() -> int:
 
     extra_overrides = build_training_mode_overrides(args.start_mode, args.resume_bundle_dir)
     extra_overrides["KAIWU_TRAIN_PHASE"] = args.phase
+    extra_overrides["KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID"] = build_launch_instance_id(args.phase)
     if args.seed_label:
         extra_overrides["KAIWU_PHASE_RUN_LABEL"] = f"{args.phase}_{args.seed_label}"
 
@@ -164,6 +173,7 @@ def main() -> int:
             print(f"env_file={env_file}")
             for key in (
                 "KAIWU_TRAIN_PHASE",
+                "KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID",
                 "KAIWU_TRAINING_START_MODE",
                 "KAIWU_PRELOAD_MODEL",
                 "KAIWU_RESUME_BUNDLE_DIR",

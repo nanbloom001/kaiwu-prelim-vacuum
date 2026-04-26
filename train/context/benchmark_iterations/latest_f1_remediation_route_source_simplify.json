@@ -1,0 +1,31 @@
+{
+  "schema": "latest_f1_remediation_route_source_simplify_v1",
+  "updated_at": "2026-04-26T02:52:00+08:00",
+  "baseline_run_id": "20260421-134719",
+  "run_session_id": "20260426-024234",
+  "phase": "s1_survival_route_source_simplify_v1",
+  "sample_point": "global_40",
+  "global_episode_count_observed_after_stop": 42,
+  "decision": "revert",
+  "promotion_allowed": false,
+  "checkpoint_promoted": false,
+  "continuation_allowed_past_global_40": false,
+  "canonical_serial_benchmark_run": false,
+  "evidence_path": ".sisyphus/evidence/benchmark-900/route-source-simplify-global40-20260426-024234.json",
+  "comparison_output": ".sisyphus/evidence/benchmark-900/route-source-simplify-global40-compare.json",
+  "sample_point_status": {
+    "bootstrap_10": "direction_normal",
+    "bootstrap_20": "early_stop_warning",
+    "global_40": "main_fail"
+  },
+  "behavior_metrics": {
+    "avg_clean_per_step": 0.3750119972262,
+    "battery_fail_rate": 0.95,
+    "zero_charge_battery_fail_rate": 0.95,
+    "route_phase_return_stall_rate": 0.5252071182882585,
+    "planner_policy_divergence_rate": 0.8717383777743166,
+    "route_phase_teacher_from_critical_fallback_rate": 0.0,
+    "win_rate": 0.05
+  },
+  "no_promotion_reason": "global_40 main_fail after route-source simplification; critical fallback suppression worked mechanically but survival and charging metrics regressed"
+}

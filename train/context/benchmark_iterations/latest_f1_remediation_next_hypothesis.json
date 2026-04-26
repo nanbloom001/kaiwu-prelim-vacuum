@@ -1,0 +1,253 @@
+{
+  "artifact": "post-restoration-collapse-next-hypothesis",
+  "comparison_table": [
+    {
+      "classification": "bootstrap_failed_no_promotion",
+      "evidence": "baseline_partial_restore_corrected_rerun",
+      "failure_mode": "severe bootstrap_20 survival collapse after partial historical restoration; route/return teacher masks nonzero but survival/win gates collapsed",
+      "implication": "historical restoration is failed/blocked and must not be rerun or extended to global40/global80 without Oracle direction",
+      "key_metrics": {
+        "_count": 20,
+        "avg_charge_count": 8.25,
+        "avg_clean_per_step": 0.3793489493172156,
+        "avg_clean_score": 122.3,
+        "avg_remaining_charge": 24.0,
+        "battery_fail_rate": 0.9,
+        "planner_policy_divergence_rate": 0.879494996602569,
+        "return_action_teacher_mask_nonzero_rate": 0.04229192874393892,
+        "route_phase_action_teacher_mask_nonzero_rate": 0.17785375129584485,
+        "route_phase_planner_divergence_rate": 0.7642768492944296,
+        "route_phase_return_stall_rate": 0.49406404762531847,
+        "win_rate": 0.1,
+        "zero_charge_among_battery_fail_rate": 0.8888888888888888,
+        "zero_charge_battery_fail_rate": 0.8
+      },
+      "run_or_artifact": "20260426-072623",
+      "stop_point": "bootstrap_20"
+    },
+    {
+      "classification": "bootstrap_failed_blocker_no_rerun",
+      "evidence": "curriculum_parity_bootstrap_blocker",
+      "failure_mode": "baseline-visible curriculum weights alone caused bootstrap collapse before formal global40",
+      "implication": "curriculum parity is halted; no rerun or extension is justified",
+      "key_metrics": {
+        "avg_clean_per_step": 0.3591590436574064,
+        "battery_fail_rate": 0.95,
+        "win_rate": 0.05,
+        "zero_charge_battery_fail_rate": 0.8
+      },
+      "run_or_artifact": "20260426-064152",
+      "stop_point": "global_episode_count_34_global_40_missing_local"
+    },
+    {
+      "classification": "revert",
+      "evidence": "plain_s1_survival_restored_source_replicate",
+      "failure_mode": "source parity restoration did not reproduce baseline: high battery/zero-charge failures and elevated return stall persisted",
+      "implication": "plain rerun/reproducibility path is not promotable and should not be repeated as a lever",
+      "key_metrics": {
+        "avg_clean_per_step": 0.40124356972688285,
+        "battery_fail_rate": 0.85,
+        "planner_policy_divergence_rate": 0.8627033786200962,
+        "route_phase_return_stall_rate": 0.4326048987304588,
+        "win_rate": 0.1,
+        "zero_charge_battery_fail_rate": 0.8
+      },
+      "run_or_artifact": "20260426-055834",
+      "stop_point": "global_40_main_fail_overshot_to_global_80"
+    },
+    {
+      "classification": [
+        "phase_env_drift",
+        "curriculum_reward_default_drift"
+      ],
+      "evidence": "non_source_parity_audit_after_plain_replicate",
+      "failure_mode": "checkpoint/resume mismatch rejected; visible drift remains in teacher/default activity, reward shares, and phase/curriculum context",
+      "implication": "next work should be diagnostic/instrumentation-only around divergence attribution, not another behavior lever or restoration run",
+      "key_metrics": {
+        "baseline_global_40": {
+          "avg_clean_per_step": 0.5882771765271766,
+          "battery_fail_rate": 0.05,
+          "planner_policy_divergence_rate": 0.8445435352412538,
+          "route_phase_return_stall_rate": 0.3178254180203926,
+          "win_rate": 0.9,
+          "zero_charge_battery_fail_rate": 0.0
+        },
+        "reward_share_drift_visible": "Target global_40 reward attribution shifts away from baseline CPS/necessary-charge shares: reward_positive_share_cps_bonus 0.054927 vs 0.173762 and reward_charging_positive_share_necessary_charge_bonus 0.0 vs 0.152761.",
+        "target_global_40": {
+          "avg_clean_per_step": 0.40124356972688285,
+          "battery_fail_rate": 0.85,
+          "planner_policy_divergence_rate": 0.8627033786200962,
+          "route_phase_return_stall_rate": 0.4326048987304588,
+          "win_rate": 0.1,
+          "zero_charge_battery_fail_rate": 0.8
+        },
+        "teacher_drift_visible": "Target global_40 exposes nonzero return/route teacher masks and critical-fallback route teacher source rate=1.0; baseline global_40 records zero/unavailable teacher-mask/source buckets, so teacher/default parity is not established."
+      },
+      "run_or_artifact": "20260426-055834",
+      "stop_point": "diagnosis_only_no_training"
+    },
+    {
+      "classification": "REJECT",
+      "evidence": "final_package_and_final_wave_status",
+      "failure_mode": "original benchmark-900 task remains incomplete and latest final-wave phase reverted",
+      "implication": "no promotion, benchmark success, or F1 approval may be claimed",
+      "key_metrics": {
+        "avg_clean_per_step": 0.3986613846300233,
+        "battery_fail_rate": 0.925,
+        "route_phase_return_stall_rate": 0.5302433961371753,
+        "win_rate": 0.05,
+        "zero_charge_battery_fail_rate": 0.85
+      },
+      "run_or_artifact": "20260426-000354",
+      "stop_point": "no_promoted_checkpoint_no_canonical_serial_30"
+    }
+  ],
+  "created_at": "2026-04-25T23:39:54.430692+00:00",
+  "diagnosis_only": true,
+  "docker_proof": {
+    "docker_started_by_this_task": false,
+    "packaging_command": "docker ps --filter name=kaiwu-train --format '{{.Names}} {{.Status}}'",
+    "packaging_docker_stopped": true,
+    "packaging_output_lines": [],
+    "pre_command": "docker ps --filter name=kaiwu-train --format '{{.Names}} {{.Status}}'",
+    "pre_docker_stopped": true,
+    "pre_output_lines": []
+  },
+  "inputs_inspected": [
+    ".sisyphus/evidence/benchmark-900/baseline-partial-restore-global40-rerun.json",
+    "train/context/benchmark_iterations/latest_f1_remediation_baseline_partial_restore_global40_rerun.json",
+    ".sisyphus/evidence/benchmark-900/baseline-20260421-config-recovery-search.json",
+    ".sisyphus/evidence/benchmark-900/baseline-20260421-historical-config-reconstruction.json",
+    ".sisyphus/evidence/benchmark-900/curriculum-parity-bootstrap-blocker.json",
+    ".sisyphus/evidence/benchmark-900/plain-s1-survival-parity-replicate-global40.json",
+    ".sisyphus/evidence/benchmark-900/non-source-parity-audit-after-plain-replicate.json",
+    ".sisyphus/evidence/benchmark-900/final-wave-current-status.json",
+    ".sisyphus/evidence/benchmark-900/final/evidence-package.json",
+    ".sisyphus/notepads/benchmark-900-iteration/learnings.md",
+    ".sisyphus/notepads/benchmark-900-iteration/issues.md"
+  ],
+  "next_action": "Atlas should verify this diagnostic package, then ask Oracle before any prep/execution. If approved, perform only the named policy/teacher divergence instrumentation-source diagnosis prep; otherwise remain blocked with no rerun/training/benchmark/promotion.",
+  "no_training_benchmark_promotion_proof": {
+    "benchmark_run": false,
+    "canonical_serial_benchmark_run": false,
+    "checkpoint_promoted": false,
+    "docker_compose_modified": false,
+    "phase_env_modified": false,
+    "plan_modified": false,
+    "promotion_allowed": false,
+    "runtime_state_modified": false,
+    "source_code_modified": false,
+    "training_run": false
+  },
+  "oracle_verdict_followed": "APPROVE_ONE_NEW_HYPOTHESIS_DIAGNOSTIC",
+  "original_task_status": {
+    "canonical_serial_30_score_ge_900": false,
+    "evidence": {
+      "final_package_acceptance_gate": {
+        "analyzer_summary_available": false,
+        "integrity_checker_passed_for_canonical_serial": false,
+        "overall_success": false,
+        "serial_30_available": false,
+        "serial_30_score_ge_900": false,
+        "validator_passed": false
+      },
+      "final_wave_current_status": {
+        "decision": "revert",
+        "latest_run_id": "20260426-000354",
+        "no_canonical_serial_30": true,
+        "no_promoted_checkpoint": true,
+        "no_score_900_evidence": true,
+        "phase": "s1_survival_return_teacher_aligned_v1",
+        "rollback_applied": true
+      }
+    },
+    "f1_approved": false,
+    "original_task_incomplete": true,
+    "promoted_checkpoint_exists": false
+  },
+  "read_only_diagnostic": true,
+  "rejected_options": [
+    {
+      "decision": "rejected",
+      "option": "rerun_partial_restore_or_continue_to_global40_global80",
+      "reason": "Corrected partial restore already triggered bootstrap_20 severe-collapse: battery_fail_rate=0.9, zero_charge_battery_fail_rate=0.8, win_rate=0.1."
+    },
+    {
+      "decision": "rejected",
+      "option": "rerun_or_extend_curriculum_parity",
+      "reason": "Curriculum parity matched phase/weights but bootstrap-collapsed and halted at global_episode_count=34 with global_40 missing_local."
+    },
+    {
+      "decision": "rejected",
+      "option": "broad_reward_teacher_curriculum_sweep",
+      "reason": "Multiple simultaneous levers would violate the single-hypothesis constraint and retained evidence does not prove safe scalar values."
+    },
+    {
+      "decision": "rejected",
+      "option": "promotion_or_canonical_serial_benchmark",
+      "reason": "No keep gate, no promoted checkpoint, no serial-30 >=900 evidence, and final package records overall_success=false."
+    },
+    {
+      "decision": "rejected",
+      "option": "infer_KAIWU_RETURN_ACTION_TEACHER_WEIGHT_as_executable_value",
+      "reason": "Exact baseline value is not found; inferring it would violate the explicit no-inference constraint."
+    },
+    {
+      "decision": "rejected",
+      "option": "global80_recovery_probe",
+      "reason": "The task explicitly rejects global80, and the latest collapse conditions fail before a recovery probe is justified."
+    },
+    {
+      "decision": "rejected",
+      "option": "new_behavior_phase_or_runtime_source_edit_now",
+      "reason": "This task is read-only diagnosis/evidence packaging; no implementation phase may be created or modified."
+    }
+  ],
+  "restoration_path_status": {
+    "config_search_classification": "partial_config_found",
+    "curriculum_parity_classification": "bootstrap_failed_blocker_no_rerun",
+    "exact_historical_launch_config_found": false,
+    "historical_reconstruction_verdict": "historical_config_partially_reconstructed_no_safe_restoration_candidate",
+    "historical_restoration_failed_or_blocked": true,
+    "missing_KAIWU_RETURN_ACTION_TEACHER_WEIGHT": true,
+    "partial_restore_classification": "bootstrap_failed_no_promotion",
+    "plain_source_parity_classification": "revert"
+  },
+  "schema_version": 1,
+  "selected_exactly_one_next_hypothesis_or_blocker": {
+    "category": "instrumentation_only_source_diagnosis",
+    "classification": "selected_one_evidence_supported_non_restoration_hypothesis",
+    "future_prep_must_not_do": [
+      "do not run training or benchmark",
+      "do not promote checkpoint",
+      "do not create/modify phase envs or runtime state",
+      "do not change action selection, reward, model, simulator, maps, scoring, Docker compose, or benchmark profiles",
+      "do not infer or set KAIWU_RETURN_ACTION_TEACHER_WEIGHT",
+      "do not select a second hypothesis or broad sweep"
+    ],
+    "future_prep_must_only_define": [
+      "which existing or proposed diagnostic counters would attribute policy-vs-planner divergence, route-phase teacher source, return-label timing, and return-stall/battery failure buckets",
+      "a no-training/no-benchmark static plan for instrumentation evidence; no behavior change, no phase env creation, no source edit unless separately approved by Oracle",
+      "a verification checklist that JSON validates and Docker remains stopped"
+    ],
+    "future_prep_scope_exact_files": [
+      "read-only inputs: .sisyphus/evidence/benchmark-900/baseline-partial-restore-global40-rerun.json",
+      "read-only inputs: .sisyphus/evidence/benchmark-900/curriculum-parity-bootstrap-blocker.json",
+      "read-only inputs: .sisyphus/evidence/benchmark-900/plain-s1-survival-parity-replicate-global40.json",
+      "read-only inputs: .sisyphus/evidence/benchmark-900/non-source-parity-audit-after-plain-replicate.json",
+      "optional read-only source inspection for instrumentation planning only: code/agent_ppo/workflow/train_workflow.py",
+      "optional read-only source inspection for instrumentation planning only: code/agent_ppo/feature/preprocessor.py",
+      "optional read-only source inspection for instrumentation planning only: code/agent_ppo/feature/expert.py",
+      "optional read-only source inspection for instrumentation planning only: code/agent_ppo/utils/return_readiness.py",
+      "future output only if Oracle approves prep: .sisyphus/evidence/benchmark-900/policy-teacher-divergence-instrumentation-prep.json",
+      "future context mirror only if Oracle approves prep: train/context/benchmark_iterations/latest_f1_remediation_policy_teacher_divergence_instrumentation_prep.json"
+    ],
+    "hypothesis_id": "policy_teacher_divergence_instrumentation_source_diagnosis_prep_v1",
+    "status": "prep_only_requires_oracle_before_execution",
+    "why_this_one": [
+      "Across failed plain, curriculum parity, and partial restore artifacts, the shared observable failure is survival/zero-charge collapse with high planner_policy_divergence_rate and elevated route_phase_return_stall_rate.",
+      "The non-source parity audit rejects checkpoint/resume mismatch and surfaces teacher/default drift: target global40 has nonzero return/route teacher masks and critical-fallback route source activity while baseline-visible fields are zero/unavailable.",
+      "Partial restore still collapses with route_phase_action_teacher_mask_nonzero_rate around 0.178 and route_phase_planner_divergence_rate around 0.764, so the next safe step is to diagnose label/action divergence attribution before any new behavior scalar or restoration execution."
+    ]
+  }
+}

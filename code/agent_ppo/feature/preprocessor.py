@@ -10,6 +10,7 @@ LTSPPO feature preprocessor for Robot Vacuum.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Mapping
 import math
 import os
 
@@ -58,6 +59,22 @@ def _clip_signed(value, scale):
     if scale <= 0:
         return 0.0
     return float(np.clip(value / scale, -1.0, 1.0))
+
+
+def _plain_survival_return_action_teacher_mask_allowed(
+    train_phase: str | None,
+    current_mode: int,
+    mode_contract: int,
+    mode_return: int,
+    readiness: Mapping[str, object] | None,
+) -> bool:
+    phase = str(train_phase or "").strip().lower()
+    if phase != "s1_survival":
+        return True
+    if int(current_mode) in (int(mode_contract), int(mode_return)):
+        return True
+    readiness = readiness or {}
+    return bool(readiness.get("return_now") or readiness.get("pre_return_ready"))
 
 
 def _bearing(dx, dz):
@@ -2092,6 +2109,38 @@ class Preprocessor:
                     return_action_teacher_mask = max(return_action_teacher_mask, 0.80)
                 elif not strong_heuristic_phase and return_action_reliable:
                     return_action_teacher_mask = max(return_action_teacher_mask, 0.65)
+            if return_action_teacher_mask > 0.0 and str(train_phase or "").strip().lower() == "s1_survival":
+                return_action_readiness = evaluate_simplified_return_readiness(
+                    charger_slack=slack,
+                    battery_ratio=battery_ratio,
+                    future_recoverability_score=self.future_recoverability_score,
+                    planner_multi_route_recoverability=planner_multi_route_recoverability,
+                    margin=float(guidance.get("margin", charge_margin_now)),
+                    route_contract_pressure=self.route_contract_pressure,
+                    known_path_count=int(all_known_paths),
+                    total_charger=self.total_charger,
+                    planner_topk_reachable_count=planner_topk_reachable_count,
+                    unknown_ratio=unknown_target_ratio,
+                    return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
+                    return_battery_ratio=Config.RETURN_BATTERY_RATIO,
+                    return_recoverability_threshold=Config.RETURN_RECOVERABILITY_THRESHOLD,
+                    prepare_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
+                    contract_battery_ratio=Config.CONTRACT_BATTERY_RATIO,
+                    contract_recoverability_threshold=Config.CONTRACT_RECOVERABILITY_THRESHOLD,
+                    charge_margin_low=Config.CHARGE_MARGIN_LOW,
+                    charge_margin_warn=Config.CHARGE_MARGIN_WARN,
+                    contract_route_pressure_threshold=Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
+                    unknown_path_risk_battery_ratio=Config.UNKNOWN_PATH_RISK_BATTERY_RATIO,
+                    unknown_path_risk_threshold=Config.UNKNOWN_PATH_RISK_THRESHOLD,
+                )
+                if not _plain_survival_return_action_teacher_mask_allowed(
+                    train_phase,
+                    self.current_mode,
+                    self.MODE_CONTRACT,
+                    self.MODE_RETURN,
+                    return_action_readiness,
+                ):
+                    return_action_teacher_mask = 0.0
             route_phase_action_teacher = -1
             route_phase_action_teacher_mask = 0.0
             route_phase_teacher_from_return_reliable = 0.0

@@ -1,0 +1,48 @@
+{
+  "phase": "s1_survival_charge_slack_feature_v1",
+  "target_run": "20260426-053353",
+  "baseline_run": "20260421-134719",
+  "stop_gate": "global_40",
+  "sample_point_statuses": {
+    "bootstrap_10": "early_stop_warning",
+    "bootstrap_20": "early_stop_warning",
+    "global_40": "main_fail"
+  },
+  "decision": {
+    "value": "revert",
+    "promotion_allowed": false,
+    "checkpoint_promoted": false,
+    "canonical_serial_benchmark_run": false,
+    "continuation_allowed_past_global40": false,
+    "reason": "global40 catastrophic survival failure despite near-CPS recovery"
+  },
+  "global_40_target_metrics": {
+    "avg_clean_per_step": 0.44278963908898117,
+    "battery_fail_rate": 1.0,
+    "zero_charge_battery_fail_rate": 0.95,
+    "route_phase_return_stall_rate": 0.5621322404277922,
+    "planner_policy_divergence_rate": 0.8650948951573894,
+    "win_rate": 0.0
+  },
+  "global_40_baseline_metrics": {
+    "avg_clean_per_step": 0.5882771765271765,
+    "battery_fail_rate": 0.05,
+    "zero_charge_battery_fail_rate": 0.0,
+    "route_phase_return_stall_rate": 0.3178254180203925,
+    "planner_policy_divergence_rate": 0.8445435352412536,
+    "win_rate": 0.9
+  },
+  "gate_results": {
+    "avg_clean_per_step": false,
+    "battery_fail_rate": false,
+    "zero_charge_battery_fail_rate": false,
+    "route_phase_return_stall_rate": false,
+    "win_rate_trajectory": false
+  },
+  "comparison_note": "Observation-only charge slack nearly recovered CPS but destroyed survival and is not promotable.",
+  "notes": {
+    "promotion": "No checkpoint promoted.",
+    "canonical": "No canonical serial benchmark run.",
+    "evidence": ".sisyphus/evidence/benchmark-900/charge-slack-feature-global40-20260426-053353.json"
+  }
+}

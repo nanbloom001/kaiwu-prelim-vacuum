@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_policy_teacher_divergence_instrumentation_implementation",
+  "mirrors_evidence_artifact": ".sisyphus/evidence/benchmark-900/policy-teacher-divergence-instrumentation-implementation.json",
+  "hypothesis_id": "policy_teacher_divergence_instrumentation_source_diagnosis_prep_v1",
+  "created_at": "2026-04-26T09:12:00+08:00",
+  "oracle_verdict_followed": "APPROVE_INSTRUMENTATION_IMPLEMENTATION_ONLY",
+  "decision": "instrumentation_only_implemented_no_training_execution",
+  "implementation_performed": true,
+  "promotion_allowed": false,
+  "checkpoint_promoted": false,
+  "benchmark_run": false,
+  "canonical_serial_benchmark_run": false,
+  "f1_approved": false,
+  "original_task_incomplete": true,
+  "modified_code_files": [
+    "code/agent_ppo/workflow/train_workflow.py",
+    "code/agent_ppo/workflow/curriculum_state.py",
+    "code/tests/test_curriculum_and_checkpoint_score.py"
+  ],
+  "counter_categories_added": [
+    "policy-vs-planner divergence by route teacher source",
+    "return-stall by route teacher source",
+    "policy-vs-planner divergence by return-label timing",
+    "return-stall by return-label timing",
+    "battery/zero-charge failure by last route source",
+    "battery failure by last return-label timing",
+    "policy-teacher action adoption by source/timing"
+  ],
+  "verification_summary": {
+    "focused_tests": "103 passed in 1.53s",
+    "compile_check_exit_code": 0,
+    "lsp_diagnostics_status": "not_clean_preexisting_environment_noise",
+    "json_validation": true,
+    "docker_stopped_pre": true,
+    "docker_stopped_post": true
+  },
+  "behavior_change_guarantee": {
+    "source_changes_are_diagnostic_only": true,
+    "reward_action_model_teacher_phase_runtime_behavior_changed": false,
+    "training_or_benchmark_executed": false,
+    "checkpoint_promoted": false,
+    "kaiwu_return_action_teacher_weight_inferred_or_set": false
+  },
+  "next_action": "Oracle approval is required before any training execution or further source-edit instrumentation work."
+}

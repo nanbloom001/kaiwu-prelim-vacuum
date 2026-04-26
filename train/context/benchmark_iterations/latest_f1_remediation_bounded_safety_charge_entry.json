@@ -1,0 +1,15 @@
+{
+  "plan_context": "benchmark-900",
+  "iteration": "latest_f1_remediation_bounded_safety_charge_entry.json",
+  "phase": "s1_survival_bounded_safety_charge_entry_v1",
+  "metrics_comparison": {
+    "baseline_run": "20260421-134719",
+    "target_run": "20260426-035002",
+    "avg_clean_per_step_change": -0.2776101177036471,
+    "battery_fail_rate_change": 0.10,
+    "zero_charge_battery_fail_rate_change": 0.15,
+    "route_phase_return_stall_rate_change": -0.00717886748139424,
+    "win_rate_change": -0.05
+  },
+  "notes": "No canonical serial benchmark. Promotion remains disallowed. Conservative remediation."
+}

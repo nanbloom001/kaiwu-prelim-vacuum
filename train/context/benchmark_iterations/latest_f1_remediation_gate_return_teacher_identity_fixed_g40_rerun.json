@@ -1,0 +1,41 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_teacher_identity_fixed_g40_rerun",
+  "classification": "identity_fixed_rerun_current_source_session_switch_no_accepted_metrics_for_fresh_run",
+  "created_at": "2026-04-26T10:35:30+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/gate-return-teacher-identity-fixed-g40-rerun.json",
+  "next_action": "Ask Oracle before any source/config/runtime edit, Docker/training rerun, benchmark, checkpoint promotion, F1 approval, or original-task completion claim.",
+  "summary": {
+    "accepted_metrics_for_fresh_run": false,
+    "command_start_wall_time": 1777170774.669173,
+    "docker_stopped_now": true,
+    "exact_command": "cd train && /home/user/TcKaiwuFinal/.conda-numpy/bin/python run_training_phase.py s1_survival --seed-label gate-return-teacher-route-readiness-identity-fixed-g40",
+    "expected_source_session_id": "20260426-103328",
+    "fresh_manifest_launch_label": "",
+    "fresh_run_session_id": "20260426-103328",
+    "likely_immediate_blockers": [
+      "launch_label is unexpectedly empty in current/run_session.json despite the identity fix relying on KAIWU_PHASE_RUN_LABEL to distinguish same-launch reuse from stale state.",
+      "current curriculum state/source_session_id remained stale at 20260426-094445 after the fresh scratch manifest was initialized, indicating scratch clear/source-session state still did not produce a bound fresh current curriculum state.",
+      "This task is evidence-only; blocker identification is for Oracle review and does not implement a fix."
+    ],
+    "non_promotable": true,
+    "observed_current_source_session_id": "20260426-094445",
+    "safety_flags": {
+      "benchmark_run": false,
+      "canonical_serial_benchmark_run": false,
+      "checkpoint_promoted": false,
+      "config_runtime_or_phase_files_edited": false,
+      "docker_cleanup_by_atlas_recorded": true,
+      "docker_started_by_this_task": false,
+      "f1_approved": false,
+      "original_task_incomplete": true,
+      "parallel_benchmark_run": false,
+      "performance_improvement_claimed": false,
+      "promotion_allowed": false,
+      "source_code_edited": false,
+      "tests_run": false,
+      "training_or_rerun_started_by_this_task": false,
+      "used_094445_as_success_or_promotion": false
+    },
+    "stop_reason": "current_source_session_switch"
+  }
+}

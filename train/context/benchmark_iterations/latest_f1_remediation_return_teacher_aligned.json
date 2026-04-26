@@ -1,0 +1,41 @@
+{
+  "baseline_run_id": "20260421-134719",
+  "behavior_metrics": {
+    "avg_clean_per_step": 0.3986613846300233,
+    "battery_fail_rate": 0.925,
+    "planner_policy_divergence_rate": 0.873095543410934,
+    "route_phase_return_stall_rate": 0.5302433961371753,
+    "win_rate": 0.05,
+    "zero_charge_battery_fail_rate": 0.85
+  },
+  "checkpoint_promoted": false,
+  "comparison_report": "/home/user/TcKaiwuFinal/.sisyphus/evidence/benchmark-900/aligned-phase-global40-compare-20260426-000354.json",
+  "continuation_allowed_past_global_40": false,
+  "decision": "revert",
+  "evidence_path": "/home/user/TcKaiwuFinal/.sisyphus/evidence/benchmark-900/aligned-phase-global40-20260426-000354.json",
+  "gate_report": "/home/user/TcKaiwuFinal/.sisyphus/evidence/benchmark-900/aligned-phase-global40-gate-20260426-000354.json",
+  "global_episode_count": 40,
+  "improved_metrics_vs_baseline_thresholds": [],
+  "no_promotion_reason": "Decision is revert or lacks explicit promotion path; no checkpoint promoted.",
+  "phase": "s1_survival_return_teacher_aligned_v1",
+  "previous_source_bucket_run_id": "20260425-233014",
+  "promotion_allowed": false,
+  "regressed_metrics_vs_baseline_thresholds": [
+    "avg_clean_per_step",
+    "battery_fail_rate",
+    "zero_charge_battery_fail_rate",
+    "route_phase_return_stall_rate"
+  ],
+  "run_session_id": "20260426-000354",
+  "sample_point": "global_40",
+  "schema": "latest_f1_remediation_return_teacher_aligned_v1",
+  "source_bucket_metrics": {
+    "active_pair_count": 0.0,
+    "return_teacher_in_route_phase_rate": 0.0,
+    "return_teacher_outside_route_phase_rate": 1.0,
+    "route_phase_teacher_from_anchor_or_target_rate": 0.0,
+    "route_phase_teacher_from_critical_fallback_rate": 0.0,
+    "route_phase_teacher_from_return_reliable_rate": 0.0
+  },
+  "updated_at": "2026-04-25T16:10:04.058241+00:00"
+}

@@ -255,6 +255,196 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["avg_reward_charger_access_probe_bonus"], (0.0 + 0.02 + 0.0) / 3.0, places=5)
         self.assertAlmostEqual(metrics["avg_reward_coverage_tangle_penalty"], -0.02, places=5)
 
+    def test_policy_teacher_divergence_diagnostics_aggregate_counts_and_rates(self):
+        from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
+        from agent_ppo.workflow.train_workflow import EpisodeRunner, TEACHER_LABEL_QUALITY_METRIC_KEYS
+
+        step_records = [
+            {
+                "mode": 3,
+                "anchor_return_dist": 5.0,
+                "route_phase_active": 1.0,
+                "planner_policy_divergence": 0.0,
+                "return_action_teacher_mask": 0.0,
+                "route_phase_action_teacher_mask": 0.0,
+            },
+            {
+                "act": 2,
+                "mode": 3,
+                "anchor_return_dist": 5.0,
+                "route_phase_active": 1.0,
+                "planner_policy_divergence": 1.0,
+                "return_action_teacher": 3,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher": 2,
+                "route_phase_action_teacher_mask": 1.0,
+                "route_phase_teacher_from_critical_fallback": 1.0,
+            },
+            {
+                "act": 4,
+                "mode": 1,
+                "anchor_return_dist": 4.0,
+                "route_phase_active": 0.0,
+                "planner_policy_divergence": 1.0,
+                "return_action_teacher": 4,
+                "return_action_teacher_mask": 1.0,
+                "route_phase_action_teacher_mask": 0.0,
+                "battery_fail_type": "zero_charge",
+                "charge_count": 0.0,
+            },
+        ]
+        diagnostics = EpisodeRunner._episode_sequence_diagnostics(step_records)
+
+        missing_keys = [key for key in TEACHER_LABEL_QUALITY_METRIC_KEYS if key not in diagnostics]
+        self.assertEqual(missing_keys, [])
+        self.assertEqual(diagnostics["route_phase_teacher_from_critical_fallback_count"], 1.0)
+        self.assertEqual(diagnostics["route_source_critical_fallback_policy_planner_divergence_count"], 1.0)
+        self.assertEqual(diagnostics["route_source_critical_fallback_return_stall_count"], 1.0)
+        self.assertEqual(diagnostics["route_source_critical_fallback_policy_teacher_adoption_count"], 1.0)
+        self.assertEqual(diagnostics["route_source_return_reliable_policy_planner_divergence_rate"], 0.0)
+        self.assertAlmostEqual(
+            float(diagnostics["route_source_critical_fallback_policy_planner_divergence_rate"] or 0.0), 1.0
+        )
+        self.assertAlmostEqual(float(diagnostics["route_source_critical_fallback_return_stall_rate"] or 0.0), 1.0)
+        self.assertAlmostEqual(
+            float(diagnostics["route_source_critical_fallback_policy_teacher_adoption_rate"] or 0.0), 1.0
+        )
+        self.assertEqual(diagnostics["return_teacher_in_route_phase_count"], 1.0)
+        self.assertEqual(diagnostics["return_teacher_mode_expand_count"], 1.0)
+        self.assertEqual(diagnostics["return_timing_mode_contract_policy_planner_divergence_count"], 1.0)
+        self.assertEqual(diagnostics["return_timing_mode_contract_return_stall_count"], 1.0)
+        self.assertEqual(diagnostics["return_timing_mode_expand_policy_teacher_adoption_count"], 1.0)
+        self.assertAlmostEqual(
+            float(diagnostics["return_timing_mode_contract_policy_planner_divergence_rate"] or 0.0), 1.0
+        )
+        self.assertAlmostEqual(float(diagnostics["return_timing_mode_contract_return_stall_rate"] or 0.0), 1.0)
+        self.assertAlmostEqual(
+            float(diagnostics["return_timing_mode_expand_policy_teacher_adoption_rate"] or 0.0), 1.0
+        )
+        self.assertEqual(diagnostics["battery_fail_last_route_source_critical_fallback_count"], 1.0)
+        self.assertEqual(diagnostics["zero_charge_battery_fail_last_route_source_critical_fallback_count"], 1.0)
+        self.assertEqual(diagnostics["battery_fail_last_return_timing_mode_expand_count"], 1.0)
+        self.assertAlmostEqual(float(diagnostics["battery_fail_last_route_source_critical_fallback_rate"] or 0.0), 1.0)
+        self.assertAlmostEqual(
+            float(diagnostics["zero_charge_battery_fail_last_route_source_critical_fallback_rate"] or 0.0), 1.0
+        )
+        self.assertAlmostEqual(float(diagnostics["battery_fail_last_return_timing_mode_expand_rate"] or 0.0), 1.0)
+
+        records = [
+            {
+                "result": "battery",
+                "clean_score": 100.0,
+                "finished_steps": 10.0,
+                "charge_count": 0.0,
+                "remaining_charge": 0.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 0.0,
+                "clean_per_charge_when_charged": None,
+                "clean_per_step": 0.1,
+                "expert_weight": 0.0,
+                "profile": "anchor",
+                **diagnostics,
+            },
+            {
+                "result": "completed",
+                "clean_score": 200.0,
+                "finished_steps": 20.0,
+                "charge_count": 1.0,
+                "remaining_charge": 10.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 200.0,
+                "clean_per_charge_when_charged": 200.0,
+                "clean_per_step": 0.2,
+                "expert_weight": 0.0,
+                "profile": "anchor",
+                "route_phase_teacher_from_critical_fallback_count": 1.0,
+                "route_source_critical_fallback_policy_planner_divergence_count": 0.0,
+                "route_source_critical_fallback_return_stall_count": 0.0,
+                "route_source_critical_fallback_policy_teacher_adoption_count": 1.0,
+                "return_teacher_mode_expand_count": 1.0,
+                "return_timing_mode_expand_policy_teacher_adoption_count": 0.0,
+            },
+        ]
+        metrics = _aggregate_episode_records(records, min_episode_count=1)
+        self.assertIsNotNone(metrics)
+        assert metrics is not None
+
+        self.assertEqual(metrics["route_phase_teacher_from_critical_fallback_count"], 2.0)
+        self.assertAlmostEqual(metrics["route_source_critical_fallback_policy_planner_divergence_rate"], 0.5)
+        self.assertAlmostEqual(metrics["route_source_critical_fallback_return_stall_rate"], 0.5)
+        self.assertAlmostEqual(metrics["route_source_critical_fallback_policy_teacher_adoption_rate"], 1.0)
+        self.assertAlmostEqual(metrics["return_timing_mode_expand_policy_teacher_adoption_rate"], 0.5)
+        self.assertAlmostEqual(metrics["battery_fail_last_route_source_critical_fallback_rate"], 1.0)
+        self.assertAlmostEqual(metrics["zero_charge_battery_fail_last_route_source_critical_fallback_rate"], 1.0)
+        self.assertAlmostEqual(metrics["battery_fail_last_return_timing_mode_expand_rate"], 1.0)
+
+    def test_policy_teacher_divergence_diagnostics_zero_denominators_default_to_zero(self):
+        from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
+        from agent_ppo.workflow.train_workflow import EpisodeRunner, TEACHER_LABEL_QUALITY_METRIC_KEYS
+
+        diagnostics = EpisodeRunner._episode_sequence_diagnostics([
+            {
+                "mode": 0,
+                "anchor_return_dist": 1.0,
+                "route_phase_active": 0.0,
+                "planner_policy_divergence": 1.0,
+                "return_action_teacher_mask": 0.0,
+                "route_phase_action_teacher_mask": 0.0,
+            }
+        ])
+        self.assertEqual([key for key in TEACHER_LABEL_QUALITY_METRIC_KEYS if key not in diagnostics], [])
+        self.assertEqual(diagnostics["route_source_return_reliable_policy_planner_divergence_rate"], 0.0)
+        self.assertEqual(diagnostics["route_source_critical_fallback_return_stall_rate"], 0.0)
+        self.assertEqual(diagnostics["return_timing_mode_return_policy_teacher_adoption_rate"], 0.0)
+        self.assertEqual(diagnostics["battery_fail_last_route_source_none_rate"], 0.0)
+        self.assertEqual(diagnostics["zero_charge_battery_fail_last_route_source_none_rate"], 0.0)
+        self.assertEqual(diagnostics["battery_fail_last_return_timing_none_rate"], 0.0)
+
+        records = [
+            {
+                "result": "completed",
+                "clean_score": 100.0,
+                "finished_steps": 10.0,
+                "charge_count": 1.0,
+                "remaining_charge": 50.0,
+                "invalid_move_rate": 0.0,
+                "charge_efficiency": 100.0,
+                "clean_per_charge_when_charged": 100.0,
+                "clean_per_step": 0.1,
+                "expert_weight": 0.0,
+                "profile": "anchor",
+            }
+        ]
+        metrics = _aggregate_episode_records(records, min_episode_count=1)
+        self.assertIsNotNone(metrics)
+        assert metrics is not None
+
+        self.assertEqual(metrics["route_source_return_reliable_policy_planner_divergence_rate"], 0.0)
+        self.assertEqual(metrics["route_source_critical_fallback_return_stall_rate"], 0.0)
+        self.assertEqual(metrics["return_timing_mode_return_policy_teacher_adoption_rate"], 0.0)
+        self.assertEqual(metrics["battery_fail_last_route_source_none_rate"], 0.0)
+        self.assertEqual(metrics["zero_charge_battery_fail_last_route_source_none_rate"], 0.0)
+        self.assertEqual(metrics["battery_fail_last_return_timing_none_rate"], 0.0)
+
+    def test_unrelated_runtime_and_profile_payloads_do_not_emit_teacher_diagnostics(self):
+        from agent_ppo.workflow.train_workflow import (
+            EnvConfigSampler,
+            EpisodeRunner,
+            TEACHER_LABEL_QUALITY_METRIC_KEYS,
+        )
+
+        sampler = EnvConfigSampler({"env_conf": {}})
+        profile_payload = sampler.sampled_profile_metrics()
+        self.assertEqual([key for key in TEACHER_LABEL_QUALITY_METRIC_KEYS if key in profile_payload], [])
+
+        runtime_holder = types.SimpleNamespace(
+            _current_train_global_step=lambda: 7,
+            _global_step_since_resume=lambda: 3,
+        )
+        runtime_payload = EpisodeRunner._runtime_progress_payload(runtime_holder)
+        self.assertEqual(runtime_payload, {"global_step_since_resume": 3, "checkpoint_global_step": 7})
+        self.assertEqual([key for key in TEACHER_LABEL_QUALITY_METRIC_KEYS if key in runtime_payload], [])
+
     def test_recent_episode_metrics_include_new_return_reward_components(self):
         from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
 
@@ -716,6 +906,85 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
         self.assertIn("route_phase_teacher_from_critical_fallback_rate", WINDOW_COMPARISON_METRIC_KEYS)
         self.assertIn("return_teacher_outside_route_phase_rate", WINDOW_COMPARISON_METRIC_KEYS)
         self.assertIn("return_teacher_mode_expand_count", WINDOW_COMPARISON_METRIC_KEYS)
+
+    def test_plain_survival_return_action_teacher_mask_gate_suppresses_outside_route_when_not_ready(self):
+        from agent_ppo.feature.preprocessor import _plain_survival_return_action_teacher_mask_allowed
+
+        return_action_teacher = 4
+        allowed = _plain_survival_return_action_teacher_mask_allowed(
+            "s1_survival",
+            current_mode=2,
+            mode_contract=3,
+            mode_return=4,
+            readiness={"return_now": False, "pre_return_ready": False},
+        )
+
+        self.assertFalse(allowed)
+        self.assertEqual(return_action_teacher, 4)
+
+    def test_plain_survival_return_action_teacher_mask_gate_preserves_route_and_readiness_cases(self):
+        from agent_ppo.feature.preprocessor import _plain_survival_return_action_teacher_mask_allowed
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+
+        self.assertTrue(
+            _plain_survival_return_action_teacher_mask_allowed(
+                "s1_survival",
+                current_mode=3,
+                mode_contract=3,
+                mode_return=4,
+                readiness={"return_now": False, "pre_return_ready": False},
+            )
+        )
+        self.assertTrue(
+            _plain_survival_return_action_teacher_mask_allowed(
+                "s1_survival",
+                current_mode=2,
+                mode_contract=3,
+                mode_return=4,
+                readiness={"return_now": False, "pre_return_ready": True},
+            )
+        )
+
+        diagnostics = EpisodeRunner._episode_sequence_diagnostics(
+            [
+                {
+                    "mode": 4,
+                    "anchor_return_dist": 5.0,
+                    "route_phase_active": 1.0,
+                    "return_action_teacher": 2,
+                    "return_action_teacher_mask": 1.0,
+                    "route_phase_action_teacher": 2,
+                    "route_phase_action_teacher_mask": 1.0,
+                    "route_phase_teacher_from_return_reliable": 1.0,
+                    "act": 2,
+                }
+            ]
+        )
+        self.assertEqual(float(diagnostics["route_phase_teacher_from_return_reliable_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["return_route_teacher_active_pair_rate"] or 0.0), 1.0)
+
+    def test_plain_survival_return_action_teacher_mask_gate_preserves_critical_fallback_source(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+
+        diagnostics = EpisodeRunner._episode_sequence_diagnostics(
+            [
+                {
+                    "mode": 3,
+                    "anchor_return_dist": 9.0,
+                    "route_phase_active": 1.0,
+                    "return_action_teacher": -1,
+                    "return_action_teacher_mask": 0.0,
+                    "route_phase_action_teacher": 6,
+                    "route_phase_action_teacher_mask": 1.0,
+                    "route_phase_teacher_from_critical_fallback": 1.0,
+                    "act": 1,
+                }
+            ]
+        )
+
+        self.assertEqual(float(diagnostics["route_phase_teacher_from_critical_fallback_count"] or 0.0), 1.0)
+        self.assertEqual(float(diagnostics["route_phase_teacher_from_return_reliable_count"] or 0.0), 0.0)
+        self.assertEqual(float(diagnostics["route_source_critical_fallback_policy_planner_divergence_count"] or 0.0), 0.0)
 
     def test_local_window_aggregation_persists_teacher_mask_observability(self):
         from agent_ppo.workflow.curriculum_state import _aggregate_episode_records
@@ -2147,6 +2416,79 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             third = store.seed_initial_state("sess-b", "warmup", lite_benchmark_used=False)
             self.assertEqual(third["stage"], "warmup")
 
+    def test_scratch_seed_initial_state_rejects_source_session_switch_without_clear(self):
+        from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
+
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {"KAIWU_TRAINING_START_MODE": "scratch"}, clear=False):
+            store = SharedCurriculumStateStore(Path(tmp))
+            first = store.seed_initial_state("20260426-094444", "blend", lite_benchmark_used=False)
+            second = store.seed_initial_state("20260426-094445", "warmup", lite_benchmark_used=False)
+
+            self.assertEqual(first["source_session_id"], "20260426-094444")
+            self.assertEqual(second["source_session_id"], "20260426-094444")
+            self.assertEqual(second["stage"], "blend")
+            self.assertFalse((store.layout.for_run("20260426-094445").curriculum_state_path).exists())
+
+    def test_scratch_seed_initial_state_rebinds_when_current_manifest_matches_fresh_session(self):
+        from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
+
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {"KAIWU_TRAINING_START_MODE": "scratch"}, clear=False):
+            store = SharedCurriculumStateStore(Path(tmp))
+            stale = store.seed_initial_state("20260426-094445", "blend", lite_benchmark_used=False)
+            stale["global_episode_count"] = 153
+            stale["global_step_since_resume"] = 16152
+            stale["sample_window_metrics"] = {"global_40": {"_count": 20}}
+            store.state_path.write_text(json.dumps(stale, ensure_ascii=True), encoding="utf-8")
+            store.layout.current.run_session_manifest_path.write_text(
+                json.dumps(
+                    {
+                        "run_session_id": "20260426-103328",
+                        "state_initialized": False,
+                        "training_start_mode": "scratch",
+                        "train_phase": "s1_survival",
+                        "launch_label": "s1_survival_gate-return-teacher-route-readiness-identity-fixed-g40",
+                    },
+                    ensure_ascii=True,
+                ),
+                encoding="utf-8",
+            )
+
+            rebound = store.seed_initial_state("20260426-103328", "warmup", lite_benchmark_used=False)
+
+            self.assertEqual(rebound["source_session_id"], "20260426-103328")
+            self.assertEqual(rebound["stage"], "warmup")
+            self.assertEqual(rebound["global_episode_count"], 0)
+            self.assertEqual(rebound["global_step_since_resume"], 0)
+            self.assertEqual(rebound["sample_window_metrics"], {})
+            self.assertTrue((store.layout.for_run("20260426-103328").curriculum_state_path).exists())
+
+    def test_scratch_curriculum_refresh_accepts_only_bound_source_session_signals(self):
+        from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
+
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {"KAIWU_TRAINING_START_MODE": "scratch"}, clear=False):
+            store = SharedCurriculumStateStore(Path(tmp))
+            store.seed_initial_state("20260426-094444", "warmup", lite_benchmark_used=False)
+            store.write_signal(
+                "helper-sibling",
+                {
+                    "session_id": "20260426-094445",
+                    "window_metrics": {"_count": 40, "win_rate": 1.0, "battery_fail_rate": 0.0},
+                    "bootstrap_metrics": {"_count": 20, "win_rate": 1.0, "battery_fail_rate": 0.0},
+                    "learning_metrics": {"global_step": 1000.0},
+                    "runtime": {"global_step_since_resume": 1000},
+                    "recent_episode_metrics": [{"win": 1.0, "battery_fail": 0.0}] * 40,
+                },
+            )
+
+            state = store.refresh_state()
+
+            self.assertEqual(state["source_session_id"], "20260426-094444")
+            self.assertEqual(state["global_episode_count"], 0)
+            self.assertEqual(state["last_bootstrap_metrics"], {})
+            self.assertEqual(state["last_global_metrics"], {})
+            self.assertEqual(state["sample_window_metrics"], {})
+            self.assertFalse((store.layout.for_run("20260426-094445").comparison_samples_path).exists())
+
     def test_curriculum_state_read_state_ignores_legacy_root_state_in_scratch_mode(self):
         from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
 
@@ -3404,6 +3746,186 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             self.assertTrue(manifest["state_initialized"])
             clear_mock.assert_called_once()
 
+    def test_primary_helper_reuses_initialized_manifest_for_same_scratch_launch_label(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+        from agent_ppo.workflow.state_layout import ensure_runtime_state_dirs
+        import agent_ppo.workflow.train_workflow as train_workflow_mod
+
+        with TemporaryDirectory() as tmp:
+            code_dir = Path(tmp)
+            runner = EpisodeRunner.__new__(EpisodeRunner)
+            runner.code_path = code_dir
+            runner.state_layout = ensure_runtime_state_dirs(code_dir)
+            runner.training_start_mode = "scratch"
+            runner.signal_source_id = "aisrv-1-pid-1"
+            seed_calls = []
+
+            def _seed(session_id, initial_stage, lite_benchmark_used=False, lite_benchmark_metrics=None):
+                seed_calls.append(session_id)
+                return {"source_session_id": session_id, "stage": initial_stage}
+
+            runner.curriculum_store = type("Store", (), {"seed_initial_state": staticmethod(_seed)})()
+
+            env = {
+                "KAIWU_AISRV_INDEX": "1",
+                "KAIWU_TRAINING_START_MODE": "scratch",
+                "KAIWU_TRAIN_PHASE": "s1_survival",
+                "KAIWU_PHASE_RUN_LABEL": "s1_survival_gate-return-teacher-route-readiness-clean-g40",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                with patch.object(train_workflow_mod, "clear_current_runtime_state") as clear_mock:
+                    with patch.object(train_workflow_mod.time, "strftime", side_effect=["20260426-094444", "20260426-094445"]):
+                        first = EpisodeRunner._claim_run_session_id(runner, "helper-a")
+                        runner.signal_source_id = "aisrv-1-pid-447"
+                        second = EpisodeRunner._claim_run_session_id(runner, "helper-b")
+
+            manifest = json.loads(runner.state_layout.current.run_session_manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(first, "20260426-094444")
+            self.assertEqual(second, "20260426-094444")
+            self.assertEqual(manifest["run_session_id"], "20260426-094444")
+            self.assertEqual(manifest["launch_label"], env["KAIWU_PHASE_RUN_LABEL"])
+            self.assertEqual(seed_calls, ["20260426-094444"])
+            clear_mock.assert_called_once()
+
+    def test_primary_helper_reuses_initialized_manifest_for_same_launch_instance(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+        from agent_ppo.workflow.state_layout import ensure_runtime_state_dirs
+        import agent_ppo.workflow.train_workflow as train_workflow_mod
+
+        with TemporaryDirectory() as tmp:
+            code_dir = Path(tmp)
+            runner = EpisodeRunner.__new__(EpisodeRunner)
+            runner.code_path = code_dir
+            runner.state_layout = ensure_runtime_state_dirs(code_dir)
+            runner.training_start_mode = "scratch"
+            runner.signal_source_id = "aisrv-1-pid-1"
+            seed_calls = []
+
+            def _seed(session_id, initial_stage, lite_benchmark_used=False, lite_benchmark_metrics=None):
+                seed_calls.append(session_id)
+                return {"source_session_id": session_id, "stage": initial_stage}
+
+            runner.curriculum_store = type("Store", (), {"seed_initial_state": staticmethod(_seed)})()
+
+            env = {
+                "KAIWU_AISRV_INDEX": "1",
+                "KAIWU_TRAINING_START_MODE": "scratch",
+                "KAIWU_TRAIN_PHASE": "s1_survival",
+                "KAIWU_PHASE_RUN_LABEL": "s1_survival_gate-return-teacher-route-readiness-label-fixed-g40",
+                "KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID": "s1_survival-20260426-110000-aaaabbbbcccc",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                with patch.object(train_workflow_mod, "clear_current_runtime_state") as clear_mock:
+                    with patch.object(train_workflow_mod.time, "strftime", side_effect=["20260426-110000", "20260426-110001"]):
+                        first = EpisodeRunner._claim_run_session_id(runner, "helper-a")
+                        runner.signal_source_id = "aisrv-1-pid-447"
+                        second = EpisodeRunner._claim_run_session_id(runner, "helper-b")
+
+            manifest = json.loads(runner.state_layout.current.run_session_manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(first, "20260426-110000")
+            self.assertEqual(second, "20260426-110000")
+            self.assertEqual(manifest["launch_label"], env["KAIWU_PHASE_RUN_LABEL"])
+            self.assertEqual(manifest["launch_instance_id"], env["KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID"])
+            self.assertEqual(seed_calls, ["20260426-110000"])
+            clear_mock.assert_called_once()
+
+    def test_primary_helper_creates_fresh_manifest_for_different_launch_instance_same_label(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+        from agent_ppo.workflow.state_layout import ensure_runtime_state_dirs
+        import agent_ppo.workflow.train_workflow as train_workflow_mod
+
+        with TemporaryDirectory() as tmp:
+            code_dir = Path(tmp)
+            runner = EpisodeRunner.__new__(EpisodeRunner)
+            runner.code_path = code_dir
+            runner.state_layout = ensure_runtime_state_dirs(code_dir)
+            runner.training_start_mode = "scratch"
+            runner.signal_source_id = "aisrv-1-pid-1"
+            seed_calls = []
+
+            def _seed(session_id, initial_stage, lite_benchmark_used=False, lite_benchmark_metrics=None):
+                seed_calls.append(session_id)
+                return {"source_session_id": session_id, "stage": initial_stage}
+
+            runner.curriculum_store = type("Store", (), {"seed_initial_state": staticmethod(_seed)})()
+            manifest_path = runner.state_layout.current.run_session_manifest_path
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "run_session_id": "20260426-104351",
+                        "state_initialized": True,
+                        "training_start_mode": "scratch",
+                        "train_phase": "s1_survival",
+                        "launch_label": "s1_survival_gate-return-teacher-route-readiness-label-fixed-g40",
+                        "launch_instance_id": "s1_survival-20260426-104351-oldoldoldold",
+                    },
+                    ensure_ascii=True,
+                ),
+                encoding="utf-8",
+            )
+
+            env = {
+                "KAIWU_AISRV_INDEX": "1",
+                "KAIWU_TRAINING_START_MODE": "scratch",
+                "KAIWU_TRAIN_PHASE": "s1_survival",
+                "KAIWU_PHASE_RUN_LABEL": "s1_survival_gate-return-teacher-route-readiness-label-fixed-g40",
+                "KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID": "s1_survival-20260426-111500-newnewnewnew",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                with patch.object(train_workflow_mod, "clear_current_runtime_state") as clear_mock:
+                    with patch.object(train_workflow_mod.time, "strftime", return_value="20260426-111500"):
+                        session_id = EpisodeRunner._claim_run_session_id(runner, "helper-fresh")
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(session_id, "20260426-111500")
+            self.assertEqual(manifest["run_session_id"], "20260426-111500")
+            self.assertEqual(manifest["launch_instance_id"], env["KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID"])
+            self.assertEqual(seed_calls, ["20260426-111500"])
+            clear_mock.assert_called_once()
+
+    def test_secondary_helper_reuses_initialized_manifest_for_bound_scratch_launch(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+        from agent_ppo.workflow.state_layout import ensure_runtime_state_dirs
+
+        with TemporaryDirectory() as tmp:
+            code_dir = Path(tmp)
+            runner = EpisodeRunner.__new__(EpisodeRunner)
+            runner.code_path = code_dir
+            runner.state_layout = ensure_runtime_state_dirs(code_dir)
+            runner.training_start_mode = "scratch"
+            runner.signal_source_id = "aisrv-2-pid-2"
+            runner.curriculum_store = type("Store", (), {})()
+            manifest_path = runner.state_layout.current.run_session_manifest_path
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "run_session_id": "20260426-094444",
+                        "state_initialized": True,
+                        "training_start_mode": "scratch",
+                        "train_phase": "s1_survival",
+                        "launch_label": "s1_survival_gate-return-teacher-route-readiness-clean-g40",
+                    },
+                    ensure_ascii=True,
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "KAIWU_AISRV_INDEX": "2",
+                    "KAIWU_TRAINING_START_MODE": "scratch",
+                    "KAIWU_TRAIN_PHASE": "s1_survival",
+                    "KAIWU_PHASE_RUN_LABEL": "s1_survival_gate-return-teacher-route-readiness-clean-g40",
+                },
+                clear=False,
+            ):
+                session_id = EpisodeRunner._claim_run_session_id(runner, "helper-secondary")
+
+            self.assertEqual(session_id, "20260426-094444")
+
     def test_secondary_helper_rejects_uninitialized_current_manifest(self):
         from agent_ppo.workflow.train_workflow import EpisodeRunner
         from agent_ppo.workflow.state_layout import ensure_runtime_state_dirs
@@ -3433,6 +3955,51 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
                 with patch.object(train_workflow_mod, "fcntl", None):
                     with self.assertRaises(RuntimeError):
                         EpisodeRunner._claim_run_session_id(runner, "helper-b")
+
+    def test_secondary_helper_rejects_same_label_different_launch_instance(self):
+        from agent_ppo.workflow.train_workflow import EpisodeRunner
+        from agent_ppo.workflow.state_layout import ensure_runtime_state_dirs
+        import agent_ppo.workflow.train_workflow as train_workflow_mod
+
+        with TemporaryDirectory() as tmp:
+            code_dir = Path(tmp)
+            runner = EpisodeRunner.__new__(EpisodeRunner)
+            runner.code_path = code_dir
+            runner.state_layout = ensure_runtime_state_dirs(code_dir)
+            runner.training_start_mode = "scratch"
+            runner.signal_source_id = "aisrv-2-pid-2"
+            runner.curriculum_store = type("Store", (), {})()
+            manifest_path = runner.state_layout.current.run_session_manifest_path
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "run_session_id": "20260426-104351",
+                        "state_initialized": True,
+                        "training_start_mode": "scratch",
+                        "train_phase": "s1_survival",
+                        "launch_label": "s1_survival_gate-return-teacher-route-readiness-label-fixed-g40",
+                        "launch_instance_id": "s1_survival-20260426-104351-oldoldoldold",
+                    },
+                    ensure_ascii=True,
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "KAIWU_AISRV_INDEX": "2",
+                    "KAIWU_TRAINING_START_MODE": "scratch",
+                    "KAIWU_TRAIN_PHASE": "s1_survival",
+                    "KAIWU_PHASE_RUN_LABEL": "s1_survival_gate-return-teacher-route-readiness-label-fixed-g40",
+                    "KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID": "s1_survival-20260426-111500-newnewnewnew",
+                },
+                clear=False,
+            ):
+                with patch.object(train_workflow_mod, "fcntl", None):
+                    with self.assertRaises(RuntimeError):
+                        EpisodeRunner._claim_run_session_id(runner, "helper-secondary")
 
     def test_save_resume_artifacts_named_episode_snapshot_writes_snapshot(self):
         from agent_ppo.workflow.train_workflow import EpisodeRunner
@@ -3631,6 +4198,28 @@ class CurriculumAndCheckpointScoreTests(unittest.TestCase):
             self.assertEqual(merged["C"], "3")
             self.assertEqual(merged["D"], "4")
             self.assertEqual(base_env.read_text(encoding="utf-8"), "A=1\nB=base\n")
+
+    def test_docker_compose_propagates_phase_run_label_to_services(self):
+        compose_path = Path(__file__).resolve().parents[2] / "train" / ".docker-compose.yaml"
+        compose_text = compose_path.read_text(encoding="utf-8")
+
+        self.assertIn("KAIWU_PHASE_RUN_LABEL: ${KAIWU_PHASE_RUN_LABEL:-}", compose_text)
+        self.assertIn("KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID: ${KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID:-}", compose_text)
+
+    def test_run_training_phase_builds_unique_launch_instance_ids(self):
+        script_path = Path(__file__).resolve().parents[2] / "train" / "run_training_phase.py"
+        spec = importlib.util.spec_from_file_location("run_training_phase", script_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        with patch.object(module.time, "strftime", return_value="20260426-111500"):
+            first = module.build_launch_instance_id("s1_survival")
+            second = module.build_launch_instance_id("s1_survival")
+
+        self.assertTrue(first.startswith("s1_survival-20260426-111500-"))
+        self.assertTrue(second.startswith("s1_survival-20260426-111500-"))
+        self.assertNotEqual(first, second)
 
     def test_run_training_phase_builds_resume_mode_overrides(self):
         script_path = Path(__file__).resolve().parents[2] / "train" / "run_training_phase.py"

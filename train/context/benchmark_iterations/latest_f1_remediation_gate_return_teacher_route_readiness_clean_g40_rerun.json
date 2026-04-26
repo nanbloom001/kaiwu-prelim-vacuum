@@ -1,0 +1,81 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_teacher_route_readiness_clean_g40_rerun",
+  "classification": "clean_strict_rerun_no_accepted_episodes_monitor_timeout",
+  "created_at": "2026-04-26T10:16:40+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/gate-return-teacher-route-readiness-clean-g40-rerun.json",
+  "next_action": "Ask Oracle before any new run, fix, benchmark, promotion, source/config/runtime edit, or F1/original-task completion claim. This no-metrics result is non-promotable.",
+  "run_session_id": "20260426-094444",
+  "summary": {
+    "accepted_metric_windows": [],
+    "current_runtime_state_readback": {
+      "curriculum_state_json": {
+        "global_episode_count": 153,
+        "global_step_since_resume": 16152,
+        "last_bootstrap_count": 20,
+        "last_global_count": 40,
+        "sample_window_keys_present": [
+          "bootstrap_10",
+          "bootstrap_20",
+          "global_120",
+          "global_40",
+          "global_80"
+        ],
+        "source_session_id": "20260426-094445",
+        "train_phase": "s1_survival"
+      },
+      "note": "Required runtime files were read for audit, but they no longer represent the requested strict no-metrics run. They currently show a different/subsequent run and are not used as metrics for 20260426-094444.",
+      "run_session_json": {
+        "created_at": 1777167885.117604,
+        "created_by_helper_session_id": "20260426-094445-pid-447",
+        "created_by_source_id": "aisrv-1-pid-447",
+        "run_session_id": "20260426-094445",
+        "state_initialized": true,
+        "train_phase": "s1_survival",
+        "training_start_mode": "scratch"
+      },
+      "target_run_id_present_in_current_runtime_files": false
+    },
+    "docker_stopped_now": true,
+    "exact_command": "cd train && /home/user/TcKaiwuFinal/.conda-numpy/bin/python run_training_phase.py s1_survival --seed-label gate-return-teacher-route-readiness-clean-g40",
+    "fresh_runtime_binding_from_atlas": {
+      "created_at": 1777167884.9100454,
+      "created_at_iso_utc": "2026-04-26T01:44:44.910045+00:00",
+      "exact_command": "cd train && /home/user/TcKaiwuFinal/.conda-numpy/bin/python run_training_phase.py s1_survival --seed-label gate-return-teacher-route-readiness-clean-g40",
+      "run_session_id": "20260426-094444",
+      "source": "Atlas monitor output supplied in task context",
+      "state_initialized": true,
+      "train_phase": "s1_survival",
+      "training_start_mode": "scratch"
+    },
+    "monitor_outcome": {
+      "cleanup_command": "cd train && docker compose -f .docker-compose.yaml --profile distributed down",
+      "cleanup_down_executed_by_atlas": true,
+      "final_seen_before_down": {
+        "accepted_episodes_or_windows": false,
+        "bootstrap_10_collected": false,
+        "bootstrap_20_collected": false,
+        "global_40_collected": false,
+        "global_episode_count": 0,
+        "global_step_since_resume": 0
+      },
+      "post_docker_empty_from_task_context": true,
+      "stop_reason": "monitor_timeout"
+    },
+    "safety_flags": {
+      "benchmark_run": false,
+      "canonical_serial_benchmark_run": false,
+      "checkpoint_promoted": false,
+      "config_or_runtime_edited": false,
+      "docker_started_by_followup": false,
+      "f1_approved": false,
+      "metrics_hidden_or_downplayed": false,
+      "original_task_incomplete": true,
+      "parallel_benchmark_run": false,
+      "performance_improvement_claimed": false,
+      "promotion_allowed": false,
+      "source_code_edited": false,
+      "training_or_rerun_started_by_followup": false
+    }
+  },
+  "verdict": "non_promotable_no_accepted_metrics"
+}

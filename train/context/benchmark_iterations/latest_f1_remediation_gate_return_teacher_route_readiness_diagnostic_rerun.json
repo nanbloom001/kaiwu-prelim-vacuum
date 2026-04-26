@@ -1,0 +1,75 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_teacher_route_readiness_diagnostic_rerun",
+  "classification": "diagnostic_overran_stop_gate_subagent_timeout_manual_cleanup",
+  "created_at": "2026-04-26T09:38:20+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/gate-return-teacher-route-readiness-diagnostic-rerun.json",
+  "next_action": "Atlas/Oracle must decide next direction after the protocol overrun. Do not promote, benchmark, rerun, continue training, or claim F1/original task completion from this evidence.",
+  "run_session_id": "20260426-090735",
+  "summary": {
+    "docker_stopped_now": true,
+    "headline_global40": {
+      "new_battery_fail_rate": 0.375,
+      "new_critical_fallback_rate": 0.9799240368963646,
+      "new_outside_route_teacher_timing_rate": 0.0,
+      "new_return_reliable_rate": 0.0,
+      "new_win_rate": 0.6,
+      "new_zero_charge_battery_fail_rate": 0.2,
+      "old_battery_fail_rate": 0.85,
+      "old_critical_fallback_rate": 0.9541841982234689,
+      "old_outside_route_teacher_timing_rate": 0.9884169884169884,
+      "old_return_reliable_rate": 0.002805049088359046,
+      "old_win_rate": 0.125,
+      "old_zero_charge_battery_fail_rate": 0.8
+    },
+    "outside_route_harvest_depart_mask_suppression_visible_at_global40": true,
+    "protocol": {
+      "actual_global_episode_count_after_manual_cleanup": 276,
+      "actual_global_step_since_resume_after_manual_cleanup": 15945,
+      "approved_latest_stop_window": "global_40",
+      "approved_stop_gates": [
+        "bootstrap_20 severe collapse",
+        "accepted global_40"
+      ],
+      "bootstrap_20_severe_collapse_rule": "battery_fail_rate >= 0.90 and zero_charge_battery_fail_rate >= 0.70 and win_rate <= 0.10",
+      "bootstrap_20_severe_collapse_triggered": false,
+      "global80_continuation_allowed": false,
+      "overran_approved_global40_stop_gate": true,
+      "overrun_windows_present": [
+        "global_80",
+        "global_120",
+        "global_160",
+        "global_200"
+      ],
+      "protocol_violation_detail": "The diagnostic was allowed to continue beyond the approved global_40 stop gate because the monitoring task timed out/was interrupted and left Docker running; Atlas manually stopped Docker at 2026-04-26T09:35+08:00."
+    },
+    "runtime_bound": {
+      "bound_from_existing_state": true,
+      "created_after_command_start": true,
+      "created_at": 1777165655.3810499,
+      "created_at_iso_utc": "2026-04-26T01:07:35.381050+00:00",
+      "created_by_helper_session_id": "20260426-090735-pid-449",
+      "created_by_source_id": "aisrv-1-pid-449",
+      "curriculum_binding_match": true,
+      "curriculum_phase_match": true,
+      "curriculum_source_session_id": "20260426-090735",
+      "run_session_id": "20260426-090735",
+      "state_initialized": true,
+      "train_phase": "s1_survival",
+      "training_start_mode": "scratch"
+    },
+    "safety_flags": {
+      "benchmark_run": false,
+      "canonical_serial_benchmark_run": false,
+      "checkpoint_promoted": false,
+      "continued_to_global80": true,
+      "continued_to_global80_was_protocol_violation": true,
+      "f1_approved": false,
+      "original_task_incomplete": true,
+      "parallel_benchmark_run": false,
+      "performance_improvement_claimed": false,
+      "promotion_allowed": false,
+      "restart_or_rerun_performed_in_followup": false
+    }
+  },
+  "verdict": "invalid_for_promotion_due_protocol_overrun"
+}

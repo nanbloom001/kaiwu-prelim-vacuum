@@ -1,0 +1,35 @@
+{
+  "artifact": "latest_f1_remediation_runtime_identity_scratch_session_race_fix",
+  "created_at": "2026-04-26T10:30:58+08:00",
+  "evidence_path": ".sisyphus/evidence/benchmark-900/runtime-identity-scratch-session-race-fix.json",
+  "next_action": "Ask Oracle before any Docker/training rerun, benchmark, checkpoint promotion, F1 approval, or original-task completion claim.",
+  "oracle_verdict_followed": "APPROVE_ONE_BOUNDED_ACTION",
+  "summary": {
+    "classification_fixed": "multi_aisrv_session_race_current_runtime_overwrite",
+    "correction": {
+      "file": "code/agent_ppo/workflow/train_workflow.py",
+      "runtime_behavior_changed": false,
+      "status": "fixed"
+    },
+    "docker_stopped_now": true,
+    "implementation": "scratch run_session manifests reuse matching initialized launch_label/phase/mode; scratch curriculum source_session_id cannot switch without explicit clear; foreign sibling signals remain ignored by accepted current metrics.",
+    "lsp": "Introduced _read_existing_for_current_launch optional-member issue fixed with explicit None guard; remaining basedpyright diagnostics are broad/pre-existing noise including unrelated line 681 optional-member report.",
+    "safety_flags": {
+      "benchmark_run": false,
+      "canonical_serial_benchmark_run": false,
+      "checkpoint_promoted": false,
+      "config_runtime_or_phase_files_edited": false,
+      "docker_started": false,
+      "f1_approved": false,
+      "original_task_incomplete": true,
+      "parallel_benchmark_run": false,
+      "performance_improvement_claimed": false,
+      "promotion_allowed": false,
+      "source_code_edited": true,
+      "tests_run": true,
+      "training_or_rerun_started": false,
+      "used_094445_as_success_or_promotion": false
+    },
+    "tests": "post-correction focused 7-test identity suite PASS; full affected test module 111 tests PASS; train_workflow.py py_compile PASS"
+  }
+}

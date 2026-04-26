@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_policy_teacher_process_stop_diagnosis",
+  "mirrors_evidence_artifact": ".sisyphus/evidence/benchmark-900/policy-teacher-process-stop-diagnosis.json",
+  "created_at": "2026-04-26T08:42:00+08:00",
+  "oracle_verdict_followed": "APPROVE_PROCESS_STOP_DIAGNOSTIC_ONLY",
+  "decision": "read_only_diagnosis_classified_process_stop_as_instrumentation_exception",
+  "target_run_session_id": "20260426-075439",
+  "train_phase": "s1_survival",
+  "cause_classification": "instrumentation_exception_missing_derived_rate_key",
+  "confidence": "high",
+  "root_evidence": {
+    "aisrv_traceback": "KeyError: 'route_source_return_reliable_policy_planner_divergence_rate' in train_workflow.py line 2503 while expanding TEACHER_LABEL_QUALITY_METRIC_KEYS",
+    "process_stop_chain": "AISRV workflow exception sent process_stop_request 1; learner received process_stop error_code 1 and exited with train/global step 0",
+    "runtime_metrics": "run_session 20260426-075439 stayed at global_episode_count=0 with empty bootstrap/global/sample metrics"
+  },
+  "not_classified_as": [
+    "training_success_shutdown_without_episodes",
+    "environment_startup_failure",
+    "replay_or_data_pipeline_issue",
+    "unknown"
+  ],
+  "minimal_future_fix_proposal_not_implemented": "Make per-episode diagnostics emit every TEACHER_LABEL_QUALITY_METRIC_KEYS entry for non-empty step_records, likely by applying _apply_teacher_label_quality_count_rates before _handle_episode_end indexes diagnostics or by defensive get-default handling plus focused tests.",
+  "verification_summary": {
+    "docker_stopped_pre": true,
+    "docker_stopped_post": true,
+    "json_validation": true,
+    "docker_started": false,
+    "training_rerun": false,
+    "benchmark_run": false,
+    "checkpoint_promoted": false,
+    "source_code_modified": false
+  },
+  "safety_flags": {
+    "promotion_allowed": false,
+    "checkpoint_promoted": false,
+    "benchmark_run": false,
+    "canonical_serial_benchmark_run": false,
+    "parallel_benchmark_run": false,
+    "f1_approved": false,
+    "original_task_incomplete": true,
+    "continued_to_global80": false,
+    "kaiwu_return_action_teacher_weight_inferred_or_set": false
+  },
+  "next_action": "Oracle review is required before any instrumentation fix, training rerun, benchmark, or promotion."
+}

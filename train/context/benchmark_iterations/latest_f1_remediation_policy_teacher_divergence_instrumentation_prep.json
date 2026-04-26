@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "artifact": "latest_f1_remediation_policy_teacher_divergence_instrumentation_prep",
+  "mirrors_evidence_artifact": ".sisyphus/evidence/benchmark-900/policy-teacher-divergence-instrumentation-prep.json",
+  "hypothesis_id": "policy_teacher_divergence_instrumentation_source_diagnosis_prep_v1",
+  "created_at": "2026-04-26T00:00:00Z",
+  "oracle_verdict_followed": "APPROVE_INSTRUMENTATION_PREP_ONLY",
+  "decision": "prep_only_requires_oracle_before_implementation",
+  "diagnosis_only": true,
+  "implementation_performed": false,
+  "promotion_allowed": false,
+  "checkpoint_promoted": false,
+  "benchmark_run": false,
+  "canonical_serial_benchmark_run": false,
+  "f1_approved": false,
+  "original_task_incomplete": true,
+  "source_and_evidence_inputs_inspected": [
+    ".sisyphus/evidence/benchmark-900/post-restoration-collapse-next-hypothesis.json",
+    ".sisyphus/evidence/benchmark-900/baseline-partial-restore-global40-rerun.json",
+    ".sisyphus/evidence/benchmark-900/curriculum-parity-bootstrap-blocker.json",
+    ".sisyphus/evidence/benchmark-900/plain-s1-survival-parity-replicate-global40.json",
+    ".sisyphus/evidence/benchmark-900/non-source-parity-audit-after-plain-replicate.json",
+    "code/agent_ppo/workflow/train_workflow.py",
+    "code/agent_ppo/feature/preprocessor.py",
+    "code/agent_ppo/feature/expert.py",
+    "code/agent_ppo/utils/return_readiness.py",
+    ".sisyphus/notepads/benchmark-900-iteration/learnings.md",
+    ".sisyphus/notepads/benchmark-900-iteration/issues.md"
+  ],
+  "summary": {
+    "static_plan_defined": true,
+    "instrumentation_implemented": false,
+    "existing_counter_groups_identified": [
+      "policy_vs_planner_divergence",
+      "route_phase_teacher_source",
+      "return_label_timing",
+      "return_stall_and_battery_failure"
+    ],
+    "missing_attribution_gaps_identified": [
+      "divergence_by_route_phase_teacher_source",
+      "return_stall_by_route_phase_teacher_source",
+      "battery_failure_by_preceding_source_or_timing_bucket",
+      "return_readiness_timing_null_outside_simplified_control_phases",
+      "policy_teacher_action_adoption_by_source"
+    ],
+    "future_counter_categories_planned_only": [
+      "policy_vs_planner_divergence_by_route_teacher_source",
+      "return_stall_by_route_teacher_source",
+      "policy_vs_planner_divergence_by_return_label_timing",
+      "return_stall_by_return_label_timing",
+      "battery_and_zero_charge_failure_by_last_route_source",
+      "battery_failure_by_last_return_label_timing",
+      "policy_teacher_action_adoption_by_source_and_timing"
+    ]
+  },
+  "evidence_ties": {
+    "partial_restore_bootstrap_collapse": "bootstrap_20 battery_fail_rate=0.9, zero_charge_battery_fail_rate=0.8, planner_policy_divergence_rate=0.879494996602569, route_phase_return_stall_rate=0.49406404762531847",
+    "curriculum_parity_collapse": "bootstrap_20 battery_fail_rate=0.95, zero_charge_battery_fail_rate=0.8, win_rate=0.05, global_40 missing_local",
+    "plain_s1_survival_failure": "global_40 battery_fail_rate=0.85, zero_charge_battery_fail_rate=0.8, planner_policy_divergence_rate=0.8627033786200962, route_phase_return_stall_rate=0.4326048987304588",
+    "non_source_parity_teacher_default_drift": "target global_40 nonzero return/route teacher masks and route_phase_teacher_from_critical_fallback_rate=1.0 while baseline records zero/unavailable teacher/source buckets"
+  },
+  "no_behavior_change_constraints": {
+    "source_code_modified": false,
+    "phase_env_modified": false,
+    "runtime_state_modified": false,
+    "docker_started": false,
+    "training_run": false,
+    "benchmark_run": false,
+    "checkpoint_promoted": false,
+    "teacher_scalar_inferred_or_set": false,
+    "multiple_hypotheses_selected": false
+  },
+  "rejection_list": [
+    "no training",
+    "no benchmark",
+    "no promotion",
+    "no phase env",
+    "no runtime-state edit",
+    "no Docker start",
+    "no teacher scalar inference",
+    "no global80 approval",
+    "no F1 approval",
+    "no multiple hypotheses"
+  ],
+  "docker_status_pre_check": {
+    "command": "docker ps --filter name=kaiwu-train --format '{{.Names}} {{.Status}}'",
+    "output_lines": [],
+    "docker_stopped": true
+  },
+  "verification_checklist": {
+    "evidence_json_validates": true,
+    "context_json_validates": true,
+    "docker_post_check_stopped": true,
+    "source_phase_runtime_edits_absent": true,
+    "notepads_appended": true
+  },
+  "next_action": "Verify this prep package, then request Oracle approval before any source-edit instrumentation implementation. Until then, hold: no training, benchmark, promotion, phase env, runtime-state edit, Docker start, or teacher scalar inference."
+}

@@ -1,0 +1,46 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_teacher_global40_readonly_diagnosis",
+  "created_at": "2026-04-26T09:42:02+08:00",
+  "diagnosis_summary": {
+    "critical_fallback_rose_because": "fallback filled critical route-phase samples when return/anchor/target reliability was absent; this was expected preservation of fallback, not a new source-selection bug.",
+    "global40_improved_because": "outside-route HARVEST/DEPART return-action mask supervision was suppressed while route-phase critical fallback stayed active and became better adopted/lower-stall at global_40.",
+    "likely_next_move_classification": "no_change_before_oracle",
+    "one_narrow_next_hypothesis": {
+      "classification": "no_change",
+      "exact_files_functions": [
+        "code/agent_ppo/feature/preprocessor.py::_plain_survival_return_action_teacher_mask_allowed",
+        "code/agent_ppo/feature/preprocessor.py::Preprocessor.reward_process route_phase_action_teacher source block",
+        "code/agent_ppo/feature/expert.py::ChargerExpert.get_charger_signal return_action_reliable computation",
+        "code/agent_ppo/feature/expert.py::ChargerExpert.get_teacher_guidance return_action_teacher_mask emission",
+        "code/tests/test_curriculum_and_checkpoint_score.py focused gate/source aggregation tests"
+      ],
+      "focused_test_plan_if_oracle_authorizes_tests_or_implementation": [
+        "Add/keep a focused aggregation test where s1_survival outside-route HARVEST/DEPART return_action_teacher_mask samples are suppressed to zero while return_action_teacher action value remains observable.",
+        "Add/keep a focused route-phase test proving critical battery CONTRACT/RETURN samples with suggested_action but no return_action_reliable/anchor/target reliability are attributed to route_phase_teacher_from_critical_fallback.",
+        "Add a negative test proving return_reliable is not fabricated when return_action_reliable is false, even when global route-phase fallback is active.",
+        "Do not change reward coefficients, phase thresholds, or KAIWU_RETURN_ACTION_TEACHER_WEIGHT unless Oracle explicitly chooses a new implementation path."
+      ],
+      "hypothesis": "The bounded mask gate should be preserved as-is for the next Oracle-approved step; do not relax return_action_reliable/readiness/source selection unless a clean, protocol-compliant diagnostic shows global_40 gains are not reproducible or fallback adoption/stall regresses.",
+      "id": "preserve_gate_do_not_relax_return_reliable_until_promotional_protocol_is_clean"
+    },
+    "protocol_status": "protocol_overrun_invalid_for_promotion",
+    "return_reliable_zero_because": "existing strict return_action_reliable source-selection remained unchanged and produced no reliable route return samples at global_40.",
+    "safety_flags": {
+      "benchmark_run": false,
+      "canonical_serial_benchmark_run": false,
+      "checkpoint_promoted": false,
+      "docker_started": false,
+      "f1_approved": false,
+      "global80_plus_used_as_success": false,
+      "original_task_incomplete": true,
+      "parallel_benchmark_run": false,
+      "promotion_allowed": false,
+      "source_code_edited": false,
+      "tests_run": false,
+      "training_or_rerun_started": false
+    }
+  },
+  "evidence_path": ".sisyphus/evidence/benchmark-900/gate-return-teacher-global40-readonly-diagnosis.json",
+  "next_action": "Ask Oracle before any code/config/runtime/reward/threshold/source-selection edit, training rerun, benchmark, checkpoint promotion, or F1/original-task completion claim.",
+  "run_session_id": "20260426-090735"
+}

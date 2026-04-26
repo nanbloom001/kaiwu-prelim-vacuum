@@ -124,6 +124,51 @@ TEACHER_LABEL_QUALITY_COUNT_KEYS = (
     "return_teacher_reliability_invariant_satisfied_count",
     "return_teacher_reliability_invariant_violated_count",
 )
+ROUTE_TEACHER_SOURCE_BUCKETS = (
+    "return_reliable",
+    "anchor_or_target",
+    "critical_fallback",
+)
+RETURN_LABEL_TIMING_BUCKETS = (
+    "inside_route_phase",
+    "outside_route_phase",
+    "mode_depart",
+    "mode_expand",
+    "mode_harvest",
+    "mode_contract",
+    "mode_return",
+    "mode_evade",
+    "mode_other",
+)
+ROUTE_SOURCE_FAILURE_BUCKETS = (*ROUTE_TEACHER_SOURCE_BUCKETS, "none")
+RETURN_TIMING_FAILURE_BUCKETS = (*RETURN_LABEL_TIMING_BUCKETS, "none")
+POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS = tuple(
+    key
+    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS
+    for key in (
+        f"route_source_{bucket}_policy_planner_divergence_count",
+        f"route_source_{bucket}_return_stall_count",
+        f"route_source_{bucket}_policy_teacher_adoption_count",
+    )
+) + tuple(
+    key
+    for bucket in RETURN_LABEL_TIMING_BUCKETS
+    for key in (
+        f"return_timing_{bucket}_policy_planner_divergence_count",
+        f"return_timing_{bucket}_return_stall_count",
+        f"return_timing_{bucket}_policy_teacher_adoption_count",
+    )
+) + tuple(
+    key
+    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS
+    for key in (
+        f"battery_fail_last_route_source_{bucket}_count",
+        f"zero_charge_battery_fail_last_route_source_{bucket}_count",
+    )
+) + tuple(
+    f"battery_fail_last_return_timing_{bucket}_count"
+    for bucket in RETURN_TIMING_FAILURE_BUCKETS
+)
 TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS = (
     "return_route_teacher_active_pair_rate",
     "return_route_teacher_agreement_rate",
@@ -151,9 +196,38 @@ TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS = (
     "return_teacher_reliability_invariant_satisfied_rate",
     "return_teacher_reliability_invariant_violated_rate",
 )
+POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_RATE_KEYS = tuple(
+    key
+    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS
+    for key in (
+        f"route_source_{bucket}_policy_planner_divergence_rate",
+        f"route_source_{bucket}_return_stall_rate",
+        f"route_source_{bucket}_policy_teacher_adoption_rate",
+    )
+) + tuple(
+    key
+    for bucket in RETURN_LABEL_TIMING_BUCKETS
+    for key in (
+        f"return_timing_{bucket}_policy_planner_divergence_rate",
+        f"return_timing_{bucket}_return_stall_rate",
+        f"return_timing_{bucket}_policy_teacher_adoption_rate",
+    )
+) + tuple(
+    key
+    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS
+    for key in (
+        f"battery_fail_last_route_source_{bucket}_rate",
+        f"zero_charge_battery_fail_last_route_source_{bucket}_rate",
+    )
+) + tuple(
+    f"battery_fail_last_return_timing_{bucket}_rate"
+    for bucket in RETURN_TIMING_FAILURE_BUCKETS
+)
 TEACHER_LABEL_QUALITY_METRIC_KEYS = (
     *TEACHER_LABEL_QUALITY_COUNT_KEYS,
+    *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS,
     *TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS,
+    *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_RATE_KEYS,
     "return_teacher_target_stable_rate",
     "return_teacher_target_unstable_rate",
     "return_teacher_suggested_legal_safe_rate",
@@ -242,6 +316,44 @@ def _apply_teacher_label_quality_count_rates(payload: dict[str, Any]) -> dict[st
     payload["return_teacher_reliability_invariant_violated_rate"] = _ratio(
         "return_teacher_reliability_invariant_violated_count", "return_teacher_count"
     )
+    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS:
+        denominator_key = f"route_phase_teacher_from_{bucket}_count"
+        payload[f"route_source_{bucket}_policy_planner_divergence_rate"] = _ratio(
+            f"route_source_{bucket}_policy_planner_divergence_count", denominator_key
+        )
+        payload[f"route_source_{bucket}_return_stall_rate"] = _ratio(
+            f"route_source_{bucket}_return_stall_count", denominator_key
+        )
+        payload[f"route_source_{bucket}_policy_teacher_adoption_rate"] = _ratio(
+            f"route_source_{bucket}_policy_teacher_adoption_count", denominator_key
+        )
+    for bucket in RETURN_LABEL_TIMING_BUCKETS:
+        if bucket == "inside_route_phase":
+            denominator_key = "return_teacher_in_route_phase_count"
+        elif bucket == "outside_route_phase":
+            denominator_key = "return_teacher_outside_route_phase_count"
+        else:
+            denominator_key = f"return_teacher_{bucket}_count"
+        payload[f"return_timing_{bucket}_policy_planner_divergence_rate"] = _ratio(
+            f"return_timing_{bucket}_policy_planner_divergence_count", denominator_key
+        )
+        payload[f"return_timing_{bucket}_return_stall_rate"] = _ratio(
+            f"return_timing_{bucket}_return_stall_count", denominator_key
+        )
+        payload[f"return_timing_{bucket}_policy_teacher_adoption_rate"] = _ratio(
+            f"return_timing_{bucket}_policy_teacher_adoption_count", denominator_key
+        )
+    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS:
+        payload[f"battery_fail_last_route_source_{bucket}_rate"] = _ratio(
+            f"battery_fail_last_route_source_{bucket}_count", "battery_fail_count"
+        )
+        payload[f"zero_charge_battery_fail_last_route_source_{bucket}_rate"] = _ratio(
+            f"zero_charge_battery_fail_last_route_source_{bucket}_count", "battery_fail_count"
+        )
+    for bucket in RETURN_TIMING_FAILURE_BUCKETS:
+        payload[f"battery_fail_last_return_timing_{bucket}_rate"] = _ratio(
+            f"battery_fail_last_return_timing_{bucket}_count", "battery_fail_count"
+        )
     return payload
 
 
@@ -450,11 +562,14 @@ def _aggregate_episode_records(records: list[dict[str, Any]], min_episode_count:
         "return_action_teacher_mask_nonzero_rate": avg("return_action_teacher_mask_nonzero_rate"),
         "route_phase_action_teacher_mask_mean": avg("route_phase_action_teacher_mask_mean"),
         "route_phase_action_teacher_mask_nonzero_rate": avg("route_phase_action_teacher_mask_nonzero_rate"),
-        **{key: sum(float(record.get(key, 0.0) or 0.0) for record in records) for key in TEACHER_LABEL_QUALITY_COUNT_KEYS},
+        **{
+            key: sum(float(record.get(key, 0.0) or 0.0) for record in records)
+            for key in (*TEACHER_LABEL_QUALITY_COUNT_KEYS, *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS)
+        },
         **{
             key: avg(key)
             for key in TEACHER_LABEL_QUALITY_METRIC_KEYS
-            if key not in TEACHER_LABEL_QUALITY_COUNT_KEYS
+            if key not in {*TEACHER_LABEL_QUALITY_COUNT_KEYS, *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS}
         },
         "suboptimal_target_hold_rate": avg("suboptimal_target_hold_rate"),
         "planner_policy_divergence_rate": avg("planner_policy_divergence_rate"),
@@ -871,7 +986,12 @@ def _aggregate_metrics(signals: list[dict[str, Any]], field_name: str, min_episo
     ]
     payload: dict[str, Any] = {"_count": total_count}
     for key in keys:
-        if key in {"battery_fail_count", "battery_positive_reward_count", *TEACHER_LABEL_QUALITY_COUNT_KEYS}:
+        if key in {
+            "battery_fail_count",
+            "battery_positive_reward_count",
+            *TEACHER_LABEL_QUALITY_COUNT_KEYS,
+            *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS,
+        }:
             payload[key] = sum(float((signal.get(field_name) or {}).get(key, 0.0) or 0.0) for signal in active)
         else:
             payload[key] = _weighted_average_from(active, field_name, key)
@@ -1138,6 +1258,12 @@ class SharedCurriculumStateStore:
         if updated != existing:
             _write_json(run_layout.comparison_samples_path, updated)
 
+    def _current_manifest_run_session_id(self) -> str:
+        payload = _read_json(self.layout.current.run_session_manifest_path)
+        if not payload:
+            return ""
+        return str(payload.get("run_session_id") or "").strip()
+
     def write_signal(self, source_id: str, payload: dict[str, Any]) -> None:
         record = {
             "source_id": source_id,
@@ -1175,6 +1301,10 @@ class SharedCurriculumStateStore:
         state = self.read_state()
         if state.get("source_session_id") == session_id:
             return state
+        current_session_id = str(state.get("source_session_id") or "").strip()
+        if current_session_id and is_scratch_mode():
+            if self._current_manifest_run_session_id() != str(session_id):
+                return state
         state = _default_state()
         stage = str(initial_stage or state.get("stage") or "warmup").strip().lower()
         if stage not in STAGE_INDEX:

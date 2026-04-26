@@ -1,0 +1,96 @@
+{
+  "artifact": "latest_f1_remediation_gate_return_action_teacher_to_route_or_readiness_implementation",
+  "behavior_change_boundaries": {
+    "docker_compose_modified": false,
+    "intended_behavior_change": "Only plain s1_survival return_action_teacher_mask is suppressed outside CONTRACT/RETURN unless explicit simplified readiness says pre_return_ready or return_now.",
+    "kaiwu_return_action_teacher_weight_inferred_or_set": false,
+    "phase_env_modified": false,
+    "ppo_algorithm_changed": false,
+    "reward_coefficients_changed": false,
+    "reward_components_changed": false,
+    "route_phase_fallback_logic_changed": false,
+    "route_phase_return_reliable_tagging_changed": false,
+    "runtime_state_modified": false,
+    "simulator_maps_scoring_benchmark_modified": false,
+    "teacher_action_value_changed_when_mask_suppressed": false
+  },
+  "corrections": [
+    {
+      "behavior_change": "none beyond the already approved gate; thresholds and gating semantics are unchanged.",
+      "code_change": "Replaced undefined cfg references with existing module Config thresholds inside Preprocessor.reward_process(), and changed helper parameter type from dict[str, object] | None to collections.abc.Mapping[str, object] | None.",
+      "corrected_at": "2026-04-26T09:03:40+08:00",
+      "introduced_lsp_errors_fixed": {
+        "cfg_undefined_lines_2123_2133": true,
+        "helper_dict_invariance_mismatch": true
+      },
+      "trigger": "Atlas verification found introduced LSP errors: undefined cfg in the new readiness call and invariant dict[str, object] helper type mismatch for evaluate_simplified_return_readiness() result."
+    }
+  ],
+  "created_at": "2026-04-26T09:01:03+08:00",
+  "decision": "bounded_implementation_corrected_no_rerun_no_benchmark",
+  "files_changed_for_this_implementation": [
+    "code/agent_ppo/feature/preprocessor.py",
+    "code/tests/test_curriculum_and_checkpoint_score.py"
+  ],
+  "hypothesis_id": "gate_return_action_teacher_to_route_or_readiness_v1",
+  "implementation_summary": {
+    "action_value_preserved": "return_action_teacher is still copied from teacher guidance before gating and is not modified when the mask is suppressed.",
+    "critical_fallback_preserved": "route_phase_action_teacher/source logic is unchanged; critical battery route-phase steps without return_action_reliable/anchor_reliable/target_reliable still fall through to route_phase_teacher_from_critical_fallback.",
+    "preprocessor_change": "Added _plain_survival_return_action_teacher_mask_allowed() and applied it only after return_action_teacher_mask is computed/boosted in Preprocessor.reward_process(). For train_phase == s1_survival, the mask stays active only if current_mode is MODE_CONTRACT/MODE_RETURN or evaluate_simplified_return_readiness() reports return_now/pre_return_ready. Post-verification correction uses Config for thresholds in this function and Mapping for the helper readiness type.",
+    "scope_limit": "No reward coefficients, PPO algorithm, phase/env/runtime state, Docker compose, simulator, benchmark/scoring, checkpoints, or teacher weight environment variables were changed."
+  },
+  "mirrors_evidence_artifact": ".sisyphus/evidence/benchmark-900/gate-return-action-teacher-to-route-or-readiness-implementation.json",
+  "next_action": "Ask Oracle before any diagnostic rerun, benchmark, checkpoint promotion, phase/config/runtime change, teacher-weight change, global80 continuation, or F1/original task completion claim.",
+  "oracle_verdict_followed": "APPROVE_ONE_BOUNDED_IMPLEMENTATION",
+  "safety_flags": {
+    "benchmark_run": false,
+    "canonical_serial_benchmark_run": false,
+    "checkpoint_promoted": false,
+    "continued_run_20260426_084214_to_global80": false,
+    "f1_approved": false,
+    "original_task_incomplete": true,
+    "parallel_benchmark_run": false,
+    "promotion_allowed": false,
+    "training_or_rerun_started": false
+  },
+  "schema_version": 1,
+  "updated_at": "2026-04-26T09:03:40+08:00",
+  "verification_summary": {
+    "docker_post_check": {
+      "command": "docker ps --filter name=kaiwu-train --format '{{.Names}} {{.Status}}'",
+      "docker_stopped": true,
+      "output_lines": []
+    },
+    "docker_pre_check": {
+      "command": "docker ps --filter name=kaiwu-train --format '{{.Names}} {{.Status}}'",
+      "docker_stopped": true,
+      "output_lines": []
+    },
+    "focused_tests": {
+      "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/user/TcKaiwuFinal/.conda-numpy/bin/python -m pytest tests/test_curriculum_and_checkpoint_score.py -q",
+      "result": "107 passed in 1.57s",
+      "workdir": "code/"
+    },
+    "json_validation": true,
+    "lsp_diagnostics": {
+      "files_checked": [
+        "code/agent_ppo/feature/preprocessor.py",
+        "code/tests/test_curriculum_and_checkpoint_score.py"
+      ],
+      "introduced_error_status": {
+        "cfg_undefined": "fixed_no_longer_reported",
+        "helper_type_mismatch": "fixed_no_longer_reported"
+      },
+      "preprocessor_diagnostics_count_after_correction": 1250,
+      "remaining_summary": "Remaining LSP diagnostics are pre-existing/environment noise: missing numpy import, implicit import policy diagnostics, broad unannotated/unknown typing in preprocessor.py, and dynamic ModuleType/private-test-stub diagnostics in tests.",
+      "status": "introduced_errors_fixed_remaining_preexisting_environment_noise",
+      "test_diagnostics_count_after_correction": 1008
+    },
+    "py_compile": {
+      "command": "PYTHONPYCACHEPREFIX=/tmp/tck_pycache_gate_fix PYTHONDONTWRITEBYTECODE=0 /home/user/TcKaiwuFinal/.conda-numpy/bin/python -m py_compile agent_ppo/feature/preprocessor.py tests/test_curriculum_and_checkpoint_score.py",
+      "exit_code": 0,
+      "note": "External PYTHONPYCACHEPREFIX was used to avoid the repository __pycache__ permission issue.",
+      "workdir": "code/"
+    }
+  }
+}
