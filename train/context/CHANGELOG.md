@@ -106,3 +106,6 @@
 2026-04-26 21:01 | Replaced active current-goal charger-return heuristic with known-first/unknown-fallback A* cost so map7 battery-tail contract checks no longer underestimate return cost.
 2026-04-26 21:17 | Rolled back the active-goal A* return-cost refinement in algorithm.py after 2x4 overcharging and coverage collapse.
 2026-04-26 ~23:30 | Completed comprehensive benchmark-900 optimization final report (FINAL_REPORT_BENCHMARK_900_OPTIMIZATION.md) covering all 10+ experiments, systemic diagnosis, evidence inventory, and next-stage planner contract redesign proposal.
+2026-04-27 00:16 | Implemented CoveragePlanner Phase B efficiency fixes: contract-based goal reuse, TTL/stall reselection, small-map edge cutoff, and A* return-cost safety gates.
+2026-04-27 00:11 | Added Phase A CoveragePlanner survival guards: charge-mode stuck-distance replanning and coverage return-viability action masking.
+2026-04-27 00:19 | Expanded holdout benchmark runner to all maps with 1-episode training-map screens and configurable 4/7 holdout episode gates.

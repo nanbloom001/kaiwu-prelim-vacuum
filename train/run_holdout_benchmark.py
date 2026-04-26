@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # pyright: reportArgumentType=false, reportGeneralTypeIssues=false
 """
-Safe fixed-contract holdout benchmark runner for maps [4, 7].
+Safe fixed-contract all-map benchmark runner for maps [1..10].
 
 The runner keeps the auditable dry-run contract and can launch the real
-inference-only Docker benchmark. Real execution is sharded by default so maps
-4 and 7 can run in parallel across AISRV workers.
+inference-only Docker benchmark. Real execution is sharded by default so all
+maps can run in parallel across AISRV workers, with maps 4 and 7 receiving the
+full holdout episode count and training maps receiving a smaller screen count.
 """
 
 from __future__ import annotations
@@ -24,7 +25,9 @@ from pathlib import Path
 from typing import cast
 
 
-ALLOWED_HOLDOUT_MAPS = [4, 7]
+ALLOWED_HOLDOUT_MAPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+HOLDOUT_SPECIAL_MAPS = [4, 7]
+TRAINING_MAPS_EPISODES = 1
 FIXED_CONFIG = {
     "robot_count": 4,
     "charger_count": 3,
@@ -55,9 +58,20 @@ CHECKPOINT_RELATIVE_PATHS = [
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the fixed [4,7] holdout benchmark contract.")
-    parser.add_argument("--maps", default="4,7", help="Comma-separated holdout maps. Only 4,7 is allowed in T2.")
-    parser.add_argument("--episodes-per-map", type=int, default=8, help="Fixed holdout episodes per map.")
+    parser = argparse.ArgumentParser(description="Run the fixed all-map benchmark contract.")
+    parser.add_argument("--maps", default="1,2,3,4,5,6,7,8,9,10", help="Comma-separated maps to benchmark.")
+    parser.add_argument(
+        "--episodes-per-map",
+        type=int,
+        default=8,
+        help="Episodes per holdout map (4,7). Training maps always get 1.",
+    )
+    parser.add_argument(
+        "--training-episodes",
+        type=int,
+        default=TRAINING_MAPS_EPISODES,
+        help="Episodes per training map (default 1).",
+    )
     parser.add_argument(
         "--sharded",
         action="store_true",
@@ -209,30 +223,38 @@ def load_training_maps(train_env_conf: Path) -> list[int]:
     return maps
 
 
-def validate_contract(requested_maps: list[int], episodes_per_map: int, training_maps: list[int]) -> list[str]:
+def validate_contract(
+    requested_maps: list[int],
+    episodes_per_map: int,
+    training_maps: list[int],
+    training_episodes: int = TRAINING_MAPS_EPISODES,
+) -> list[str]:
     errors = []
     invalid_maps = sorted({map_id for map_id in requested_maps if map_id not in ALLOWED_HOLDOUT_MAPS})
-    leaked_maps = sorted({map_id for map_id in requested_maps if map_id in training_maps})
     if invalid_maps:
         errors.append(
-            "Holdout map contract only allows [4, 7]; got invalid map(s): {maps}".format(maps=invalid_maps)
-        )
-    if leaked_maps:
-        errors.append(
-            "Training-map leakage detected. Requested holdout map(s) overlap training maps {training_maps}: {leaks}".format(
-                training_maps=training_maps,
-                leaks=leaked_maps,
-            )
-        )
-    if sorted(set(training_maps)) != [1, 2, 3, 5, 6, 8, 9, 10]:
-        errors.append(
-            "Unexpected training-map source. Expected [1, 2, 3, 5, 6, 8, 9, 10], got {maps}".format(
-                maps=training_maps
+            "All-map benchmark contract only allows maps [1,2,3,4,5,6,7,8,9,10]; got invalid map(s): {maps}".format(
+                maps=invalid_maps
             )
         )
     if episodes_per_map <= 0:
         errors.append("--episodes-per-map must be positive.")
+    if training_episodes <= 0:
+        errors.append("--training-episodes must be positive.")
     return errors
+
+
+def build_task_list(maps: list[int], episodes_per_map: int, training_episodes: int = 1) -> list[tuple[int, int]]:
+    """Build ordered task list: training maps get training_episodes each, special holdout maps get episodes_per_map."""
+    tasks = []
+    for map_id in sorted(maps):
+        if map_id in HOLDOUT_SPECIAL_MAPS:
+            for ep_idx in range(episodes_per_map):
+                tasks.append((map_id, ep_idx))
+        else:
+            for ep_idx in range(training_episodes):
+                tasks.append((map_id, ep_idx))
+    return tasks
 
 
 def validate_sharding(sharded: bool, shard_count: int) -> list[str]:
@@ -294,27 +316,79 @@ def infer_checkpoint_id(checkpoint_path: Path) -> str:
 def build_episode_plan(
     requested_maps: list[int],
     episodes_per_map: int,
+    training_episodes: int,
     run_id: str,
     checkpoint_id: str,
     detail_log_dir: Path,
     dry_run: bool,
 ) -> list[dict[str, object]]:
     episodes_planned = []
-    for map_id in requested_maps:
-        for episode_index in range(1, episodes_per_map + 1):
-            episode_id = f"{run_id}-map{map_id}-ep{episode_index:02d}"
-            episodes_planned.append(
-                {
-                    "episode_id": episode_id,
-                    "map_id": map_id,
-                    "ep_idx": episode_index,
-                    "planned_index": episode_index,
-                    "checkpoint_id": checkpoint_id,
-                    "detail_log_path": str(detail_log_dir / f"episode_{episode_id}.jsonl"),
-                    "status": "PLANNED" if dry_run else "NOT_EXECUTED",
-                }
-            )
+    task_list = build_task_list(
+        maps=requested_maps,
+        episodes_per_map=episodes_per_map,
+        training_episodes=training_episodes,
+    )
+    for planned_index, (map_id, zero_based_episode_index) in enumerate(task_list, start=1):
+        episode_index = zero_based_episode_index + 1
+        episode_id = f"{run_id}-map{map_id}-ep{episode_index:02d}"
+        episodes_planned.append(
+            {
+                "episode_id": episode_id,
+                "map_id": map_id,
+                "ep_idx": episode_index,
+                "planned_index": planned_index,
+                "checkpoint_id": checkpoint_id,
+                "detail_log_path": str(detail_log_dir / f"episode_{episode_id}.jsonl"),
+                "status": "PLANNED" if dry_run else "NOT_EXECUTED",
+            }
+        )
     return episodes_planned
+
+
+def expected_episode_pairs(
+    requested_maps: list[int],
+    episodes_per_map: int,
+    training_episodes: int,
+) -> set[tuple[int, int]]:
+    return {
+        (map_id, zero_based_episode_index + 1)
+        for map_id, zero_based_episode_index in build_task_list(
+            maps=requested_maps,
+            episodes_per_map=episodes_per_map,
+            training_episodes=training_episodes,
+        )
+    }
+
+
+def expected_episode_counts_by_map(
+    requested_maps: list[int],
+    episodes_per_map: int,
+    training_episodes: int,
+) -> dict[int, int]:
+    return {
+        map_id: episodes_per_map if map_id in HOLDOUT_SPECIAL_MAPS else training_episodes
+        for map_id in requested_maps
+    }
+
+
+def build_benchmark_metadata(
+    requested_maps: list[int],
+    episodes_per_map: int,
+    training_episodes: int,
+) -> dict[str, object]:
+    return {
+        "benchmark_mode": "all_maps",
+        "holdout_special_maps": list(HOLDOUT_SPECIAL_MAPS),
+        "holdout_episodes_per_map": episodes_per_map,
+        "training_episodes_per_map": training_episodes,
+        "total_episodes": len(
+            build_task_list(
+                maps=requested_maps,
+                episodes_per_map=episodes_per_map,
+                training_episodes=training_episodes,
+            )
+        ),
+    }
 
 
 def build_shard_assignment_payload(
@@ -323,6 +397,7 @@ def build_shard_assignment_payload(
     episodes: list[dict[str, object]],
     requested_maps: list[int],
     episodes_per_map: int,
+    training_episodes: int,
     run_id: str,
 ) -> dict[str, object]:
     return {
@@ -331,6 +406,12 @@ def build_shard_assignment_payload(
         "episodes": episodes,
         "maps": list(requested_maps),
         "episodes_per_map": episodes_per_map,
+        "training_episodes_per_map": training_episodes,
+        "benchmark_metadata": build_benchmark_metadata(
+            requested_maps=requested_maps,
+            episodes_per_map=episodes_per_map,
+            training_episodes=training_episodes,
+        ),
         "run_id": run_id,
     }
 
@@ -340,6 +421,7 @@ def build_shard_assignments(
     shard_count: int,
     requested_maps: list[int],
     episodes_per_map: int,
+    training_episodes: int,
     run_id: str,
     strategy: str | None = None,
 ) -> list[dict[str, object]]:
@@ -362,6 +444,7 @@ def build_shard_assignments(
             episodes=episodes,
             requested_maps=requested_maps,
             episodes_per_map=episodes_per_map,
+            training_episodes=training_episodes,
             run_id=run_id,
         )
         for shard_index, episodes in enumerate(shards)
@@ -628,6 +711,8 @@ def canonicalize_shard_assignments(shard_assignments: list[dict[str, object]], r
                 "shard_count": int(assignment["shard_count"]),
                 "maps": [int(map_id) for map_id in cast(list[object], assignment.get("maps") or [])],
                 "episodes_per_map": int(assignment["episodes_per_map"]),
+                "training_episodes_per_map": int(assignment.get("training_episodes_per_map", TRAINING_MAPS_EPISODES)),
+                "benchmark_metadata": assignment.get("benchmark_metadata"),
                 "run_id": run_id if run_id is not None else assignment.get("run_id"),
                 "episodes": [
                     {
@@ -659,6 +744,7 @@ def aggregate_sharded_results(
     shard_count: int,
     requested_maps: list[int],
     episodes_per_map: int,
+    training_episodes: int,
     shard_assignments: list[dict[str, object]],
     output_path: Path,
     run_id: str | None,
@@ -712,7 +798,12 @@ def aggregate_sharded_results(
             pair = validate_episode_identity(episode=episode, shard_index=shard_index, source_path=result_path)
             if pair in seen_pairs:
                 raise ValueError(f"Duplicate episode key detected across shards: map_id={pair[0]} ep_idx={pair[1]}")
-            if pair[0] not in requested_maps or pair[1] < 1 or pair[1] > episodes_per_map:
+            expected_pairs = expected_episode_pairs(
+                requested_maps=requested_maps,
+                episodes_per_map=episodes_per_map,
+                training_episodes=training_episodes,
+            )
+            if pair not in expected_pairs:
                 raise ValueError(
                     f"Unexpected episode key in shard {shard_index} result {result_path}: map_id={pair[0]} ep_idx={pair[1]}"
                 )
@@ -724,7 +815,11 @@ def aggregate_sharded_results(
         if base_payload is None:
             base_payload = payload
 
-    expected_pairs = {(map_id, ep_idx) for map_id in requested_maps for ep_idx in range(1, episodes_per_map + 1)}
+    expected_pairs = expected_episode_pairs(
+        requested_maps=requested_maps,
+        episodes_per_map=episodes_per_map,
+        training_episodes=training_episodes,
+    )
     missing_pairs = sorted(expected_pairs - seen_pairs)
     unexpected_pairs = sorted(seen_pairs - expected_pairs)
     if missing_pairs:
@@ -735,9 +830,14 @@ def aggregate_sharded_results(
     per_map_counts = {map_id: 0 for map_id in requested_maps}
     for episode in all_episodes:
         per_map_counts[int(episode["map_id"])] += 1
-    wrong_counts = {map_id: count for map_id, count in per_map_counts.items() if count != episodes_per_map}
+    expected_counts = expected_episode_counts_by_map(
+        requested_maps=requested_maps,
+        episodes_per_map=episodes_per_map,
+        training_episodes=training_episodes,
+    )
+    wrong_counts = {map_id: count for map_id, count in per_map_counts.items() if count != expected_counts[map_id]}
     if wrong_counts:
-        raise ValueError(f"Per-map episode counts do not match expected episodes_per_map={episodes_per_map}: {wrong_counts}")
+        raise ValueError(f"Per-map episode counts do not match expected counts {expected_counts}: {wrong_counts}")
 
     ordered_episodes = sorted(all_episodes, key=lambda ep: (int(ep["map_id"]), int(ep["ep_idx"])))
     aggregated_metrics = aggregate_results(ordered_episodes, requested_maps)
@@ -768,11 +868,21 @@ def aggregate_sharded_results(
         "schema_version": base_payload.get("schema_version"),
         "timestamp": base_payload.get("timestamp"),
         "checkpoint": base_payload.get("checkpoint"),
+        "benchmark_mode": "all_maps",
+        "holdout_special_maps": list(HOLDOUT_SPECIAL_MAPS),
+        "holdout_episodes_per_map": episodes_per_map,
+        "training_episodes_per_map": training_episodes,
+        "total_episodes": len(expected_pairs),
         "elapsed_seconds": wall_elapsed_seconds,
         "wall_elapsed_seconds": wall_elapsed_seconds,
         "sum_shard_elapsed_seconds": sum_shard_elapsed_seconds,
         "per_shard_elapsed_seconds": per_shard_elapsed,
         "contract": base_payload.get("contract"),
+        "benchmark_metadata": build_benchmark_metadata(
+            requested_maps=requested_maps,
+            episodes_per_map=episodes_per_map,
+            training_episodes=training_episodes,
+        ),
         "round_def": base_payload.get("round_def"),
         "maps": base_payload.get("maps"),
         "episodes_per_map": base_payload.get("episodes_per_map"),
@@ -816,6 +926,7 @@ def _launch_benchmark_via_docker(
     repo_root: Path,
     requested_maps: list[int],
     episodes_per_map: int,
+    training_episodes: int,
     checkpoint_path: Path,
     output_path: Path,
     run_id: str,
@@ -834,6 +945,13 @@ def _launch_benchmark_via_docker(
     import subprocess
 
     maps_str = ",".join(str(m) for m in requested_maps)
+    planned_episode_count = len(
+        build_task_list(
+            maps=requested_maps,
+            episodes_per_map=episodes_per_map,
+            training_episodes=training_episodes,
+        )
+    )
     compose_file = str(repo_root / "train" / ".docker-compose.yaml")
     benchmark_overlay = str(repo_root / "train" / ".docker-compose.benchmark.yaml")
 
@@ -852,6 +970,7 @@ def _launch_benchmark_via_docker(
         "KAIWU_BENCHMARK_SCHEDULER": scheduler,
         "KAIWU_BENCHMARK_MAPS": maps_str,
         "KAIWU_BENCHMARK_EPISODES_PER_MAP": str(episodes_per_map),
+        "KAIWU_BENCHMARK_TRAINING_EPISODES_PER_MAP": str(training_episodes),
         "KAIWU_BENCHMARK_CHECKPOINT": checkpoint_container,
         "KAIWU_BENCHMARK_SHARDED": "1" if sharded else "0",
         "KAIWU_BENCHMARK_SHARD_COUNT": str(shard_count if sharded else 1),
@@ -988,7 +1107,7 @@ def _launch_benchmark_via_docker(
                     if progress.returncode == 0:
                         print(
                             f"[HOLDOUT-BENCH] dynamic progress completed={progress.stdout.strip()}/"
-                            f"{len(requested_maps) * episodes_per_map} elapsed={elapsed}s",
+                            f"{planned_episode_count} elapsed={elapsed}s",
                             flush=True,
                         )
                 except Exception:
@@ -1004,7 +1123,7 @@ def _launch_benchmark_via_docker(
                     payload = json.loads(output_path.read_text(encoding="utf-8"))
                     execution = payload.get("execution") if isinstance(payload.get("execution"), dict) else {}
                     observed_workers = int(cast(dict[str, object], execution).get("observed_worker_count", 0) or 0)
-                    expected_workers = min(int(cast(dict[str, object], execution).get("logical_worker_count", 0) or 0), len(requested_maps) * episodes_per_map)
+                    expected_workers = min(int(cast(dict[str, object], execution).get("logical_worker_count", 0) or 0), planned_episode_count)
                     if expected_workers > 0 and observed_workers < expected_workers:
                         print(
                             "[HOLDOUT-BENCH] Dynamic benchmark completed but did not expose requested concurrency: "
@@ -1029,6 +1148,7 @@ def _launch_benchmark_via_docker(
                     shard_count=shard_count,
                     requested_maps=requested_maps,
                     episodes_per_map=episodes_per_map,
+                    training_episodes=training_episodes,
                     shard_assignments=shard_assignments or [],
                     output_path=runtime_paths["result_path"],
                     run_id=run_id,
@@ -1175,12 +1295,19 @@ def main() -> int:
             shard_count=int(args.shard_count),
         )
         training_maps = load_training_maps(train_env_conf)
-        errors = validate_contract(requested_maps, args.episodes_per_map, training_maps)
+        errors = validate_contract(requested_maps, args.episodes_per_map, training_maps, args.training_episodes)
         errors.extend(validate_sharding(effective_sharded, args.shard_count))
         errors.extend(validate_workers_per_aisrv(int(args.workers_per_aisrv)))
         if not effective_sharded and args.scheduler == "dynamic":
             errors.append("--scheduler dynamic requires sharded/AISRV assignment mode; use --scheduler static with --serial.")
-        if effective_sharded and int(args.shard_count) > len(requested_maps) * int(args.episodes_per_map):
+        planned_task_count = len(
+            build_task_list(
+                maps=requested_maps,
+                episodes_per_map=int(args.episodes_per_map),
+                training_episodes=int(args.training_episodes),
+            )
+        )
+        if effective_sharded and int(args.shard_count) > planned_task_count:
             errors.append("--shard-count cannot exceed the planned episode count.")
         if errors:
             raise ValueError("; ".join(errors))
@@ -1202,6 +1329,7 @@ def main() -> int:
             episodes_planned=build_episode_plan(
                 requested_maps=requested_maps,
                 episodes_per_map=int(args.episodes_per_map),
+                training_episodes=int(args.training_episodes),
                 run_id="aggregate-shards-only",
                 checkpoint_id="aggregate-shards-only",
                 detail_log_dir=repo_root / "train" / "holdout_detail_logs" / "aggregate-shards-only",
@@ -1210,6 +1338,7 @@ def main() -> int:
             shard_count=int(args.shard_count),
             requested_maps=requested_maps,
             episodes_per_map=int(args.episodes_per_map),
+            training_episodes=int(args.training_episodes),
             run_id="aggregate-shards-only",
             strategy=shard_strategy,
         )
@@ -1219,6 +1348,7 @@ def main() -> int:
                 shard_count=int(args.shard_count),
                 requested_maps=requested_maps,
                 episodes_per_map=int(args.episodes_per_map),
+                training_episodes=int(args.training_episodes),
                 shard_assignments=shard_assignments,
                 output_path=output_path,
                 run_id=None,
@@ -1248,11 +1378,23 @@ def main() -> int:
     contract = {
         "maps": requested_maps,
         "episodes_per_map": int(args.episodes_per_map),
+        "benchmark_mode": "all_maps",
+        "holdout_special_maps": list(HOLDOUT_SPECIAL_MAPS),
+        "holdout_episodes_per_map": int(args.episodes_per_map),
+        "training_episodes_per_map": int(args.training_episodes),
+        "total_episodes": len(
+            build_task_list(
+                maps=requested_maps,
+                episodes_per_map=int(args.episodes_per_map),
+                training_episodes=int(args.training_episodes),
+            )
+        ),
         "fixed_config": deepcopy(FIXED_CONFIG),
         "training_maps_source": {
             "path": str(train_env_conf),
             "maps": training_maps,
-            "training_map_exclusion_verified": not any(map_id in training_maps for map_id in requested_maps),
+            "expected_training_maps": [1, 2, 3, 5, 6, 8, 9, 10],
+            "matches_expected_training_maps": sorted(set(training_maps)) == [1, 2, 3, 5, 6, 8, 9, 10],
         },
     }
     checkpoint = {
@@ -1265,6 +1407,7 @@ def main() -> int:
     episodes_planned = build_episode_plan(
         requested_maps=requested_maps,
         episodes_per_map=int(args.episodes_per_map),
+        training_episodes=int(args.training_episodes),
         run_id=run_id,
         checkpoint_id=checkpoint_id,
         detail_log_dir=detail_log_dir,
@@ -1276,6 +1419,7 @@ def main() -> int:
             shard_count=int(args.shard_count),
             requested_maps=requested_maps,
             episodes_per_map=int(args.episodes_per_map),
+            training_episodes=int(args.training_episodes),
             run_id=run_id,
             strategy=shard_strategy,
         )
@@ -1307,6 +1451,11 @@ def main() -> int:
         "checkpoint_id": checkpoint_id,
         "maps": requested_maps,
         "episodes_per_map": int(args.episodes_per_map),
+        "benchmark_mode": "all_maps",
+        "holdout_special_maps": list(HOLDOUT_SPECIAL_MAPS),
+        "holdout_episodes_per_map": int(args.episodes_per_map),
+        "training_episodes_per_map": int(args.training_episodes),
+        "total_episodes": len(episodes_planned),
         "fixed_config": deepcopy(FIXED_CONFIG),
         "planned_episode_count": len(episodes_planned),
         "scheduler": args.scheduler,
@@ -1319,6 +1468,11 @@ def main() -> int:
     result: dict[str, object] = {
         "run_id": run_id,
         "status": "DRY_RUN" if args.dry_run else "LAUNCHING",
+        "benchmark_mode": "all_maps",
+        "holdout_special_maps": list(HOLDOUT_SPECIAL_MAPS),
+        "holdout_episodes_per_map": int(args.episodes_per_map),
+        "training_episodes_per_map": int(args.training_episodes),
+        "total_episodes": len(episodes_planned),
         "contract": contract,
         "checkpoint": checkpoint,
         "detail_log_dir": str(detail_log_dir),
@@ -1370,6 +1524,7 @@ def main() -> int:
             repo_root=repo_root,
             requested_maps=requested_maps,
             episodes_per_map=int(args.episodes_per_map),
+            training_episodes=int(args.training_episodes),
             checkpoint_path=checkpoint_path,
             output_path=output_path,
             run_id=run_id,

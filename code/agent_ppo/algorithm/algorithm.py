@@ -424,6 +424,9 @@ class CoveragePlanner:
     HARD_NPC_RADIUS       = 2     # NPC 硬封锁半径：Chebyshev 距离 ≤ 2 的格子视为危险区，直接屏蔽
     PATH_RISK_RADIUS      = 4     # NPC 软风险半径：充电路径经过此范围内时增加 NPC_RETURN_MARGIN
     AGGRESSIVE_EDGE_STEPS = 500   # 前 500 步保持扩张阶段，强制优先探索地图边缘寻找充电桩
+    SMALL_MAP_EDGE_STEPS  = 180   # Reduced edge expansion steps for small maps (8x8, 10x10)
+    COVERAGE_GOAL_MAX_AGE = 35    # Maximum steps to hold a coverage goal before forced reselection
+    COVERAGE_GOAL_STALL_STEPS = 8 # Consecutive steps without distance reduction before goal is stale
 
     # ─────────────────────────────────────────────────────────────────────────
     # Lifecycle（生命周期）
@@ -451,6 +454,11 @@ class CoveragePlanner:
         self.return_mode  = False               # 是否处于"返回充电"模式
         self.current_goal: Optional[Position] = None   # 当前导航目标格子
         self.current_mode = "explore"           # 当前 target_mode 字符串
+        self.goal_issued_step = 0
+        self.goal_last_distance = float("inf")
+        self.goal_stall_count = 0
+        self.charge_distance_stuck_count = 0
+        self.last_charge_distance = float("inf")
         self.last_policy_info: Optional[PolicyInfo] = None
         self.current_step = 0                   # 当前步数 (step_no)，来自 observation
         self.episode_max_step = 1000
@@ -588,6 +596,31 @@ class CoveragePlanner:
         if should_charge:
             self.return_mode = True   # 一旦触发，锁定返回模式直至充满
 
+        # Charge progress monitoring: if stuck in charge mode without distance improvement, force replan
+        CHARGE_STUCK_THRESHOLD = 8
+        if should_charge and charger_known and np.isfinite(charger_distance):
+            if charger_distance >= self.last_charge_distance - 0.5:
+                self.charge_distance_stuck_count += 1
+            else:
+                self.charge_distance_stuck_count = max(0, self.charge_distance_stuck_count - 1)
+            self.last_charge_distance = charger_distance
+            if self.charge_distance_stuck_count >= CHARGE_STUCK_THRESHOLD:
+                # Force clear current charger target to trigger replanning
+                self.current_goal = None
+                self.charge_distance_stuck_count = 0
+                self.last_charge_distance = float("inf")
+        else:
+            self.charge_distance_stuck_count = 0
+            self.last_charge_distance = float("inf")
+
+        if not should_charge:
+            # Apply return-viability mask on top of safe_mask
+            # (only relevant in coverage mode — PPO can't override battery safety)
+            coverage_return_mask = self._apply_return_viability_mask(
+                hero_pos, safe_mask, battery, charger_known, charger_distance, dynamic_return_margin
+            )
+            safe_mask = coverage_return_mask
+
         # ── 选择导航目标 ────────────────────────────────────────────────────
         if should_charge:
             # 充电模式：目标固定为充电桩 (charger)，复用已规划的路径
@@ -695,12 +728,33 @@ class CoveragePlanner:
             target_distance: 到目标的 A* 代价，无目标时为 inf
             path           : 到目标的 A* 路径（Position 列表），无路径时为 []
         """
+        # ── Pre-check: invalidate coverage goal if TTL expired or stalled ──────────
+        if (self.current_goal is not None and self.current_mode not in ("charge",)
+            and self.current_step - self.goal_issued_step > self.COVERAGE_GOAL_MAX_AGE):
+            self.current_goal = None
+            self.current_mode = "explore"
+        if (self.current_goal is not None and self.current_mode not in ("charge",)
+            and self.goal_stall_count >= self.COVERAGE_GOAL_STALL_STEPS):
+            self.current_goal = None
+            self.current_mode = "explore"
+            self.goal_stall_count = 0
+
         # ── 步骤 1：复用仍有效的当前目标 ──────────────────────────────────
         charger_known = bool(self.charger_regions)
-        if charger_known and self._goal_is_still_valid(self.current_goal, hero_pos):
-            path, distance = self._astar_path(hero_pos, [self.current_goal], False, npcs)
-            if path and np.isfinite(distance):
-                return self.current_mode, self.current_goal, distance, path
+        # Enforce full coverage contract on goal reuse: must be valuable, reachable, and battery-safe
+        if charger_known and self.current_goal is not None:
+            reuse_path, reuse_dist = self._astar_path(hero_pos, [self.current_goal], False, npcs)
+            if self._goal_passes_coverage_contract(
+                self.current_goal, hero_pos, battery, charger_known,
+                reuse_path, reuse_dist, npcs
+            ):
+                # Track goal progress: update stall counter based on distance change
+                if reuse_dist >= self.goal_last_distance - 0.5:
+                    self.goal_stall_count += 1
+                else:
+                    self.goal_stall_count = max(0, self.goal_stall_count - 1)
+                self.goal_last_distance = reuse_dist
+                return self.current_mode, self.current_goal, reuse_dist, reuse_path
 
         # ── 步骤 2：全图遍历评分 ───────────────────────────────────────────
         # BFS 距离图：hero_pos 到每个可达格子的步数（不可达格子 = -1）
@@ -708,13 +762,22 @@ class CoveragePlanner:
         # 全局地图已知比例（已观测格子 / 总格子数）
         known_ratio     = (np.count_nonzero(self.global_map != self.UNKNOWN)
                            / float(self.MAP_SIZE * self.MAP_SIZE))
-        # 扩张阶段判定：前 500 步 / 已知比例 < 78% / 充电桩未知 → 仍处于扩张阶段
-        expansion_phase = (
-            self.current_step <= self.AGGRESSIVE_EDGE_STEPS
+        # Small-map adaptation: if bounding box area is small, terminate edge expansion early
+        bbox = self._explored_bounding_box()
+        bbox_area = 0
+        if bbox is not None:
+            bbox_area = (bbox[1] - bbox[0] + 1) * (bbox[3] - bbox[2] + 1)
+        small_map_threshold = 120  # ~11x11 area or smaller
+        effective_edge_steps = (
+            self.SMALL_MAP_EDGE_STEPS if bbox_area > 0 and bbox_area <= small_map_threshold
+            else self.AGGRESSIVE_EDGE_STEPS
+        )
+        expansion_phase = bool(
+            self.current_step <= effective_edge_steps
             or known_ratio < self.EXPANSION_KNOWN_RATIO
             or not charger_known
         )
-        known_bbox = self._explored_bounding_box()  # 已探索区域的外接矩形
+        known_bbox = bbox  # 已探索区域的外接矩形
         reserve    = self._dynamic_return_margin() + 4.0  # 电量安全预留（基础余量 + 缓冲）
 
         best_score:  float             = -1e9
@@ -737,7 +800,7 @@ class CoveragePlanner:
 
                 # 电量安全门控：确保前往 pos 后还能回到充电桩
                 charger_need = (
-                    self._heuristic_charger_distance(pos) + self.COVERAGE_RETURN_BUFFER
+                    self._compute_charger_return_cost(pos) + self.COVERAGE_RETURN_BUFFER
                     if charger_known else 0.0
                 )
                 if charger_known and battery <= dist + charger_need + reserve:
@@ -793,6 +856,12 @@ class CoveragePlanner:
 
         # ── 步骤 3：为最优目标规划 A* 路径 ────────────────────────────────
         path, distance = self._astar_path(hero_pos, [best_target], False, npcs)
+        if best_target is not None:
+            self.goal_issued_step = self.current_step
+            self.goal_last_distance = float(distance_map[best_target[1], best_target[0]]) if best_target else float("inf")
+            self.goal_stall_count = 0
+            self.goal_last_distance = float(distance if np.isfinite(distance) else float("inf"))
+            self.goal_stall_count = 0
         return best_mode, best_target, distance, path
 
     def _label_target_mode(
@@ -1316,6 +1385,29 @@ class CoveragePlanner:
                 safe_mask[action] = 0.0
         return safe_mask
 
+    def _apply_return_viability_mask(
+        self, hero_pos: Position, safe_mask: np.ndarray, battery: float,
+        charger_known: bool, charger_distance: float, margin: float,
+    ) -> np.ndarray:
+        """
+        Mask actions that would violate return viability.
+
+        After taking action, if remaining battery would not enable a safe return
+        to the nearest charger, mask that action so PPO cannot select it.
+        Only active when charger is known and in coverage mode.
+        """
+        if not charger_known or not np.isfinite(charger_distance):
+            return safe_mask
+        viable = safe_mask.copy()
+        for action in range(8):
+            if viable[action] < 0.5:
+                continue
+            nxt = self._apply_move(hero_pos, action)
+            return_cost = self._heuristic_charger_distance(nxt)
+            if battery - 1.0 <= return_cost + margin:
+                viable[action] = 0.0
+        return viable
+
     # ─────────────────────────────────────────────────────────────────────────
     # NPC safety queries（NPC 安全查询）
     # ─────────────────────────────────────────────────────────────────────────
@@ -1434,7 +1526,8 @@ class CoveragePlanner:
             return True
 
         reserve = self._dynamic_return_margin() + 4.0
-        charger_need = self._heuristic_charger_distance(goal) + self.COVERAGE_RETURN_BUFFER
+        charger_return_dist = self._compute_charger_return_cost(goal)
+        charger_need = charger_return_dist + self.COVERAGE_RETURN_BUFFER
         return battery > float(distance) + charger_need + reserve
 
     def _goal_is_still_valid(self, goal: Optional[Position], hero_pos: Position) -> bool:
@@ -1620,6 +1713,22 @@ class CoveragePlanner:
             default=float("inf"),
         )
         return best if np.isfinite(best) else 0.0
+
+    def _compute_charger_return_cost(self, pos: Position) -> float:
+        """
+        Compute actual A* distance from pos to the nearest known charger cell.
+        Falls back to Chebyshev heuristic if A* fails (e.g., path blocked).
+        """
+        if not self.charger_regions:
+            return 0.0
+        charger_cells = self._charger_cells()
+        if not charger_cells:
+            return 0.0
+        path, distance = self._astar_path(pos, charger_cells, allow_unknown=True, npcs=())
+        if np.isfinite(distance):
+            return distance
+        # Fallback to conservative Chebyshev estimate
+        return self._heuristic_charger_distance(pos)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Neighbour count helpers（邻域格子计数）
