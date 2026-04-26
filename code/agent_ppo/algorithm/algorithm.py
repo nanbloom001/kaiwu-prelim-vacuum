@@ -390,16 +390,23 @@ class CoveragePlanner:
         charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
         low_capacity_factor = np.clip((260.0 - float(self.episode_battery_max)) / 160.0, 0.0, 1.0)
         long_horizon_bonus = 2.0 if self.episode_max_step >= 1500 else 0.0
-        return self.BASE_RETURN_MARGIN + 6.0 * charger_scarcity + 4.0 * low_capacity_factor + long_horizon_bonus
+        safety_recover_bonus = 4.0
+        return (
+            self.BASE_RETURN_MARGIN
+            + 6.0 * charger_scarcity
+            + 4.0 * low_capacity_factor
+            + long_horizon_bonus
+            + safety_recover_bonus
+        )
 
     def _dynamic_low_battery_ratio(self) -> float:
         charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
         low_capacity_factor = np.clip((260.0 - float(self.episode_battery_max)) / 160.0, 0.0, 1.0)
         long_horizon_bonus = 0.02 if self.episode_max_step >= 1500 else 0.0
         return float(np.clip(
-            self.LOW_BATTERY_RATIO + 0.05 * charger_scarcity + 0.03 * low_capacity_factor + long_horizon_bonus,
+            self.LOW_BATTERY_RATIO + 0.03 + 0.05 * charger_scarcity + 0.03 * low_capacity_factor + long_horizon_bonus,
             0.28,
-            0.46,
+            0.50,
         ))
 
     def _dynamic_exit_return_ratio(self) -> float:
@@ -621,6 +628,8 @@ class CoveragePlanner:
         known_ratio     = (np.count_nonzero(self.global_map != self.UNKNOWN)
                            / float(self.MAP_SIZE * self.MAP_SIZE))
         charger_known   = bool(self.charger_regions)
+        early_phase     = self.current_step <= 220
+        charger_search_phase = self.current_step <= 180 and not charger_known
         # 扩张阶段判定：前 500 步 / 已知比例 < 78% / 充电桩未知 → 仍处于扩张阶段
         expansion_phase = (
             self.current_step <= self.AGGRESSIVE_EDGE_STEPS
@@ -647,6 +656,13 @@ class CoveragePlanner:
                 # 只考虑 frontier cell（已知区域边界）和 dirty tile（污渍地面）
                 if not is_frontier and cell != self.DIRT:
                     continue
+
+                # 前期未发现充电桩时，强制优先边缘 frontier，避免在内部低收益区域消耗步数。
+                if charger_search_phase:
+                    if not is_frontier:
+                        continue
+                    if edge_bonus < 0.30 and map_edge_bonus < 0.18:
+                        continue
 
                 # 电量安全门控：确保前往 pos 后还能回到充电桩
                 charger_need = self._heuristic_charger_distance(pos) if charger_known else 0.0
@@ -680,6 +696,16 @@ class CoveragePlanner:
                     score += (2.4 if not charger_known and is_frontier
                               else 1.5 if is_frontier
                               else 0.0)
+                    if early_phase:
+                        # 前期更强地鼓励摸边和首桩发现，压制内部低收益游走。
+                        score += 1.2 * edge_bonus
+                        if is_frontier:
+                            score += 1.0
+                        if not charger_known and cell != self.DIRT and edge_bonus < 0.20:
+                            score -= 1.5
+                    if charger_search_phase:
+                        score += 2.2 * edge_bonus
+                        score += 1.8
                     # 充电桩未知时，排斥离边缘太远且非 dirty 的格子，避免浪费在内部区域
                     if not charger_known and edge_bonus < 0.25 and cell != self.DIRT:
                         score -= 2.0
@@ -937,6 +963,7 @@ class CoveragePlanner:
         path_action = self._next_path_action(path) if path else None
         known_bbox  = self._explored_bounding_box()
         edge_mode   = target_mode in ("edge_frontier", "find_charger_edge")
+        charger_search_mode = target_mode == "find_charger_edge"
         current_npc_distance = self._nearest_npc_dist(hero_pos, npcs)
 
         for action in range(8):
@@ -965,6 +992,10 @@ class CoveragePlanner:
             # A* 路径首步对齐奖励：该动作与路径规划方向一致时大幅加分
             if path_action is not None and action == path_action:
                 score += 2.6 if should_charge else 2.2
+                if charger_search_mode:
+                    score += 1.6
+            elif charger_search_mode:
+                score -= 0.8
 
             # 向目标进展量：该动作让小悟更接近 target_pos 则加分
             if target_pos is not None:
@@ -980,6 +1011,8 @@ class CoveragePlanner:
             # 边缘模式（扩张阶段）额外奖励靠近已知区域边缘的动作
             if edge_mode:
                 score += 0.9 * self._exploration_edge_bonus(nxt, known_bbox)
+                if charger_search_mode:
+                    score += 0.8 * self._exploration_edge_bonus(nxt, known_bbox)
 
             # 充电模式：若该动作走到的格子就是充电桩，给予最高奖励
             if target_mode == "charge" and self._hero_on_charger(nxt):
@@ -989,6 +1022,13 @@ class CoveragePlanner:
             if target_mode in ("frontier", "dirt", "edge_frontier", "find_charger_edge"):
                 if self._is_frontier_cell(nxt):
                     score += 0.45
+                    if charger_search_mode:
+                        score += 0.70
+                elif charger_search_mode:
+                    score -= 2.0
+
+            if charger_search_mode and cell == self.DIRT:
+                score -= 0.8
 
             scores[action] = score
 

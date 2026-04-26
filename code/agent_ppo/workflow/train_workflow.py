@@ -101,6 +101,18 @@ class EpisodeRunner:
         self.local_frame_cnt = 0
         self.local_yield_cnt = 0
 
+    def _early_termination_penalty(self, finished_steps: int, max_steps: int) -> float:
+        completion_ratio = finished_steps / max(max_steps, 1)
+        if completion_ratio >= 0.95:
+            return 0.0
+        if completion_ratio >= 0.85:
+            return -0.08
+        if completion_ratio >= 0.70:
+            return -0.18
+        if completion_ratio >= 0.50:
+            return -0.35
+        return -0.55
+
     def _parse_obs(self, env_obs: dict) -> dict:
         obs = env_obs["observation"]
         fs = obs["frame_state"]
@@ -228,17 +240,27 @@ class EpisodeRunner:
                     cleaning_ratio = fm.dirt_cleaned / max(fm.total_dirt, 1)
                     episode_score = float(final_parsed["total_score"])
                     arrival_steps = sorted(fm.charger_arrival_steps.values())
+                    candidate_arrival_steps = sorted(fm.candidate_charger_arrival_steps.values())
                     confirmed_arrival_steps = sorted(fm.confirmed_charger_arrival_steps.values())
                     charger_arrived_count = len(arrival_steps)
+                    arrival_candidate_confirmed_count = int(fm.arrival_candidate_confirmed_count)
                     arrival_confirmed_count = int(fm.arrival_confirmed_count)
                     arrival_canceled_count = int(fm.arrival_canceled_count)
+                    arrival_retro_canceled_count = int(fm.arrival_retro_canceled_count)
                     pending_arrival_count = len(fm.pending_arrivals)
                     first_arrival_step = arrival_steps[0] if charger_arrived_count >= 1 else -1
                     second_arrival_step = arrival_steps[1] if charger_arrived_count >= 2 else -1
                     third_arrival_step = arrival_steps[2] if charger_arrived_count >= 3 else -1
+                    first_candidate_confirmed_step = (
+                        candidate_arrival_steps[0] if candidate_arrival_steps else -1
+                    )
                     first_confirmed_arrival_step = (
                         confirmed_arrival_steps[0] if confirmed_arrival_steps else -1
                     )
+                    first_confirmed_arrival_is_early = int(
+                        first_confirmed_arrival_step > 0 and first_confirmed_arrival_step <= 150
+                    )
+                    arrival_confirm_to_fail_gap = int(fm.arrival_confirm_to_fail_gap)
                     score_ratio = episode_score / 2000.0
                     quality_bonus = 0.0
                     if truncated:
@@ -276,15 +298,34 @@ class EpisodeRunner:
                             if step <= 250:
                                 quality_bonus -= 0.15
 
-                        final_reward = -2.5 - 0.5 * max(0.0, 0.9 - cleaning_ratio) + quality_bonus
+                        early_termination_penalty = self._early_termination_penalty(
+                            finished_steps=step,
+                            max_steps=episode_max_step,
+                        )
+                        final_reward = (
+                            -2.5
+                            - 0.5 * max(0.0, 0.9 - cleaning_ratio)
+                            + quality_bonus
+                            + early_termination_penalty
+                        )
                         result_str = "FAIL"
+                    if truncated:
+                        early_termination_penalty = 0.0
+
+                    charge_fail_after_arrival = int(not truncated and arrival_confirmed_count > 0)
+                    go23_terminal_adjust = fm.finalize_episode_rewards(
+                        result_str=result_str,
+                        final_mode=last_mode,
+                        final_step=step,
+                        charge_fail_after_arrival=bool(charge_fail_after_arrival),
+                    )
+                    final_reward += go23_terminal_adjust
 
                     collector[-1].reward = (
                         collector[-1].reward + np.asarray([final_reward], dtype=np.float32)
                     )
 
                     new_alpha = self.scheduler.update(episode_score, cleaning_ratio)
-                    charge_fail_after_arrival = int(not truncated and charger_arrived_count > 0)
                     self.logger.info(
                         f"[Agent{self.agent_id}][GAMEOVER] "
                         f"ep={self.episode_cnt} steps={step} result={result_str} "
@@ -293,16 +334,23 @@ class EpisodeRunner:
                         f"charger_count={episode_charger_count} "
                         f"battery_max={episode_battery_max} "
                         f"quality_bonus={quality_bonus:.3f} "
+                        f"early_termination_penalty={early_termination_penalty:.3f} "
                         f"score={episode_score:.1f} reward={total_reward + final_reward:.3f} "
                         f"dirt={fm.dirt_cleaned}/{fm.total_dirt} "
                         f"charger_arrivals={charger_arrived_count} "
                         f"arrival_steps=[{first_arrival_step},{second_arrival_step},{third_arrival_step}] "
+                        f"arrival_candidate_confirmed={arrival_candidate_confirmed_count} "
                         f"arrival_confirmed={arrival_confirmed_count} "
                         f"arrival_canceled={arrival_canceled_count} "
+                        f"arrival_retro_canceled={arrival_retro_canceled_count} "
                         f"arrival_pending={pending_arrival_count} "
+                        f"first_candidate_confirmed_step={first_candidate_confirmed_step} "
                         f"first_confirmed_arrival_step={first_confirmed_arrival_step} "
+                        f"arrival_confirm_to_fail_gap={arrival_confirm_to_fail_gap} "
+                        f"first_confirmed_arrival_is_early={first_confirmed_arrival_is_early} "
                         f"charge_loop_frames={fm.charge_loop_frames} "
-                        f"charge_fail_after_arrival={charge_fail_after_arrival}"
+                        f"charge_fail_after_arrival={charge_fail_after_arrival} "
+                        f"go23_terminal_adjust={go23_terminal_adjust:.3f}"
                     )
 
                     now = time.time()
@@ -313,6 +361,7 @@ class EpisodeRunner:
                             "mix_alpha": new_alpha,
                             "score": episode_score,
                             "quality_bonus": quality_bonus,
+                            "early_termination_penalty": early_termination_penalty,
                             "local_predict_cnt": self.local_predict_cnt,
                             "local_frame_cnt": self.local_frame_cnt,
                             "local_yield_cnt": self.local_yield_cnt,
@@ -324,12 +373,18 @@ class EpisodeRunner:
                             "charger_first_arrival_step": first_arrival_step,
                             "charger_second_arrival_step": second_arrival_step,
                             "charger_third_arrival_step": third_arrival_step,
+                            "arrival_candidate_confirmed_count": arrival_candidate_confirmed_count,
                             "arrival_confirmed_count": arrival_confirmed_count,
                             "arrival_canceled_count": arrival_canceled_count,
+                            "arrival_retro_canceled_count": arrival_retro_canceled_count,
                             "arrival_pending_count": pending_arrival_count,
+                            "charger_first_candidate_confirmed_step": first_candidate_confirmed_step,
                             "charger_first_confirmed_arrival_step": first_confirmed_arrival_step,
+                            "arrival_confirm_to_fail_gap": arrival_confirm_to_fail_gap,
+                            "first_confirmed_arrival_is_early": first_confirmed_arrival_is_early,
                             "charge_loop_frames": fm.charge_loop_frames,
                             "charge_fail_after_arrival": charge_fail_after_arrival,
+                            "go23_terminal_adjust": go23_terminal_adjust,
                         }
                         self.monitor.put_data({
                             os.getpid(): monitor_payload

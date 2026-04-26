@@ -72,15 +72,22 @@ class Preprocessor:
         self.new_observed_cells = 0
         self.cur_revisit_count = 0
         self.charger_regions: List[Set[Position]] = []
+        self._charger_pos_set: Set[Position] = set()
         self.rewarded_arrived_charger_regions = set()
         self.new_charger_arrival_reward = 0.0
         self.charger_arrival_steps = {}
+        self.candidate_charger_arrival_steps = {}
         self.confirmed_charger_arrival_steps = {}
         self.pending_arrivals = {}
+        self.retro_canceled_arrivals = {}
+        self.arrival_candidate_confirmed_count = 0
         self.arrival_confirmed_count = 0
         self.arrival_canceled_count = 0
+        self.arrival_retro_canceled_count = 0
+        self.arrival_confirm_to_fail_gap = -1
         self.arrival_confirm_reward_total = 0.0
         self.arrival_cancel_penalty_total = 0.0
+        self.arrival_retro_cancel_penalty_total = 0.0
         self.charge_loop_frames = 0
         self.current_mode = ""
         self.should_charge = False
@@ -133,6 +140,9 @@ class Preprocessor:
         self.visited.add(self.cur_pos)
 
         self.charger_regions = self._parse_charger_regions(frame_state.get("organs", []))
+        self._charger_pos_set.clear()
+        for region in self.charger_regions:
+            self._charger_pos_set.update(region)
         self.new_charger_arrival_reward = 0.0
         self._last_nearest_unarrived_charger_dist = self._nearest_unarrived_charger_dist
         for region in self.charger_regions:
@@ -146,13 +156,20 @@ class Preprocessor:
                 self.charger_arrival_steps[region_key] = self.step_no
                 self.pending_arrivals[region_key] = {
                     "region": region,
+                    "arrival_order": arrival_order,
                     "arrival_step": self.step_no,
                     "base_reward": self._arrival_base_reward(arrival_order),
                     "start_dirt_cleaned": self.dirt_cleaned,
                     "start_observed_cells": int(np.count_nonzero(self.observed_map)),
                     "start_battery_ratio": _norm(self.battery, self.battery_max),
-                    "confirmed": False,
                     "left_region": False,
+                    "candidate_confirmed": False,
+                    "final_confirmed": False,
+                    "candidate_step": -1,
+                    "confirm_step": -1,
+                    "candidate_reward_paid": 0.0,
+                    "final_reward_paid": 0.0,
+                    "cancel_reason": "",
                 }
         self._nearest_unarrived_charger_dist = self._nearest_unarrived_charger_distance()
 
@@ -341,10 +358,91 @@ class Preprocessor:
 
     def _arrival_base_reward(self, arrival_order: int) -> float:
         if arrival_order == 0:
-            return 0.12
+            return 0.16
         if arrival_order == 1:
-            return 0.08
-        return 0.04
+            return 0.10
+        return 0.05
+
+    def _arrival_early_discount(self, arrival_step: int) -> float:
+        if arrival_step <= 100:
+            return 0.60
+        if arrival_step <= 150:
+            return 0.80
+        if arrival_step <= 220:
+            return 0.92
+        return 1.0
+
+    def _arrival_confirm_params(self, arrival_order: int) -> dict:
+        if arrival_order <= 0:
+            return {
+                "candidate_min_delay": 18,
+                "candidate_deadline": 44,
+                "final_min_delay": 64,
+                "final_deadline": 144,
+                "candidate_coverage": 3,
+                "candidate_observed": 24,
+                "candidate_left_coverage": 2,
+                "final_coverage": 5,
+                "final_observed": 32,
+                "final_left_coverage": 3,
+                "final_left_observed": 18,
+                "final_battery_gain": 0.06,
+                "candidate_scale": 0.40,
+            }
+        if arrival_order == 1:
+            return {
+                "candidate_min_delay": 22,
+                "candidate_deadline": 52,
+                "final_min_delay": 84,
+                "final_deadline": 164,
+                "candidate_coverage": 4,
+                "candidate_observed": 30,
+                "candidate_left_coverage": 2,
+                "final_coverage": 7,
+                "final_observed": 44,
+                "final_left_coverage": 4,
+                "final_left_observed": 22,
+                "final_battery_gain": 0.08,
+                "candidate_scale": 0.30,
+            }
+        return {
+            "candidate_min_delay": 26,
+            "candidate_deadline": 60,
+            "final_min_delay": 100,
+            "final_deadline": 188,
+            "candidate_coverage": 5,
+            "candidate_observed": 38,
+            "candidate_left_coverage": 3,
+            "final_coverage": 9,
+            "final_observed": 56,
+            "final_left_coverage": 5,
+            "final_left_observed": 28,
+            "final_battery_gain": 0.10,
+            "candidate_scale": 0.18,
+        }
+
+    def _is_on_charger(self) -> bool:
+        return self.cur_pos in self._charger_pos_set
+
+    def _is_charge_loop_failure(
+        self,
+        *,
+        info: dict,
+        charge_active: bool,
+        left_region: bool,
+        cleaned_this_step: int,
+        charge_gain_ratio: float,
+    ) -> bool:
+        if not charge_active or left_region:
+            return False
+
+        age = self.step_no - int(info["arrival_step"])
+        no_progress = self.new_observed_cells == 0 and cleaned_this_step == 0 and charge_gain_ratio < 0.01
+        if age >= 80 and no_progress and self.charge_loop_frames >= 12:
+            return True
+        if self.charge_loop_frames >= 18 and self.cur_revisit_count >= 4:
+            return True
+        return False
 
     def _resolve_pending_arrivals(
         self,
@@ -352,21 +450,21 @@ class Preprocessor:
         cleaning_progress: float,
         is_on_charger: bool,
         charge_active: bool,
-        charge_loop_flag: bool,
         is_starving: bool,
+        cleaned_this_step: int,
+        charge_gain_ratio: float,
     ) -> float:
         reward = 0.0
         observed_cells = int(np.count_nonzero(self.observed_map))
-        min_delay = 20
-        max_delay = 40
 
         for region_key, info in list(self.pending_arrivals.items()):
             age = self.step_no - int(info["arrival_step"])
+            params = self._arrival_confirm_params(int(info["arrival_order"]))
             region = info["region"]
             if not is_on_charger or self.cur_pos not in region:
                 info["left_region"] = True
 
-            if age < min_delay:
+            if age < int(params["candidate_min_delay"]):
                 continue
 
             coverage_gain = self.dirt_cleaned - int(info["start_dirt_cleaned"])
@@ -374,38 +472,172 @@ class Preprocessor:
             left_region = bool(info["left_region"])
             battery_ratio = _norm(self.battery, self.battery_max)
             battery_gain = battery_ratio - float(info["start_battery_ratio"])
+            early_discount = self._arrival_early_discount(int(info["arrival_step"]))
 
-            has_value = (
-                coverage_gain >= 3
-                or observed_gain >= 24
-                or (left_region and (coverage_gain >= 1 or observed_gain >= 10 or battery_gain >= 0.05))
+            candidate_value = (
+                coverage_gain >= int(params["candidate_coverage"])
+                or observed_gain >= int(params["candidate_observed"])
+                or (left_region and coverage_gain >= int(params["candidate_left_coverage"]))
             )
-            severe_risk = is_starving or (charge_active and charge_loop_flag and not left_region)
-            expired = age >= max_delay
+            final_value = (
+                coverage_gain >= int(params["final_coverage"])
+                or observed_gain >= int(params["final_observed"])
+                or (
+                    left_region
+                    and (
+                        coverage_gain >= int(params["final_left_coverage"])
+                        or observed_gain >= int(params["final_left_observed"])
+                        or battery_gain >= float(params["final_battery_gain"])
+                    )
+                )
+            )
+            charge_loop_failure = self._is_charge_loop_failure(
+                info=info,
+                charge_active=charge_active,
+                left_region=left_region,
+                cleaned_this_step=cleaned_this_step,
+                charge_gain_ratio=charge_gain_ratio,
+            )
+            severe_risk = (
+                is_starving
+                or charge_loop_failure
+                or battery_ratio <= 0.18
+            )
+            candidate_expired = age > int(params["candidate_deadline"]) and not bool(info["candidate_confirmed"])
+            final_expired = age > int(params["final_deadline"]) and not bool(info["final_confirmed"])
 
-            if not severe_risk and not expired and not has_value:
-                continue
-
-            if severe_risk or expired:
-                if severe_risk:
-                    penalty = -0.04 if age < max_delay else -0.02
-                else:
-                    penalty = -0.02 if expired else 0.0
+            if severe_risk:
+                if info["final_confirmed"]:
+                    info["cancel_reason"] = "risk_after_confirm"
+                    continue
+                penalty = -max(0.03, float(info["candidate_reward_paid"]) + 0.02 * early_discount)
                 reward += penalty
                 self.arrival_canceled_count += 1
                 self.arrival_cancel_penalty_total += penalty
+                info["cancel_reason"] = "risk"
                 del self.pending_arrivals[region_key]
                 continue
 
-            gated_reward = float(info["base_reward"]) * max(0.65, 1.0 - 0.25 * cleaning_progress)
-            if charge_active and not left_region:
-                gated_reward *= 0.5
-            reward += gated_reward
-            self.arrival_confirmed_count += 1
-            self.arrival_confirm_reward_total += gated_reward
-            self.confirmed_charger_arrival_steps[region_key] = self.step_no
-            del self.pending_arrivals[region_key]
+            if not info["candidate_confirmed"]:
+                if candidate_value and age >= int(params["candidate_min_delay"]):
+                    candidate_reward = (
+                        float(info["base_reward"])
+                        * float(params["candidate_scale"])
+                        * early_discount
+                        * max(0.65, 1.0 - 0.25 * cleaning_progress)
+                    )
+                    if charge_active and not left_region:
+                        candidate_reward *= 0.5
+                    info["candidate_confirmed"] = True
+                    info["candidate_step"] = self.step_no
+                    info["candidate_reward_paid"] = candidate_reward
+                    self.candidate_charger_arrival_steps[region_key] = self.step_no
+                    self.arrival_candidate_confirmed_count += 1
+                    reward += candidate_reward
+                    continue
 
+                if candidate_expired:
+                    penalty = -0.02 * early_discount
+                    reward += penalty
+                    self.arrival_canceled_count += 1
+                    self.arrival_cancel_penalty_total += penalty
+                    info["cancel_reason"] = "candidate_expired"
+                    del self.pending_arrivals[region_key]
+                continue
+
+            if info["final_confirmed"]:
+                if (
+                    charge_loop_failure
+                    and age <= int(params["final_deadline"]) + 40
+                ):
+                    info["cancel_reason"] = "post_confirm_loop"
+                continue
+
+            if age < int(params["final_min_delay"]):
+                continue
+
+            if final_value and not severe_risk:
+                full_reward = (
+                    float(info["base_reward"])
+                    * early_discount
+                    * max(0.65, 1.0 - 0.25 * cleaning_progress)
+                )
+                remaining_reward = max(0.0, full_reward - float(info["candidate_reward_paid"]))
+                if charge_active and not left_region:
+                    remaining_reward *= 0.5
+                info["final_confirmed"] = True
+                info["confirm_step"] = self.step_no
+                info["final_reward_paid"] = float(info["candidate_reward_paid"]) + remaining_reward
+                self.arrival_confirmed_count += 1
+                self.arrival_confirm_reward_total += info["final_reward_paid"]
+                self.confirmed_charger_arrival_steps[region_key] = self.step_no
+                reward += remaining_reward
+                continue
+
+            if final_expired:
+                penalty = -max(0.02, float(info["candidate_reward_paid"]))
+                reward += penalty
+                self.arrival_canceled_count += 1
+                self.arrival_cancel_penalty_total += penalty
+                info["cancel_reason"] = "final_expired"
+                del self.pending_arrivals[region_key]
+
+        return reward
+
+    def finalize_episode_rewards(
+        self,
+        *,
+        result_str: str,
+        final_mode: str,
+        final_step: int,
+        charge_fail_after_arrival: bool = False,
+    ) -> float:
+        reward = 0.0
+        is_charge_fail = result_str == "FAIL" and (
+            final_mode == "charge" or bool(charge_fail_after_arrival)
+        )
+        final_step = int(final_step)
+
+        for region_key, info in list(self.pending_arrivals.items()):
+            if not info["final_confirmed"]:
+                paid = float(info["candidate_reward_paid"])
+                if paid > 0.0:
+                    penalty = -(paid + 0.02)
+                else:
+                    penalty = -0.02
+                reward += penalty
+                if is_charge_fail and paid > 0.0:
+                    event_step = int(info["candidate_step"]) if int(info["candidate_step"]) >= 0 else int(info["arrival_step"])
+                    gap = max(0, final_step - event_step)
+                    self.arrival_retro_canceled_count += 1
+                    self.arrival_confirm_to_fail_gap = (
+                        gap
+                        if self.arrival_confirm_to_fail_gap < 0
+                        else min(self.arrival_confirm_to_fail_gap, gap)
+                    )
+                    self.retro_canceled_arrivals[region_key] = gap
+                    self.arrival_retro_cancel_penalty_total += penalty
+                else:
+                    self.arrival_canceled_count += 1
+                    self.arrival_cancel_penalty_total += penalty
+                del self.pending_arrivals[region_key]
+                continue
+
+            confirm_step = int(info["confirm_step"])
+            if is_charge_fail and 0 <= final_step - confirm_step <= 200:
+                paid = float(info["final_reward_paid"])
+                penalty = -(paid + 0.04)
+                reward += penalty
+                self.arrival_retro_canceled_count += 1
+                self.arrival_confirm_to_fail_gap = (
+                    final_step - confirm_step
+                    if self.arrival_confirm_to_fail_gap < 0
+                    else min(self.arrival_confirm_to_fail_gap, final_step - confirm_step)
+                )
+                self.retro_canceled_arrivals[region_key] = final_step - confirm_step
+                self.arrival_retro_cancel_penalty_total += penalty
+
+        self.pending_arrivals.clear()
         return reward
 
     def _get_global_state_feature(self) -> np.ndarray:
@@ -488,8 +720,10 @@ class Preprocessor:
         charge_gain_ratio = max(0.0, cur_battery_ratio - prev_battery_ratio)
         nearest_charger_dist = self._nearest_charger_distance()
         charger_known = nearest_charger_dist < self.MAX_DIST
-        is_on_charger = any(self.cur_pos in region for region in self.charger_regions)
+        is_on_charger = self._is_on_charger()
         charge_active = self.current_mode == "charge" or self.should_charge
+        early_phase = self.step_no <= 220
+        charger_search_phase = early_phase and not self.charger_positions
         is_starving = (
             charger_known
             and not is_on_charger
@@ -509,6 +743,8 @@ class Preprocessor:
             cleaning_reward = 0.0
             explore_reward = 0.0
             approach_reward = 0.0
+        if charger_search_phase:
+            explore_reward *= 0.75
         # Shift charging preference earlier and punish staying in the dangerous low-battery zone.
         charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
         low_capacity_factor = np.clip((260.0 - float(self.battery_max)) / 160.0, 0.0, 1.0)
@@ -560,6 +796,10 @@ class Preprocessor:
                 unarrived_charger_progress_reward += 0.015
             if self._nearest_unarrived_charger_dist < 6.0:
                 unarrived_charger_progress_reward += 0.010
+            if early_phase:
+                unarrived_charger_progress_reward *= 1.35
+            if charger_search_phase:
+                unarrived_charger_progress_reward *= 1.25
         revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
         loop_penalty = 0.0
         if (
@@ -581,6 +821,8 @@ class Preprocessor:
             self.charge_loop_frames += 1
             if unvisited_ratio < 0.18:
                 charge_loop_penalty -= 0.006
+        else:
+            self.charge_loop_frames = 0
         step_penalty = -(0.001 + 0.002 * cleaning_progress)
         if charge_active:
             step_penalty -= 0.0025
@@ -590,8 +832,9 @@ class Preprocessor:
             cleaning_progress=cleaning_progress,
             is_on_charger=is_on_charger,
             charge_active=charge_active,
-            charge_loop_flag=charge_loop_penalty < 0.0,
             is_starving=is_starving,
+            cleaned_this_step=cleaned_this_step,
+            charge_gain_ratio=charge_gain_ratio,
         )
 
         return (
