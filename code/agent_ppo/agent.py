@@ -235,7 +235,7 @@ class Agent(BaseAgent):
         act_data = self.guided_predict(
             [obs_data],
             policy_info=policy_info,
-            residual_alpha=Config.RESIDUAL_ALPHA_MAX,
+            residual_alpha=Config.RESIDUAL_ALPHA_WARMUP_TARGET,
         )[0]
         return self.action_process(act_data, is_stochastic=False)
 

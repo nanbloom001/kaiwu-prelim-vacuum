@@ -1,0 +1,388 @@
+{
+  "checkpoint": {
+    "checkpoint_id": "model-ckpt-resume",
+    "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+    "requested_relative_path": "code/model.ckpt-resume.pkl",
+    "snapshot": {
+      "exists": true,
+      "mtime_utc": "2026-04-25T04:07:17.419277Z",
+      "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+      "sha256": "30AF1F011E2F85C7D6B3496F8E23A05AE4FB1188DDF3E14EAFEF3B517C9B54EF",
+      "size": 367235
+    },
+    "tracked_artifacts": {
+      "code/latest_model.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.401789Z",
+        "path": "D:\\TcKaiwuFinal\\code\\latest_model.pkl",
+        "sha256": "FAC2D884D9FABFB2218D8063F42F24A536FE6025E0BA1BBD4C589B3E988CFEEC",
+        "size": 367125
+      },
+      "code/model.ckpt-resume.meta.json": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.431803Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.meta.json",
+        "sha256": "748619EDED79F371521FEF2DBE10E7221EE4AA1AD151E47462087EDAD050717E",
+        "size": 120
+      },
+      "code/model.ckpt-resume.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.419277Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+        "sha256": "30AF1F011E2F85C7D6B3496F8E23A05AE4FB1188DDF3E14EAFEF3B517C9B54EF",
+        "size": 367235
+      }
+    }
+  },
+  "contract": {
+    "episodes_per_map": 4,
+    "fixed_config": {
+      "battery_max": 150,
+      "charger_count": 3,
+      "map_random": false,
+      "max_step": 1000,
+      "robot_count": 4
+    },
+    "maps": [
+      4,
+      7
+    ],
+    "training_maps_source": {
+      "maps": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        8,
+        9,
+        10
+      ],
+      "path": "D:\\TcKaiwuFinal\\code\\agent_ppo\\conf\\train_env_conf.toml",
+      "training_map_exclusion_verified": true
+    }
+  },
+  "decision_inputs": {
+    "checkpoint_id": "model-ckpt-resume",
+    "episodes_per_map": 4,
+    "fixed_config": {
+      "battery_max": 150,
+      "charger_count": 3,
+      "map_random": false,
+      "max_step": 1000,
+      "robot_count": 4
+    },
+    "maps": [
+      4,
+      7
+    ],
+    "planned_aisrv_num": 2,
+    "planned_episode_count": 8,
+    "planned_gamecore_num": 8,
+    "shard_count": 2,
+    "shard_strategy": "map_partition",
+    "sharded": true,
+    "workers_per_aisrv": 4
+  },
+  "detail_log_dir": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907",
+  "detail_log_schema": {
+    "description": "Per-step holdout detail log schema for AI-friendly analysis.",
+    "notes": {
+      "degrade_gracefully": true,
+      "detail_log_dir": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907",
+      "jsonl_pattern": "episode_<episode_id>.jsonl"
+    },
+    "required_fields": [
+      "episode_id",
+      "map_id",
+      "step",
+      "action",
+      "planner_mode",
+      "planner_target",
+      "battery",
+      "charger_distance",
+      "return_slack",
+      "reward_components",
+      "fail_reason",
+      "death_replay_path",
+      "checkpoint_id"
+    ],
+    "run_id": "holdout-benchmark-20260425-233907",
+    "sample_record": {
+      "action": {
+        "id": 0,
+        "name": "MOVE_UP"
+      },
+      "battery": 150,
+      "charger_distance": 18,
+      "checkpoint_id": "model-ckpt-resume",
+      "death_replay_path": null,
+      "episode_id": "holdout-benchmark-20260425-233907-map4-ep01",
+      "fail_reason": null,
+      "map_id": 4,
+      "planner_mode": "coverage",
+      "planner_target": {
+        "kind": "cell",
+        "x": 12,
+        "y": 8
+      },
+      "return_slack": 12,
+      "reward_components": {
+        "charge": 0.0,
+        "cleaning": 0.0,
+        "penalty": 0.0
+      },
+      "step": 1
+    },
+    "schema_version": 1
+  },
+  "detail_log_schema_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\schema.json",
+  "episodes": [],
+  "episodes_planned": [
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map4-ep01.jsonl",
+      "ep_idx": 1,
+      "episode_id": "holdout-benchmark-20260425-233907-map4-ep01",
+      "map_id": 4,
+      "planned_index": 1,
+      "status": "PLANNED"
+    },
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map4-ep02.jsonl",
+      "ep_idx": 2,
+      "episode_id": "holdout-benchmark-20260425-233907-map4-ep02",
+      "map_id": 4,
+      "planned_index": 2,
+      "status": "PLANNED"
+    },
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map4-ep03.jsonl",
+      "ep_idx": 3,
+      "episode_id": "holdout-benchmark-20260425-233907-map4-ep03",
+      "map_id": 4,
+      "planned_index": 3,
+      "status": "PLANNED"
+    },
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map4-ep04.jsonl",
+      "ep_idx": 4,
+      "episode_id": "holdout-benchmark-20260425-233907-map4-ep04",
+      "map_id": 4,
+      "planned_index": 4,
+      "status": "PLANNED"
+    },
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map7-ep01.jsonl",
+      "ep_idx": 1,
+      "episode_id": "holdout-benchmark-20260425-233907-map7-ep01",
+      "map_id": 7,
+      "planned_index": 1,
+      "status": "PLANNED"
+    },
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map7-ep02.jsonl",
+      "ep_idx": 2,
+      "episode_id": "holdout-benchmark-20260425-233907-map7-ep02",
+      "map_id": 7,
+      "planned_index": 2,
+      "status": "PLANNED"
+    },
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map7-ep03.jsonl",
+      "ep_idx": 3,
+      "episode_id": "holdout-benchmark-20260425-233907-map7-ep03",
+      "map_id": 7,
+      "planned_index": 3,
+      "status": "PLANNED"
+    },
+    {
+      "checkpoint_id": "model-ckpt-resume",
+      "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map7-ep04.jsonl",
+      "ep_idx": 4,
+      "episode_id": "holdout-benchmark-20260425-233907-map7-ep04",
+      "map_id": 7,
+      "planned_index": 4,
+      "status": "PLANNED"
+    }
+  ],
+  "model_mutation_guard": {
+    "after": {
+      "code/latest_model.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.401789Z",
+        "path": "D:\\TcKaiwuFinal\\code\\latest_model.pkl",
+        "sha256": "FAC2D884D9FABFB2218D8063F42F24A536FE6025E0BA1BBD4C589B3E988CFEEC",
+        "size": 367125
+      },
+      "code/model.ckpt-resume.meta.json": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.431803Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.meta.json",
+        "sha256": "748619EDED79F371521FEF2DBE10E7221EE4AA1AD151E47462087EDAD050717E",
+        "size": 120
+      },
+      "code/model.ckpt-resume.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.419277Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+        "sha256": "30AF1F011E2F85C7D6B3496F8E23A05AE4FB1188DDF3E14EAFEF3B517C9B54EF",
+        "size": 367235
+      }
+    },
+    "before": {
+      "code/latest_model.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.401789Z",
+        "path": "D:\\TcKaiwuFinal\\code\\latest_model.pkl",
+        "sha256": "FAC2D884D9FABFB2218D8063F42F24A536FE6025E0BA1BBD4C589B3E988CFEEC",
+        "size": 367125
+      },
+      "code/model.ckpt-resume.meta.json": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.431803Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.meta.json",
+        "sha256": "748619EDED79F371521FEF2DBE10E7221EE4AA1AD151E47462087EDAD050717E",
+        "size": 120
+      },
+      "code/model.ckpt-resume.pkl": {
+        "exists": true,
+        "mtime_utc": "2026-04-25T04:07:17.419277Z",
+        "path": "D:\\TcKaiwuFinal\\code\\model.ckpt-resume.pkl",
+        "sha256": "30AF1F011E2F85C7D6B3496F8E23A05AE4FB1188DDF3E14EAFEF3B517C9B54EF",
+        "size": 367235
+      }
+    },
+    "drifted_paths": [],
+    "mutation_detected": false
+  },
+  "risks": [
+    {
+      "code": "MODEL_MUTATION_GUARD",
+      "message": "Tracked model artifacts remained unchanged during benchmark setup.",
+      "severity": "info"
+    },
+    {
+      "code": "REAL_EXECUTION_VIA_DOCKER",
+      "message": "Dry-run: no real episodes executed.",
+      "severity": "warning"
+    },
+    {
+      "code": "SHARDED_BENCHMARK_ASSIGNMENTS",
+      "message": "Dry-run: deterministic shard assignments recorded without launching docker.",
+      "severity": "warning"
+    }
+  ],
+  "run_id": "holdout-benchmark-20260425-233907",
+  "sharding": {
+    "assignments": [
+      {
+        "episodes": [
+          {
+            "checkpoint_id": "model-ckpt-resume",
+            "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map4-ep01.jsonl",
+            "ep_idx": 1,
+            "episode_id": "holdout-benchmark-20260425-233907-map4-ep01",
+            "map_id": 4,
+            "planned_index": 1,
+            "status": "PLANNED"
+          },
+          {
+            "checkpoint_id": "model-ckpt-resume",
+            "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map4-ep02.jsonl",
+            "ep_idx": 2,
+            "episode_id": "holdout-benchmark-20260425-233907-map4-ep02",
+            "map_id": 4,
+            "planned_index": 2,
+            "status": "PLANNED"
+          },
+          {
+            "checkpoint_id": "model-ckpt-resume",
+            "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map4-ep03.jsonl",
+            "ep_idx": 3,
+            "episode_id": "holdout-benchmark-20260425-233907-map4-ep03",
+            "map_id": 4,
+            "planned_index": 3,
+            "status": "PLANNED"
+          },
+          {
+            "checkpoint_id": "model-ckpt-resume",
+            "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map4-ep04.jsonl",
+            "ep_idx": 4,
+            "episode_id": "holdout-benchmark-20260425-233907-map4-ep04",
+            "map_id": 4,
+            "planned_index": 4,
+            "status": "PLANNED"
+          }
+        ],
+        "episodes_per_map": 4,
+        "maps": [
+          4,
+          7
+        ],
+        "run_id": "holdout-benchmark-20260425-233907",
+        "shard_count": 2,
+        "shard_index": 0
+      },
+      {
+        "episodes": [
+          {
+            "checkpoint_id": "model-ckpt-resume",
+            "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map7-ep01.jsonl",
+            "ep_idx": 1,
+            "episode_id": "holdout-benchmark-20260425-233907-map7-ep01",
+            "map_id": 7,
+            "planned_index": 1,
+            "status": "PLANNED"
+          },
+          {
+            "checkpoint_id": "model-ckpt-resume",
+            "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map7-ep02.jsonl",
+            "ep_idx": 2,
+            "episode_id": "holdout-benchmark-20260425-233907-map7-ep02",
+            "map_id": 7,
+            "planned_index": 2,
+            "status": "PLANNED"
+          },
+          {
+            "checkpoint_id": "model-ckpt-resume",
+            "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map7-ep03.jsonl",
+            "ep_idx": 3,
+            "episode_id": "holdout-benchmark-20260425-233907-map7-ep03",
+            "map_id": 7,
+            "planned_index": 3,
+            "status": "PLANNED"
+          },
+          {
+            "checkpoint_id": "model-ckpt-resume",
+            "detail_log_path": "D:\\TcKaiwuFinal\\train\\holdout_detail_logs\\holdout-benchmark-20260425-233907\\episode_holdout-benchmark-20260425-233907-map7-ep04.jsonl",
+            "ep_idx": 4,
+            "episode_id": "holdout-benchmark-20260425-233907-map7-ep04",
+            "map_id": 7,
+            "planned_index": 4,
+            "status": "PLANNED"
+          }
+        ],
+        "episodes_per_map": 4,
+        "maps": [
+          4,
+          7
+        ],
+        "run_id": "holdout-benchmark-20260425-233907",
+        "shard_count": 2,
+        "shard_index": 1
+      }
+    ],
+    "enabled": true,
+    "run_id": "holdout-benchmark-20260425-233907",
+    "shard_count": 2,
+    "strategy": "map_partition"
+  },
+  "status": "DRY_RUN"
+}

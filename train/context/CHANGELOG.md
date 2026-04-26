@@ -98,3 +98,11 @@
 2026-04-26 12:12 | T9: Added one bounded non-starving no-clean revisit penalty in PPO preprocessor reward shaping.
 2026-04-26 14:20 | T9 next iteration setup: rolled back no-clean revisit reward after 20m/50m 2x8 failures, slightly raised BC_COEF_MIN, and restored the preserved 20-minute resume checkpoint.
 2026-04-26 15:16 | T9 next iteration: reduced BC_COEF_MIN 0.32→0.30 and restored the active resume files from the preserved 20-minute checkpoint (clean_score 830, episode_cnt 5, saved_at 2026-04-26 12:32:14, trigger time).
+2026-04-26 19:52 | Made charge-mode planner safety contract explicit only when residual alpha is already zero: guided_predict now uses one-hot chosen_action prior in the existing hard charge-follow regime with legal/safe fallback.
+2026-04-26 20:03 | Rolled back rejected hard-charge one-hot planner-prior candidate in agent.py; 2x4 stayed safe but was not accepted (overall 814.9, map4 783.2, map7 846.5, 8/8 complete, 0 battery/collision) because it regressed overall and map4 versus baseline.
+2026-04-26 20:15 | Narrowed holdout exploit residual alpha to the training warmup target instead of the max cap.
+2026-04-26 20:22 | Hardened CoveragePlanner current-goal reuse contract so stale edge/frontier goals must remain useful, reachable, and within the existing coverage return-budget gate.
+2026-04-26 20:55 | Added CoveragePlanner excursion-budget charge trigger so an active coverage goal that no longer fits the existing full trip return budget switches to charge mode immediately.
+2026-04-26 21:01 | Replaced active current-goal charger-return heuristic with known-first/unknown-fallback A* cost so map7 battery-tail contract checks no longer underestimate return cost.
+2026-04-26 21:17 | Rolled back the active-goal A* return-cost refinement in algorithm.py after 2x4 overcharging and coverage collapse.
+2026-04-26 ~23:30 | Completed comprehensive benchmark-900 optimization final report (FINAL_REPORT_BENCHMARK_900_OPTIMIZATION.md) covering all 10+ experiments, systemic diagnosis, evidence inventory, and next-stage planner contract redesign proposal.

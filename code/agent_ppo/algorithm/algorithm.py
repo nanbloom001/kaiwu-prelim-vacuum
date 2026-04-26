@@ -1410,13 +1410,40 @@ class CoveragePlanner:
             for _, nxt in self._iter_neighbors(pos)
         )
 
+    def _goal_passes_coverage_contract(
+        self,
+        goal:          Optional[Position],
+        hero_pos:      Position,
+        battery:       float,
+        charger_known: bool,
+        path:          Sequence[Position],
+        distance:      float,
+        npcs:          Sequence[Position],
+    ) -> bool:
+        """
+        校验复用目标是否仍满足覆盖目标契约。
+
+        复用 current_goal 必须和新候选一样满足：目标仍有清扫/探索价值、
+        当前帧存在可行路径，并且在已知充电桩时保留同一套返航电量余量。
+        """
+        if not self._goal_is_still_valid(goal, hero_pos):
+            return False
+        if not path or not np.isfinite(distance):
+            return False
+        if not charger_known or goal is None:
+            return True
+
+        reserve = self._dynamic_return_margin() + 4.0
+        charger_need = self._heuristic_charger_distance(goal) + self.COVERAGE_RETURN_BUFFER
+        return battery > float(distance) + charger_need + reserve
+
     def _goal_is_still_valid(self, goal: Optional[Position], hero_pos: Position) -> bool:
         """
         判断当前导航目标 (current_goal) 是否仍然值得前往。
 
         以下情况认为目标仍有效：
           - charge / edge_frontier / find_charger_edge 模式：目标是充电桩或边缘，始终有效
-          - 其他模式：目标格子仍是 DIRT（尚未被清扫）或仍是 frontier cell（未被揭示）
+          - 覆盖模式：目标格子仍是 DIRT（尚未被清扫）或仍是 frontier cell（未被揭示）
 
         以下情况认为目标已失效（需重新选取）：
           - goal 为 None（无目标）
