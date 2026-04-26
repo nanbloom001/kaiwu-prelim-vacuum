@@ -4,1047 +4,729 @@
 # Copyright © 1998 - 2026 Tencent. All Rights Reserved.
 ###########################################################################
 """
-Sequence-aware PPO algorithm for LTSPPO.
+Author: Tencent AI Arena Authors
+
+PPO algorithm and rule-based coverage planner for Robot Vacuum.
 """
 
+from __future__ import annotations
+
+import heapq
 import os
 import time
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
 from agent_ppo.conf.conf import Config
-from agent_ppo.utils.experiment_archive import ExperimentArchive
 
 
 class Algorithm:
-    SAMPLE_FIELD_ORDER = (
-        "obs",
-        "legal_action",
-        "act",
-        "reward_clean",
-        "reward_survive",
-        "done",
-        "value_clean",
-        "value_survive",
-        "advantage_clean",
-        "advantage_survive",
-        "prob",
-        "planner_prob",
-        "mix_alpha",
-        "action_mask",
-        "mode_teacher",
-        "route_anchor_teacher",
-        "target_teacher",
-        "mode_teacher_mask",
-        "route_anchor_teacher_mask",
-        "target_teacher_mask",
-        "return_action_teacher",
-        "return_action_teacher_mask",
-        "route_phase_action_teacher",
-        "route_phase_action_teacher_mask",
-        "battery_risk_label",
-        "collision_risk_label",
-        "constraint_battery_process_cost",
-        "fallback_mask",
-        "expert_weight",
-    )
 
-    def __init__(self, model, optimizer, device=None, logger=None, monitor=None, use_amp=False):
+    def __init__(self, model, optimizer, device=None, logger=None, monitor=None):
         self.model = model
         self.optimizer = optimizer
         self.parameters = [p for pg in optimizer.param_groups for p in pg["params"]]
         self.device = device
         self.logger = logger
         self.monitor = monitor
-        self.use_amp = use_amp and device is not None and getattr(device, "type", "") == "cuda"
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
         self.clip_param = Config.CLIP_PARAM
         self.vf_coef = Config.VF_COEF
         self.var_beta = Config.BETA_START
         self.label_size = Config.ACTION_NUM
-        self.archive = ExperimentArchive(service_name=os.getenv("KAIWU_SERVICE_NAME") or "learner")
-        self.lambda_battery = Config.LAMBDA_BATTERY_INIT
-        self.lambda_collision = Config.LAMBDA_COLLISION_INIT
 
         self.train_step = 0
         self.last_report_time = 0
-        self.total_batch_count = 0
-        self.nan_batch_count = 0
-        self.consecutive_invalid_batches = 0
-        self.last_finite_step = 0
-        self.last_finite_metrics = {}
 
-    @staticmethod
-    def _tensor_summary(tensor):
-        if tensor is None:
-            return {"shape": None, "min": None, "max": None, "mean": None}
-        detached = tensor.detach()
-        if detached.numel() == 0:
-            return {"shape": list(detached.shape), "min": None, "max": None, "mean": None}
-        finite = detached[torch.isfinite(detached)]
-        if finite.numel() == 0:
-            return {"shape": list(detached.shape), "min": None, "max": None, "mean": None}
-        finite = finite.to(dtype=torch.float32)
-        return {
-            "shape": list(detached.shape),
-            "min": float(finite.min().item()),
-            "max": float(finite.max().item()),
-            "mean": float(finite.mean().item()),
-        }
+    def learn(self, list_sample_data: list) -> dict:
+        obs = torch.stack([s.obs for s in list_sample_data]).to(self.device)
+        legal_action = torch.stack([s.legal_action for s in list_sample_data]).to(self.device)
+        act = torch.stack([s.act for s in list_sample_data]).to(self.device).view(-1, 1)
+        old_prob = torch.stack([s.prob for s in list_sample_data]).to(self.device)
+        planner_prob = torch.stack([s.planner_prob for s in list_sample_data]).to(self.device)
+        mix_alpha = torch.stack([s.mix_alpha for s in list_sample_data]).to(self.device)
+        old_value = torch.stack([s.value for s in list_sample_data]).to(self.device)
+        reward_sum = torch.stack([s.reward_sum for s in list_sample_data]).to(self.device)
+        advantage = torch.stack([s.advantage for s in list_sample_data]).to(self.device)
+        reward = torch.stack([s.reward for s in list_sample_data]).to(self.device)
 
-    def _first_nonfinite_tensor(self, mapping):
-        for name, value in mapping.items():
-            if value is None:
-                continue
-            if isinstance(value, dict):
-                nested = self._first_nonfinite_tensor({f"{name}.{k}": v for k, v in value.items()})
-                if nested is not None:
-                    return nested
-                continue
-            tensor = value if isinstance(value, torch.Tensor) else torch.as_tensor(value, device=self.device)
-            if not torch.isfinite(tensor).all():
-                return name, self._tensor_summary(tensor)
-        return None
-
-    def _gradients_are_finite(self):
-        for param in self.parameters:
-            if param.grad is None:
-                continue
-            if not torch.isfinite(param.grad).all():
-                return False
-        return True
-
-    def _normalize_advantage(self, advantage, valid_mask, valid_count):
-        adv_mean = (advantage * valid_mask).sum() / valid_count
-        centered = advantage - adv_mean
-        adv_var = ((centered ** 2) * valid_mask).sum() / valid_count
-        adv_std = torch.sqrt(adv_var + Config.ADV_NORM_EPS)
-        if float(adv_std.detach().item()) < Config.ADV_STD_MIN:
-            return centered
-        return centered / adv_std
-
-    @staticmethod
-    def _default_mix_alpha_value():
-        return float(
-            np.clip(
-                min(max(Config.RESIDUAL_ALPHA_START, Config.RESIDUAL_ALPHA_WARMUP_TARGET), Config.RESIDUAL_ALPHA_MAX),
-                0.0,
-                1.0,
-            )
-        )
-
-    def _default_action_mask(self, legal_action):
-        mask = (torch.as_tensor(legal_action, dtype=torch.float32, device=self.device) > 0.5).to(torch.float32)
-        fallback = (torch.as_tensor(legal_action, dtype=torch.float32, device=self.device) > 0.0).to(torch.float32)
-        all_zero = mask.sum(dim=-1, keepdim=True) <= 0.5
-        mask = torch.where(all_zero, fallback, mask)
-        still_zero = mask.sum(dim=-1, keepdim=True) <= 0.5
-        if still_zero.any():
-            mask = torch.where(still_zero, torch.ones_like(mask), mask)
-        return mask
-
-    def _uniform_over_mask(self, action_mask):
-        mask = self._default_action_mask(action_mask)
-        return mask / mask.sum(dim=-1, keepdim=True).clamp_min(1.0)
-
-    def _normalize_masked_prob(self, prob, action_mask):
-        mask = self._default_action_mask(action_mask)
-        if prob is None:
-            return self._uniform_over_mask(mask)
-        tensor = torch.nan_to_num(
-            torch.as_tensor(prob, dtype=torch.float32, device=self.device),
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
-        tensor = tensor * mask
-        denom = tensor.sum(dim=-1, keepdim=True)
-        uniform = self._uniform_over_mask(mask)
-        return torch.where(denom > 1e-8, tensor / denom.clamp_min(1e-8), uniform)
-
-    def _record_invalid_batch(self, reason, stats):
-        self.nan_batch_count += 1
-        self.consecutive_invalid_batches += 1
-        self.optimizer.zero_grad(set_to_none=True)
-        payload = {
-            "reason": reason,
-            "stats": stats,
-            "nan_batch_count": self.nan_batch_count,
-            "nan_skip_rate": self.nan_batch_count / max(self.total_batch_count, 1),
-            "last_finite_step": self.last_finite_step,
-            "consecutive_invalid_batches": self.consecutive_invalid_batches,
-        }
-        if self.logger:
-            self.logger.warning(
-                f"loss_invalid=1 reason={reason} stats={stats} "
-                f"nan_batch_count={self.nan_batch_count} "
-                f"nan_skip_rate={payload['nan_skip_rate']:.4f} "
-                f"last_finite_step={self.last_finite_step} "
-                f"consecutive_invalid_batches={self.consecutive_invalid_batches}"
-            )
-        if self.monitor:
-            self.monitor.put_data(
-                {
-                    os.getpid(): {
-                        "total_loss": float(self.last_finite_metrics.get("total_loss", 0.0)),
-                        "loss_invalid": 1.0,
-                        "nan_batch_count": float(self.nan_batch_count),
-                        "nan_skip_rate": float(payload["nan_skip_rate"]),
-                        "last_finite_step": float(self.last_finite_step),
-                    }
-                }
-            )
-        if self.consecutive_invalid_batches == Config.INVALID_BATCH_CONSECUTIVE_LIMIT:
-            self.archive.log_event(
-                "learner_invalid_batch_limit",
-                {
-                    "train_step": self.train_step,
-                    "nan_batch_count": self.nan_batch_count,
-                    "consecutive_invalid_batches": self.consecutive_invalid_batches,
-                    "reason": reason,
-                    "stats": stats,
-                },
-            )
-        return {
-            "total_loss": float(self.last_finite_metrics.get("total_loss", 0.0)),
-            "loss_invalid": 1.0,
-            "nan_batch_count": float(self.nan_batch_count),
-            "nan_skip_rate": float(payload["nan_skip_rate"]),
-            "last_finite_step": float(self.last_finite_step),
-        }
-
-    def _finalize_invalid_after_unscale(self, reason, stats):
-        self.optimizer.zero_grad(set_to_none=True)
-        self.scaler.update()
-        return self._record_invalid_batch(reason, stats)
-
-    def _update_constraint_multipliers(self, battery_cost_mean, collision_cost_mean):
-        if float(battery_cost_mean) > Config.BATTERY_PROCESS_COST_TARGET:
-            self.lambda_battery = min(self.lambda_battery + Config.LAMBDA_BATTERY_UP, Config.LAMBDA_BATTERY_MAX)
-        elif float(battery_cost_mean) < Config.BATTERY_PROCESS_COST_TARGET * 0.8:
-            self.lambda_battery = max(self.lambda_battery - Config.LAMBDA_BATTERY_DOWN, Config.LAMBDA_BATTERY_MIN)
-
-        if float(collision_cost_mean) > Config.COLLISION_PROCESS_COST_TARGET:
-            self.lambda_collision = min(self.lambda_collision + Config.LAMBDA_COLLISION_UP, Config.LAMBDA_COLLISION_MAX)
-        elif float(collision_cost_mean) < Config.COLLISION_PROCESS_COST_TARGET * 0.8:
-            self.lambda_collision = max(self.lambda_collision - Config.LAMBDA_COLLISION_DOWN, Config.LAMBDA_COLLISION_MIN)
-
-    def learn(self, list_sample_data):
-        self.total_batch_count += 1
-        batch = self._unpack_train_batch(list_sample_data)
-        invalid = self._first_nonfinite_tensor(
-            {
-                "reward_clean": batch["reward_clean"],
-                "reward_survive": batch["reward_survive"],
-                "value_clean": batch["value_clean"],
-                "value_survive": batch["value_survive"],
-                "advantage_clean": batch["advantage_clean"],
-                "advantage_survive": batch["advantage_survive"],
-            }
-        )
-        if invalid is not None:
-            name, stats = invalid
-            return self._record_invalid_batch(f"batch:{name}", stats)
+        adv = advantage.squeeze(-1) if advantage.dim() > 1 else advantage
+        adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
         self.model.set_train_mode()
-        self.optimizer.zero_grad(set_to_none=True)
+        self.optimizer.zero_grad()
 
-        with torch.cuda.amp.autocast(enabled=self.use_amp):
-            outputs = self.model(batch["obs"])
-            invalid = self._first_nonfinite_tensor(
-                {
-                    "policy_logits": outputs.get("policy_logits"),
-                    "mode_logits": outputs.get("mode_logits"),
-                    "route_anchor_logits": outputs.get("route_anchor_logits"),
-                    "target_logits": outputs.get("target_logits"),
-                    "return_action_logits": outputs.get("return_action_logits"),
-                    "value_clean_pred": outputs.get("value_clean"),
-                    "value_survive_pred": outputs.get("value_survive"),
-                }
-            )
-            if invalid is not None:
-                name, stats = invalid
-                return self._record_invalid_batch(f"model:{name}", stats)
-            total_loss, info, loss_tensors = self._compute_loss(outputs, batch)
-            invalid = self._first_nonfinite_tensor(loss_tensors)
-            if invalid is not None:
-                name, stats = invalid
-                return self._record_invalid_batch(f"loss:{name}", stats)
+        rst_list = self.model(obs)
+        logits = rst_list[0]
+        value_pred = rst_list[1]
 
-        self.scaler.scale(total_loss).backward()
-        self.scaler.unscale_(self.optimizer)
-        if not self._gradients_are_finite():
-            return self._finalize_invalid_after_unscale(
-                "gradients",
-                {"shape": None, "min": None, "max": None, "mean": None},
-            )
+        total_loss, info = self._compute_loss(
+            logits=logits,
+            value_pred=value_pred,
+            legal_action=legal_action,
+            old_action=act,
+            old_prob=old_prob,
+            planner_prob=planner_prob,
+            mix_alpha=mix_alpha,
+            old_value=old_value,
+            reward_sum=reward_sum,
+            advantage=adv,
+        )
+
+        total_loss.backward()
         if Config.USE_GRAD_CLIP:
             torch.nn.utils.clip_grad_norm_(self.parameters, Config.GRAD_CLIP_RANGE)
-            if not self._gradients_are_finite():
-                return self._finalize_invalid_after_unscale(
-                    "gradients_post_clip",
-                    {"shape": None, "min": None, "max": None, "mean": None},
-                )
-
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
+        self.optimizer.step()
         self.train_step += 1
-        self.consecutive_invalid_batches = 0
-        self.last_finite_step = self.train_step
 
         results = {"total_loss": float(total_loss.item())}
-        self.last_finite_metrics = {
-            "total_loss": results["total_loss"],
-            "policy_loss": float(info["policy_loss"]),
-            "value_clean_loss": float(info["value_clean_loss"]),
-            "value_survive_loss": float(info["value_survive_loss"]),
-            "entropy_loss": float(info["entropy_loss"]),
-        }
         now = time.time()
         if now - self.last_report_time >= 60:
             results.update(
                 {
+                    "value_loss": round(info["value_loss"], 4),
                     "policy_loss": round(info["policy_loss"], 4),
-                    "value_clean_loss": round(info["value_clean_loss"], 4),
-                    "value_survive_loss": round(info["value_survive_loss"], 4),
                     "entropy_loss": round(info["entropy_loss"], 4),
                     "bc_loss": round(info["bc_loss"], 4),
                     "approx_kl": round(info["approx_kl"], 4),
                     "mix_alpha": round(info["mix_alpha"], 4),
-                    "mode_teacher_loss": round(info["mode_teacher_loss"], 4),
-                    "route_anchor_teacher_loss": round(info["route_anchor_teacher_loss"], 4),
-                    "target_teacher_loss": round(info["target_teacher_loss"], 4),
-                    "return_action_teacher_loss": round(info["return_action_teacher_loss"], 4),
-                    "route_phase_policy_teacher_loss": round(info["route_phase_policy_teacher_loss"], 4),
-                    "mode_teacher_active_rate": round(info["mode_teacher_active_rate"], 4),
-                    "route_anchor_teacher_active_rate": round(info["route_anchor_teacher_active_rate"], 4),
-                    "target_teacher_active_rate": round(info["target_teacher_active_rate"], 4),
-                    "return_action_teacher_active_rate": round(info["return_action_teacher_active_rate"], 4),
-                    "route_phase_action_teacher_active_rate": round(info["route_phase_action_teacher_active_rate"], 4),
-                    "aux_battery_loss": round(info["aux_battery_loss"], 4),
-                    "aux_collision_loss": round(info["aux_collision_loss"], 4),
-                    "battery_process_cost_mean": round(info["battery_process_cost_mean"], 4),
-                    "collision_process_cost_mean": round(info["collision_process_cost_mean"], 4),
-                    "lambda_battery": round(info["lambda_battery"], 4),
-                    "lambda_collision": round(info["lambda_collision"], 4),
-                    "loss_invalid": 0.0,
-                    "nan_batch_count": float(self.nan_batch_count),
-                    "nan_skip_rate": float(self.nan_batch_count / max(self.total_batch_count, 1)),
-                    "last_finite_step": float(self.last_finite_step),
-                    "train_step": self.train_step,
+                    "reward": round(reward.mean().item(), 4),
                 }
             )
-
             if self.logger:
                 self.logger.info(
-                    "policy_loss: %.4f, value_clean_loss: %.4f, value_survive_loss: %.4f, "
-                    "entropy_loss: %.4f, bc_loss: %.4f, approx_kl: %.4f, mix_alpha: %.4f, "
-                    "mode_teacher_loss: %.4f, route_anchor_teacher_loss: %.4f, "
-                    "target_teacher_loss: %.4f, return_action_teacher_loss: %.4f, "
-                    "route_phase_policy_teacher_loss: %.4f, "
-                    "mode_teacher_active_rate: %.4f, route_anchor_teacher_active_rate: %.4f, "
-                    "target_teacher_active_rate: %.4f, return_action_teacher_active_rate: %.4f, "
-                    "route_phase_action_teacher_active_rate: %.4f, "
-                    "battery_process_cost_mean: %.4f, collision_process_cost_mean: %.4f, "
-                    "lambda_battery: %.4f, lambda_collision: %.4f, "
-                    "loss_invalid: %.0f, nan_batch_count: %.0f, nan_skip_rate: %.4f, last_finite_step: %.0f"
-                    % (
-                        results["policy_loss"],
-                        results["value_clean_loss"],
-                        results["value_survive_loss"],
-                        results["entropy_loss"],
-                        results["bc_loss"],
-                        results["approx_kl"],
-                        results["mix_alpha"],
-                        results["mode_teacher_loss"],
-                        results["route_anchor_teacher_loss"],
-                        results["target_teacher_loss"],
-                        results["return_action_teacher_loss"],
-                        results["route_phase_policy_teacher_loss"],
-                        results["mode_teacher_active_rate"],
-                        results["route_anchor_teacher_active_rate"],
-                        results["target_teacher_active_rate"],
-                        results["return_action_teacher_active_rate"],
-                        results["route_phase_action_teacher_active_rate"],
-                        results["battery_process_cost_mean"],
-                        results["collision_process_cost_mean"],
-                        results["lambda_battery"],
-                        results["lambda_collision"],
-                        results["loss_invalid"],
-                        results["nan_batch_count"],
-                        results["nan_skip_rate"],
-                        results["last_finite_step"],
-                    )
+                    f"[step {self.train_step}] "
+                    f"policy={results['policy_loss']} "
+                    f"value={results['value_loss']} "
+                    f"entropy={results['entropy_loss']} "
+                    f"bc={results['bc_loss']} "
+                    f"alpha={results['mix_alpha']} "
+                    f"reward={results['reward']}"
                 )
-
-            self.archive.log_train_window(
-                {
-                    "record_type": "algorithm_window",
-                    "train_step": self.train_step,
-                    "total_loss": results["total_loss"],
-                    "policy_loss": results["policy_loss"],
-                    "value_clean_loss": results["value_clean_loss"],
-                    "value_survive_loss": results["value_survive_loss"],
-                    "entropy_loss": results["entropy_loss"],
-                    "bc_loss": results["bc_loss"],
-                    "approx_kl": results["approx_kl"],
-                    "mix_alpha": results["mix_alpha"],
-                    "mode_teacher_loss": results["mode_teacher_loss"],
-                    "route_anchor_teacher_loss": results["route_anchor_teacher_loss"],
-                    "target_teacher_loss": results["target_teacher_loss"],
-                    "return_action_teacher_loss": results["return_action_teacher_loss"],
-                    "route_phase_policy_teacher_loss": results["route_phase_policy_teacher_loss"],
-                    "mode_teacher_active_rate": results["mode_teacher_active_rate"],
-                    "route_anchor_teacher_active_rate": results["route_anchor_teacher_active_rate"],
-                    "target_teacher_active_rate": results["target_teacher_active_rate"],
-                    "return_action_teacher_active_rate": results["return_action_teacher_active_rate"],
-                    "route_phase_action_teacher_active_rate": results["route_phase_action_teacher_active_rate"],
-                    "aux_battery_loss": results["aux_battery_loss"],
-                    "aux_collision_loss": results["aux_collision_loss"],
-                    "battery_process_cost_mean": results["battery_process_cost_mean"],
-                    "collision_process_cost_mean": results["collision_process_cost_mean"],
-                    "lambda_battery": results["lambda_battery"],
-                    "lambda_collision": results["lambda_collision"],
-                    "loss_invalid": results["loss_invalid"],
-                    "nan_batch_count": results["nan_batch_count"],
-                    "nan_skip_rate": results["nan_skip_rate"],
-                    "last_finite_step": results["last_finite_step"],
-                }
-            )
             if self.monitor:
                 self.monitor.put_data({os.getpid(): results})
             self.last_report_time = now
-
         return results
 
-    def _unpack_train_batch(self, list_sample_data):
-        if isinstance(list_sample_data, (torch.Tensor, np.ndarray)):
-            return self._unpack_flat_batch_tensor(list_sample_data)
+    def _compute_loss(
+        self,
+        logits,
+        value_pred,
+        legal_action,
+        old_action,
+        old_prob,
+        planner_prob,
+        mix_alpha,
+        old_value,
+        reward_sum,
+        advantage,
+    ):
+        tdret = reward_sum.squeeze(-1) if reward_sum.dim() > 1 else reward_sum
+        vp = value_pred.squeeze(-1) if value_pred.dim() > 1 else value_pred
+        ov = old_value.squeeze(-1) if old_value.dim() > 1 else old_value
 
-        if isinstance(list_sample_data, (list, tuple)) and list_sample_data:
-            first = list_sample_data[0]
-            if isinstance(first, (torch.Tensor, np.ndarray)):
-                if len(list_sample_data) == len(self.SAMPLE_FIELD_ORDER):
-                    field_map = {
-                        key: torch.as_tensor(value)
-                        for key, value in zip(self.SAMPLE_FIELD_ORDER, list_sample_data)
-                    }
-                    return self._build_batch_from_field_map(field_map)
+        vp_clipped = ov + (vp - ov).clamp(-self.clip_param, self.clip_param)
+        value_loss = 0.5 * torch.max((tdret - vp) ** 2, (tdret - vp_clipped) ** 2).mean()
 
-                stacked = torch.stack([torch.as_tensor(v) for v in list_sample_data], dim=0)
-                return self._unpack_flat_batch_tensor(stacked)
+        policy_prob = self._masked_softmax(logits, legal_action)
+        mixed_prob = self._mix_policy(policy_prob, planner_prob, mix_alpha, legal_action)
+        entropy_loss = (-(mixed_prob * torch.log(mixed_prob.clamp(1e-9, 1.0))).sum(1)).mean()
 
-        to_device = {"device": self.device}
-        if self.use_amp:
-            to_device["non_blocking"] = True
+        one_hot = F.one_hot(old_action[:, 0].long(), self.label_size).float()
+        new_prob = (one_hot * mixed_prob).sum(1, keepdim=True)
+        old_act_prob = (one_hot * old_prob).sum(1, keepdim=True).clamp(1e-9)
+        ratio = new_prob / old_act_prob
 
-        obs = torch.stack([torch.as_tensor(s.obs, dtype=torch.float32) for s in list_sample_data]).to(**to_device)
-        legal_action = torch.stack(
-            [torch.as_tensor(s.legal_action, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        act = torch.stack([torch.as_tensor(s.act, dtype=torch.long) for s in list_sample_data]).to(**to_device)
-        prob = torch.stack([torch.as_tensor(s.prob, dtype=torch.float32) for s in list_sample_data]).to(**to_device)
-        planner_prob = torch.stack(
-            [
-                torch.as_tensor(
-                    getattr(s, "planner_prob", getattr(s, "prob", None)),
-                    dtype=torch.float32,
-                )
-                for s in list_sample_data
-            ]
-        ).to(**to_device)
-        mix_alpha = torch.stack(
-            [
-                torch.as_tensor(
-                    getattr(
-                        s,
-                        "mix_alpha",
-                        np.full((Config.SEQ_CHUNK_LEN,), self._default_mix_alpha_value(), dtype=np.float32),
-                    ),
-                    dtype=torch.float32,
-                )
-                for s in list_sample_data
-            ]
-        ).to(**to_device)
-        action_mask = torch.stack(
-            [
-                torch.as_tensor(
-                    getattr(s, "action_mask", getattr(s, "legal_action", None)),
-                    dtype=torch.float32,
-                )
-                for s in list_sample_data
-            ]
-        ).to(**to_device)
-        reward_clean = torch.stack(
-            [torch.as_tensor(s.reward_clean, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        reward_survive = torch.stack(
-            [torch.as_tensor(s.reward_survive, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        done = torch.stack([torch.as_tensor(s.done, dtype=torch.float32) for s in list_sample_data]).to(**to_device)
-        value_clean = torch.stack(
-            [torch.as_tensor(s.value_clean, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        value_survive = torch.stack(
-            [torch.as_tensor(s.value_survive, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        advantage_clean = torch.stack(
-            [torch.as_tensor(s.advantage_clean, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        advantage_survive = torch.stack(
-            [torch.as_tensor(s.advantage_survive, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        mode_teacher = torch.stack(
-            [torch.as_tensor(s.mode_teacher, dtype=torch.long) for s in list_sample_data]
-        ).to(**to_device)
-        route_anchor_teacher = torch.stack(
-            [torch.as_tensor(s.route_anchor_teacher, dtype=torch.long) for s in list_sample_data]
-        ).to(**to_device)
-        target_teacher = torch.stack(
-            [torch.as_tensor(s.target_teacher, dtype=torch.long) for s in list_sample_data]
-        ).to(**to_device)
-        mode_teacher_mask = torch.stack(
-            [torch.as_tensor(s.mode_teacher_mask, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        route_anchor_teacher_mask = torch.stack(
-            [torch.as_tensor(s.route_anchor_teacher_mask, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        target_teacher_mask = torch.stack(
-            [torch.as_tensor(s.target_teacher_mask, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        return_action_teacher = torch.stack(
-            [torch.as_tensor(s.return_action_teacher, dtype=torch.long) for s in list_sample_data]
-        ).to(**to_device)
-        return_action_teacher_mask = torch.stack(
-            [torch.as_tensor(s.return_action_teacher_mask, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        route_phase_action_teacher = torch.stack(
-            [torch.as_tensor(s.route_phase_action_teacher, dtype=torch.long) for s in list_sample_data]
-        ).to(**to_device)
-        route_phase_action_teacher_mask = torch.stack(
-            [torch.as_tensor(s.route_phase_action_teacher_mask, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        battery_risk_label = torch.stack(
-            [torch.as_tensor(s.battery_risk_label, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        collision_risk_label = torch.stack(
-            [torch.as_tensor(s.collision_risk_label, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        constraint_battery_process_cost = torch.stack(
-            [torch.as_tensor(s.constraint_battery_process_cost, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        fallback_mask = torch.stack(
-            [torch.as_tensor(s.fallback_mask, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
-        expert_weight = torch.stack(
-            [torch.as_tensor(s.expert_weight, dtype=torch.float32) for s in list_sample_data]
-        ).to(**to_device)
+        adv = advantage.unsqueeze(-1) if advantage.dim() == 1 else advantage
+        policy_loss = torch.max(
+            -ratio * adv,
+            -ratio.clamp(1 - self.clip_param, 1 + self.clip_param) * adv,
+        ).mean()
 
-        return self._build_batch_from_field_map(
-            {
-                "obs": obs,
-                "legal_action": legal_action,
-                "act": act,
-                "prob": prob,
-                "planner_prob": planner_prob,
-                "mix_alpha": mix_alpha,
-                "action_mask": action_mask,
-                "reward_clean": reward_clean,
-                "reward_survive": reward_survive,
-                "done": done,
-                "value_clean": value_clean,
-                "value_survive": value_survive,
-                "advantage_clean": advantage_clean,
-                "advantage_survive": advantage_survive,
-                "mode_teacher": mode_teacher,
-                "route_anchor_teacher": route_anchor_teacher,
-                "target_teacher": target_teacher,
-                "mode_teacher_mask": mode_teacher_mask,
-                "route_anchor_teacher_mask": route_anchor_teacher_mask,
-                "target_teacher_mask": target_teacher_mask,
-                "return_action_teacher": return_action_teacher,
-                "return_action_teacher_mask": return_action_teacher_mask,
-                "route_phase_action_teacher": route_phase_action_teacher,
-                "route_phase_action_teacher_mask": route_phase_action_teacher_mask,
-                "battery_risk_label": battery_risk_label,
-                "collision_risk_label": collision_risk_label,
-                "constraint_battery_process_cost": constraint_battery_process_cost,
-                "fallback_mask": fallback_mask,
-                "expert_weight": expert_weight,
-            }
-        )
+        bc_loss = -(planner_prob * torch.log(policy_prob.clamp(1e-9, 1.0))).sum(1).mean()
 
-    def _unpack_flat_batch_tensor(self, batch_data):
-        batch_tensor = torch.as_tensor(batch_data)
-        if batch_tensor.dim() == 1:
-            batch_tensor = batch_tensor.unsqueeze(0)
+        alpha_mean = float(mix_alpha.mean().item())
+        alpha_norm = np.clip(alpha_mean / max(Config.RESIDUAL_ALPHA_MAX, 1e-6), 0.0, 1.0)
+        bc_coef = max(Config.BC_COEF_MIN, Config.BC_COEF_START * (1.0 - alpha_norm) ** 2)
+        self.var_beta = Config.BETA_END + (Config.BETA_START - Config.BETA_END) * (1.0 - alpha_norm)
 
-        batch_tensor = batch_tensor.to(dtype=torch.float32, device=self.device)
-        total_dim = batch_tensor.shape[1]
-        residual_extra_dim = (
-            Config.SAMPLE_PLANNER_PROB_DIM
-            + Config.SAMPLE_MIX_ALPHA_DIM
-            + Config.SAMPLE_ACTION_MASK_DIM
-        )
-        legacy_dim = (
-            Config.SAMPLE_OBS_DIM
-            + Config.SAMPLE_LEGAL_ACTION_DIM
-            + Config.SAMPLE_ACTION_DIM
-            + Config.SAMPLE_REWARD_DIM
-            + Config.SAMPLE_REWARD_DIM
-            + Config.SAMPLE_DONE_DIM
-            + Config.SAMPLE_VALUE_DIM
-            + Config.SAMPLE_VALUE_DIM
-            + Config.SAMPLE_VALUE_DIM
-            + Config.SAMPLE_VALUE_DIM
-            + Config.SAMPLE_PROB_DIM
-            + Config.SAMPLE_MODE_DIM
-            + Config.SAMPLE_ROUTE_ANCHOR_DIM
-            + Config.SAMPLE_TARGET_DIM
-            + Config.SAMPLE_MODE_TEACHER_MASK_DIM
-            + Config.SAMPLE_ROUTE_ANCHOR_MASK_DIM
-            + Config.SAMPLE_TARGET_TEACHER_MASK_DIM
-            + Config.SAMPLE_RETURN_ACTION_DIM
-            + Config.SAMPLE_RETURN_ACTION_MASK_DIM
-            + Config.SAMPLE_ROUTE_PHASE_ACTION_DIM
-            + Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM
-            + Config.SAMPLE_AUX_LABEL_DIM
-            + Config.SAMPLE_AUX_LABEL_DIM
-            + Config.SAMPLE_CONSTRAINT_COST_DIM
-            + Config.FALLBACK_MASK_DIM
-            + Config.EXPERT_WEIGHT_DIM
-        )
-        has_residual_payload = total_dim >= legacy_dim + residual_extra_dim
-        begin = 0
-
-        def _take(size, dtype=None, default=None):
-            nonlocal begin
-            if begin + size <= total_dim:
-                value = batch_tensor[:, begin : begin + size]
-                begin += size
-            else:
-                if default is None:
-                    return None
-                value = torch.as_tensor(default, dtype=torch.float32, device=self.device).view(1, -1).repeat(
-                    batch_tensor.shape[0], 1
-                )
-            if dtype is not None and value is not None:
-                value = value.to(dtype=dtype)
-            return value
-
-        field_map = {}
-        field_map["obs"] = _take(Config.SAMPLE_OBS_DIM)
-
-        field_map["legal_action"] = _take(Config.SAMPLE_LEGAL_ACTION_DIM)
-
-        field_map["act"] = _take(Config.SAMPLE_ACTION_DIM, dtype=torch.long)
-
-        field_map["reward_clean"] = _take(Config.SAMPLE_REWARD_DIM)
-
-        field_map["reward_survive"] = _take(Config.SAMPLE_REWARD_DIM)
-
-        field_map["done"] = _take(Config.SAMPLE_DONE_DIM)
-
-        field_map["value_clean"] = _take(Config.SAMPLE_VALUE_DIM)
-
-        field_map["value_survive"] = _take(Config.SAMPLE_VALUE_DIM)
-
-        field_map["advantage_clean"] = _take(Config.SAMPLE_VALUE_DIM)
-
-        field_map["advantage_survive"] = _take(Config.SAMPLE_VALUE_DIM)
-
-        field_map["prob"] = _take(Config.SAMPLE_PROB_DIM)
-
-        if has_residual_payload:
-            field_map["planner_prob"] = _take(Config.SAMPLE_PLANNER_PROB_DIM)
-            field_map["mix_alpha"] = _take(
-                Config.SAMPLE_MIX_ALPHA_DIM,
-                default=np.full((Config.SAMPLE_MIX_ALPHA_DIM,), self._default_mix_alpha_value(), dtype=np.float32),
-            )
-            field_map["action_mask"] = _take(Config.SAMPLE_ACTION_MASK_DIM, default=None)
-        else:
-            field_map["planner_prob"] = None
-            field_map["mix_alpha"] = None
-            field_map["action_mask"] = None
-
-        field_map["mode_teacher"] = _take(Config.SAMPLE_MODE_DIM, dtype=torch.long)
-
-        field_map["route_anchor_teacher"] = _take(Config.SAMPLE_ROUTE_ANCHOR_DIM, dtype=torch.long)
-
-        field_map["target_teacher"] = _take(Config.SAMPLE_TARGET_DIM, dtype=torch.long)
-
-        field_map["mode_teacher_mask"] = _take(Config.SAMPLE_MODE_TEACHER_MASK_DIM)
-
-        field_map["route_anchor_teacher_mask"] = _take(Config.SAMPLE_ROUTE_ANCHOR_MASK_DIM)
-
-        field_map["target_teacher_mask"] = _take(Config.SAMPLE_TARGET_TEACHER_MASK_DIM)
-
-        field_map["return_action_teacher"] = _take(Config.SAMPLE_RETURN_ACTION_DIM, dtype=torch.long)
-
-        field_map["return_action_teacher_mask"] = _take(Config.SAMPLE_RETURN_ACTION_MASK_DIM)
-
-        field_map["route_phase_action_teacher"] = _take(Config.SAMPLE_ROUTE_PHASE_ACTION_DIM, dtype=torch.long)
-
-        field_map["route_phase_action_teacher_mask"] = _take(Config.SAMPLE_ROUTE_PHASE_ACTION_MASK_DIM)
-
-        field_map["battery_risk_label"] = _take(Config.SAMPLE_AUX_LABEL_DIM)
-
-        field_map["collision_risk_label"] = _take(Config.SAMPLE_AUX_LABEL_DIM)
-
-        field_map["constraint_battery_process_cost"] = _take(Config.SAMPLE_CONSTRAINT_COST_DIM)
-
-        field_map["fallback_mask"] = _take(Config.FALLBACK_MASK_DIM)
-
-        field_map["expert_weight"] = _take(Config.EXPERT_WEIGHT_DIM)
-
-        return self._build_batch_from_field_map(field_map)
-
-    def _build_batch_from_field_map(self, field_map):
-        to_device = {"device": self.device}
-        if self.use_amp:
-            to_device["non_blocking"] = True
-
-        def _reshape_optional_sequence(tensor, batch_size, seq_len):
-            if tensor.numel() == batch_size * seq_len:
-                return tensor.view(batch_size, seq_len)
-            if tensor.numel() % max(batch_size, 1) == 0:
-                return tensor.view(batch_size, tensor.numel() // max(batch_size, 1))
-            return tensor.view(batch_size, -1)
-
-        obs = torch.as_tensor(field_map["obs"], dtype=torch.float32).to(**to_device)
-        legal_action = torch.as_tensor(field_map["legal_action"], dtype=torch.float32).to(**to_device)
-        act = torch.as_tensor(field_map["act"], dtype=torch.long).to(**to_device)
-        prob = torch.as_tensor(field_map["prob"], dtype=torch.float32).to(**to_device)
-        action_mask = field_map.get("action_mask")
-        if action_mask is None:
-            action_mask = legal_action
-        action_mask = torch.as_tensor(action_mask, dtype=torch.float32).to(**to_device)
-        action_mask = self._default_action_mask(action_mask)
-        planner_prob = self._normalize_masked_prob(field_map.get("planner_prob"), action_mask)
-        mix_alpha = field_map.get("mix_alpha")
-        if mix_alpha is None:
-            mix_alpha = np.full((obs.shape[0], Config.SEQ_CHUNK_LEN), self._default_mix_alpha_value(), dtype=np.float32)
-        mix_alpha = torch.as_tensor(mix_alpha, dtype=torch.float32).to(**to_device)
-        reward_clean = torch.as_tensor(field_map["reward_clean"], dtype=torch.float32).to(**to_device)
-        reward_survive = torch.as_tensor(field_map["reward_survive"], dtype=torch.float32).to(**to_device)
-        done = torch.as_tensor(field_map["done"], dtype=torch.float32).to(**to_device)
-        value_clean = torch.as_tensor(field_map["value_clean"], dtype=torch.float32).to(**to_device)
-        value_survive = torch.as_tensor(field_map["value_survive"], dtype=torch.float32).to(**to_device)
-        advantage_clean = torch.as_tensor(field_map["advantage_clean"], dtype=torch.float32).to(**to_device)
-        advantage_survive = torch.as_tensor(field_map["advantage_survive"], dtype=torch.float32).to(**to_device)
-        mode_teacher = torch.as_tensor(field_map["mode_teacher"], dtype=torch.long).to(**to_device)
-        route_anchor_teacher = torch.as_tensor(field_map["route_anchor_teacher"], dtype=torch.long).to(**to_device)
-        target_teacher = torch.as_tensor(field_map["target_teacher"], dtype=torch.long).to(**to_device)
-        mode_teacher_mask = torch.as_tensor(field_map["mode_teacher_mask"], dtype=torch.float32).to(**to_device)
-        route_anchor_teacher_mask = torch.as_tensor(field_map["route_anchor_teacher_mask"], dtype=torch.float32).to(**to_device)
-        target_teacher_mask = torch.as_tensor(field_map["target_teacher_mask"], dtype=torch.float32).to(**to_device)
-        return_action_teacher = torch.as_tensor(field_map["return_action_teacher"], dtype=torch.long).to(**to_device)
-        return_action_teacher_mask = torch.as_tensor(field_map["return_action_teacher_mask"], dtype=torch.float32).to(**to_device)
-        route_phase_action_teacher = torch.as_tensor(
-            field_map["route_phase_action_teacher"], dtype=torch.long
-        ).to(**to_device)
-        route_phase_action_teacher_mask = torch.as_tensor(
-            field_map["route_phase_action_teacher_mask"], dtype=torch.float32
-        ).to(**to_device)
-        battery_risk_label = torch.as_tensor(field_map["battery_risk_label"], dtype=torch.float32).to(**to_device)
-        collision_risk_label = torch.as_tensor(field_map["collision_risk_label"], dtype=torch.float32).to(**to_device)
-        constraint_battery_process_cost = torch.as_tensor(
-            field_map["constraint_battery_process_cost"], dtype=torch.float32
-        ).to(**to_device)
-        fallback_mask = torch.as_tensor(field_map["fallback_mask"], dtype=torch.float32).to(**to_device)
-        expert_weight = torch.as_tensor(field_map["expert_weight"], dtype=torch.float32).to(**to_device)
-
-        batch_size = obs.shape[0]
-        seq_len = Config.SEQ_CHUNK_LEN
-        return {
-            "obs": obs.view(batch_size, seq_len, Config.DIM_OF_OBSERVATION),
-            "legal_action": legal_action.view(batch_size, seq_len, Config.ACTION_NUM),
-            "act": act.view(batch_size, seq_len),
-            "prob": prob.view(batch_size, seq_len, Config.ACTION_NUM),
-            "planner_prob": planner_prob.view(batch_size, seq_len, Config.ACTION_NUM),
-            "mix_alpha": mix_alpha.view(batch_size, seq_len),
-            "action_mask": action_mask.view(batch_size, seq_len, Config.ACTION_NUM),
-            "reward_clean": reward_clean.view(batch_size, seq_len),
-            "reward_survive": reward_survive.view(batch_size, seq_len),
-            "done": done.view(batch_size, seq_len),
-            "value_clean": value_clean.view(batch_size, seq_len),
-            "value_survive": value_survive.view(batch_size, seq_len),
-            "advantage_clean": advantage_clean.view(batch_size, seq_len),
-            "advantage_survive": advantage_survive.view(batch_size, seq_len),
-            "mode_teacher": mode_teacher.view(batch_size, seq_len),
-            "route_anchor_teacher": route_anchor_teacher.view(batch_size, seq_len),
-            "target_teacher": target_teacher.view(batch_size, seq_len),
-            "mode_teacher_mask": mode_teacher_mask.view(batch_size, seq_len),
-            "route_anchor_teacher_mask": route_anchor_teacher_mask.view(batch_size, seq_len),
-            "target_teacher_mask": target_teacher_mask.view(batch_size, seq_len),
-            "return_action_teacher": return_action_teacher.view(batch_size, seq_len),
-            "return_action_teacher_mask": return_action_teacher_mask.view(batch_size, seq_len),
-            "route_phase_action_teacher": route_phase_action_teacher.view(batch_size, seq_len),
-            "route_phase_action_teacher_mask": route_phase_action_teacher_mask.view(batch_size, seq_len),
-            "battery_risk_label": battery_risk_label.view(batch_size, seq_len),
-            "collision_risk_label": collision_risk_label.view(batch_size, seq_len),
-            "constraint_battery_process_cost": constraint_battery_process_cost.view(batch_size, seq_len),
-            "fallback_mask": fallback_mask.view(batch_size, seq_len),
-            "expert_weight": _reshape_optional_sequence(expert_weight, batch_size, seq_len),
-        }
-
-    @staticmethod
-    def _battery_process_cost_mean(batch, learn_slice, valid_mask, valid_count):
-        return (batch["constraint_battery_process_cost"][:, learn_slice] * valid_mask).sum() / valid_count
-
-    def _compute_loss(self, outputs, batch):
-        learn_slice = slice(Config.SEQ_BURN_IN, Config.SEQ_CHUNK_LEN)
-
-        legal = batch["legal_action"][:, learn_slice, :]
-        action_mask = batch["action_mask"][:, learn_slice, :]
-        action = batch["act"][:, learn_slice]
-        old_prob = batch["prob"][:, learn_slice, :]
-        planner_prob = batch["planner_prob"][:, learn_slice, :]
-        mix_alpha = batch["mix_alpha"][:, learn_slice]
-        old_value_clean = batch["value_clean"][:, learn_slice]
-        old_value_survive = batch["value_survive"][:, learn_slice]
-        adv_clean = batch["advantage_clean"][:, learn_slice]
-        adv_survive = batch["advantage_survive"][:, learn_slice]
-        mode_teacher_mask = batch["mode_teacher_mask"][:, learn_slice]
-        route_anchor_teacher_mask = batch["route_anchor_teacher_mask"][:, learn_slice]
-        target_teacher_mask = batch["target_teacher_mask"][:, learn_slice]
-        return_action_teacher_mask = batch["return_action_teacher_mask"][:, learn_slice]
-        route_phase_action_teacher_mask = batch["route_phase_action_teacher_mask"][:, learn_slice]
-        battery_label = batch["battery_risk_label"][:, learn_slice]
-        collision_label = batch["collision_risk_label"][:, learn_slice]
-        fallback_mask = batch["fallback_mask"][:, learn_slice]
-
-        logits = outputs["policy_logits"][:, learn_slice, :]
-        mode_logits = outputs["mode_logits"][:, learn_slice, :]
-        route_anchor_logits = outputs["route_anchor_logits"][:, learn_slice, :]
-        target_logits = outputs["target_logits"][:, learn_slice, :]
-        return_action_logits = outputs["return_action_logits"][:, learn_slice, :]
-        value_clean_pred = outputs["value_clean"][:, learn_slice, 0]
-        value_survive_pred = outputs["value_survive"][:, learn_slice, 0]
-        aux_battery = outputs["aux_battery_risk"][:, learn_slice, 0]
-        aux_collision = outputs["aux_collision_risk"][:, learn_slice, 0]
-
-        valid_mask = (1.0 - fallback_mask).to(torch.float32)
-        valid_count = valid_mask.sum().clamp_min(1.0)
-
-        adv_clean = adv_clean.clamp(-Config.ADV_CLEAN_CLIP, Config.ADV_CLEAN_CLIP)
-        adv_survive = adv_survive.clamp(-Config.ADV_SURVIVE_CLIP, Config.ADV_SURVIVE_CLIP)
-        returns_clean = (adv_clean + old_value_clean).clamp(-Config.RETURNS_CLEAN_CLIP, Config.RETURNS_CLEAN_CLIP)
-        returns_survive = (adv_survive + old_value_survive).clamp(
-            -Config.RETURNS_SURVIVE_CLIP,
-            Config.RETURNS_SURVIVE_CLIP,
-        )
-
-        vp_clean_clip = old_value_clean + (value_clean_pred - old_value_clean).clamp(-self.clip_param, self.clip_param)
-        vp_survive_clip = old_value_survive + (value_survive_pred - old_value_survive).clamp(
-            -self.clip_param, self.clip_param
-        )
-
-        value_clean_loss = 0.5 * torch.maximum(
-            (returns_clean - value_clean_pred) ** 2,
-            (returns_clean - vp_clean_clip) ** 2,
-        )
-        value_survive_loss = 0.5 * torch.maximum(
-            (returns_survive - value_survive_pred) ** 2,
-            (returns_survive - vp_survive_clip) ** 2,
-        )
-        value_clean_loss = (value_clean_loss * valid_mask).sum() / valid_count
-        value_survive_loss = (value_survive_loss * valid_mask).sum() / valid_count
-
-        policy_prob = self._masked_softmax(
-            logits.reshape(-1, Config.ACTION_NUM),
-            action_mask.reshape(-1, Config.ACTION_NUM),
-        ).view_as(logits)
-        planner_prob = self._normalize_masked_prob(planner_prob, action_mask)
-        mixed_prob = self._mix_policy(policy_prob, planner_prob, mix_alpha, action_mask)
-        entropy = -(mixed_prob * torch.log(mixed_prob.clamp(1e-9, 1.0))).sum(dim=-1)
-        entropy_loss = (entropy * valid_mask).sum() / valid_count
-
-        chosen_idx = action.unsqueeze(-1)
-        new_action_prob = mixed_prob.gather(-1, chosen_idx).squeeze(-1)
-        old_action_prob = old_prob.gather(-1, chosen_idx).squeeze(-1).clamp_min(1e-9)
-        ratio = new_action_prob / old_action_prob
-
-        adv_task = self._normalize_advantage(adv_clean, valid_mask, valid_count)
-        adv_battery = self._normalize_advantage(adv_survive, valid_mask, valid_count)
-
-        adv_actor = adv_task - self.lambda_battery * adv_battery
-        adv_actor = self._normalize_advantage(adv_actor, valid_mask, valid_count)
-
-        policy_loss = torch.maximum(
-            -ratio * adv_actor,
-            -ratio.clamp(1.0 - self.clip_param, 1.0 + self.clip_param) * adv_actor,
-        )
-        policy_loss = (policy_loss * valid_mask).sum() / valid_count
-        bc_loss = -(planner_prob * torch.log(policy_prob.clamp(1e-9, 1.0))).sum(dim=-1)
-        bc_loss = (bc_loss * valid_mask).sum() / valid_count
-        alpha_mean = (mix_alpha * valid_mask).sum() / valid_count
-        alpha_norm = torch.clamp(alpha_mean / max(Config.RESIDUAL_ALPHA_MAX, 1e-6), 0.0, 1.0)
-        bc_coef = max(Config.BC_COEF_MIN, Config.BC_COEF_START * (1.0 - float(alpha_norm.item())) ** 2)
         approx_kl = (
             old_prob.clamp(1e-9, 1.0)
-            * (
-                torch.log(old_prob.clamp(1e-9, 1.0))
-                - torch.log(mixed_prob.clamp(1e-9, 1.0))
-            )
-        ).sum(dim=-1)
-        approx_kl = (approx_kl * valid_mask).sum() / valid_count
+            * (torch.log(old_prob.clamp(1e-9, 1.0)) - torch.log(mixed_prob.clamp(1e-9, 1.0)))
+        ).sum(1).mean()
 
-        mode_teacher_active = mode_teacher_mask * valid_mask
-        route_anchor_teacher_active = route_anchor_teacher_mask * valid_mask
-        target_teacher_active = target_teacher_mask * valid_mask
-        return_action_teacher_active = return_action_teacher_mask * valid_mask
-        route_phase_action_teacher_active = route_phase_action_teacher_mask * valid_mask
-        mode_teacher_raw_count = mode_teacher_active.sum()
-        route_anchor_teacher_raw_count = route_anchor_teacher_active.sum()
-        target_teacher_raw_count = target_teacher_active.sum()
-        return_action_teacher_raw_count = return_action_teacher_active.sum()
-        route_phase_action_teacher_raw_count = route_phase_action_teacher_active.sum()
-        mode_teacher_count = mode_teacher_raw_count.clamp_min(1.0)
-        route_anchor_teacher_count = route_anchor_teacher_raw_count.clamp_min(1.0)
-        target_teacher_count = target_teacher_raw_count.clamp_min(1.0)
-        return_action_teacher_count = return_action_teacher_raw_count.clamp_min(1.0)
-        route_phase_action_teacher_count = route_phase_action_teacher_raw_count.clamp_min(1.0)
-        mode_teacher_active_rate = mode_teacher_raw_count / valid_count
-        route_anchor_teacher_active_rate = route_anchor_teacher_raw_count / valid_count
-        target_teacher_active_rate = target_teacher_raw_count / valid_count
-        return_action_teacher_active_rate = return_action_teacher_raw_count / valid_count
-        route_phase_action_teacher_active_rate = route_phase_action_teacher_raw_count / valid_count
-        mode_teacher_loss = F.cross_entropy(
-            mode_logits.reshape(-1, Config.MODE_NUM),
-            batch["mode_teacher"][:, learn_slice].reshape(-1),
-            ignore_index=-1,
-            reduction="none",
-        ).view_as(mode_teacher_active)
-        route_anchor_teacher_loss = F.cross_entropy(
-            route_anchor_logits.reshape(-1, Config.ROUTE_ANCHOR_DIM),
-            batch["route_anchor_teacher"][:, learn_slice].reshape(-1),
-            reduction="none",
-        ).view_as(route_anchor_teacher_active)
-        target_teacher_loss = F.cross_entropy(
-            target_logits.reshape(-1, Config.TARGET_DIM),
-            batch["target_teacher"][:, learn_slice].reshape(-1),
-            reduction="none",
-        ).view_as(target_teacher_active)
-        return_action_teacher_loss = F.cross_entropy(
-            return_action_logits.reshape(-1, Config.ACTION_NUM),
-            batch["return_action_teacher"][:, learn_slice].reshape(-1),
-            ignore_index=-1,
-            reduction="none",
-        ).view_as(return_action_teacher_active)
-        mode_teacher_loss = (mode_teacher_loss * mode_teacher_active).sum() / mode_teacher_count
-        route_anchor_teacher_loss = (
-            route_anchor_teacher_loss * route_anchor_teacher_active
-        ).sum() / route_anchor_teacher_count
-        target_teacher_loss = (target_teacher_loss * target_teacher_active).sum() / target_teacher_count
-        return_action_teacher_loss = (
-            return_action_teacher_loss * return_action_teacher_active
-        ).sum() / return_action_teacher_count
-        route_phase_policy_teacher_loss = F.cross_entropy(
-            logits.reshape(-1, Config.ACTION_NUM),
-            batch["route_phase_action_teacher"][:, learn_slice].reshape(-1),
-            ignore_index=-1,
-            reduction="none",
-        ).view_as(route_phase_action_teacher_active)
-        route_phase_policy_teacher_loss = (
-            route_phase_policy_teacher_loss * route_phase_action_teacher_active
-        ).sum() / route_phase_action_teacher_count
-
-        aux_battery_loss = F.binary_cross_entropy_with_logits(aux_battery, battery_label, reduction="none")
-        aux_collision_loss = F.binary_cross_entropy_with_logits(aux_collision, collision_label, reduction="none")
-        aux_battery_loss = (aux_battery_loss * valid_mask).sum() / valid_count
-        aux_collision_loss = (aux_collision_loss * valid_mask).sum() / valid_count
-        battery_process_cost_mean = self._battery_process_cost_mean(batch, learn_slice, valid_mask, valid_count)
-        collision_process_cost_mean = (
-            collision_label * Config.COLLISION_PROCESS_COST_SCALE * valid_mask
-        ).sum() / valid_count
-
-        effective_beta = self.var_beta
-        entropy_value = float(entropy_loss.item())
-        if entropy_value < Config.ENTROPY_FLOOR:
-            floor_gap = Config.ENTROPY_FLOOR - entropy_value
-            reference_scale = max(abs(value_clean_loss.item() + value_survive_loss.item()), 1.0)
-            target_entropy_bonus = Config.ENTROPY_FLOOR_COEF * reference_scale * floor_gap
-            effective_beta = max(self.var_beta, target_entropy_bonus / max(entropy_value, 0.01))
-
-        total_loss = (
-            policy_loss
-            + self.vf_coef * (value_clean_loss + value_survive_loss)
-            - effective_beta * entropy_loss
-            + bc_coef * bc_loss
-            + Config.MODE_TEACHER_WEIGHT * mode_teacher_loss
-            + Config.ROUTE_ANCHOR_TEACHER_WEIGHT * route_anchor_teacher_loss
-            + Config.TARGET_TEACHER_WEIGHT * target_teacher_loss
-            + Config.RETURN_ACTION_TEACHER_WEIGHT * return_action_teacher_loss
-            + Config.ROUTE_PHASE_POLICY_TEACHER_WEIGHT * route_phase_policy_teacher_loss
-            + Config.AUX_BATTERY_RISK_WEIGHT * aux_battery_loss
-            + self.lambda_collision * aux_collision_loss
-        )
-
-        self._update_constraint_multipliers(
-            battery_cost_mean=float(battery_process_cost_mean.item()),
-            collision_cost_mean=float(collision_process_cost_mean.item()),
-        )
-
-        info = {
+        total_loss = self.vf_coef * value_loss + policy_loss - self.var_beta * entropy_loss + bc_coef * bc_loss
+        return total_loss, {
+            "value_loss": float(value_loss.item()),
             "policy_loss": float(policy_loss.item()),
-            "value_clean_loss": float(value_clean_loss.item()),
-            "value_survive_loss": float(value_survive_loss.item()),
             "entropy_loss": float(entropy_loss.item()),
             "bc_loss": float(bc_loss.item()),
             "approx_kl": float(approx_kl.item()),
-            "mix_alpha": float(alpha_mean.item()),
-            "mode_teacher_loss": float(mode_teacher_loss.item()),
-            "route_anchor_teacher_loss": float(route_anchor_teacher_loss.item()),
-            "target_teacher_loss": float(target_teacher_loss.item()),
-            "return_action_teacher_loss": float(return_action_teacher_loss.item()),
-            "route_phase_policy_teacher_loss": float(route_phase_policy_teacher_loss.item()),
-            "mode_teacher_active_rate": float(mode_teacher_active_rate.item()),
-            "route_anchor_teacher_active_rate": float(route_anchor_teacher_active_rate.item()),
-            "target_teacher_active_rate": float(target_teacher_active_rate.item()),
-            "return_action_teacher_active_rate": float(return_action_teacher_active_rate.item()),
-            "route_phase_action_teacher_active_rate": float(route_phase_action_teacher_active_rate.item()),
-            "aux_battery_loss": float(aux_battery_loss.item()),
-            "aux_collision_loss": float(aux_collision_loss.item()),
-            "battery_process_cost_mean": float(battery_process_cost_mean.item()),
-            "collision_process_cost_mean": float(collision_process_cost_mean.item()),
-            "lambda_battery": float(self.lambda_battery),
-            "lambda_collision": float(self.lambda_collision),
+            "mix_alpha": alpha_mean,
         }
-        loss_tensors = {
-            "returns_clean": returns_clean,
-            "returns_survive": returns_survive,
-            "policy_loss": policy_loss,
-            "value_clean_loss": value_clean_loss,
-            "value_survive_loss": value_survive_loss,
-            "entropy_loss": entropy_loss,
-            "bc_loss": bc_loss,
-            "mode_teacher_loss": mode_teacher_loss,
-            "route_anchor_teacher_loss": route_anchor_teacher_loss,
-            "target_teacher_loss": target_teacher_loss,
-            "return_action_teacher_loss": return_action_teacher_loss,
-            "route_phase_policy_teacher_loss": route_phase_policy_teacher_loss,
-            "aux_battery_loss": aux_battery_loss,
-            "aux_collision_loss": aux_collision_loss,
-            "total_loss": total_loss,
-        }
-        return total_loss, info, loss_tensors
 
-    def _masked_softmax(self, logits, legal_action):
-        legal_action = self._default_action_mask(legal_action)
-        masked = logits - 1e20 * (1.0 - legal_action)
-        masked = masked - torch.max(masked, dim=-1, keepdim=True)[0]
-        masked = torch.exp(masked).clamp_min(1e-8) * legal_action
-        denom = masked.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-        return masked / denom
+    def _masked_softmax(self, logits: torch.Tensor, legal_action: torch.Tensor) -> torch.Tensor:
+        label_max, _ = torch.max(logits * legal_action, dim=1, keepdim=True)
+        logits = (logits - label_max) * legal_action
+        logits = logits + 1e5 * (legal_action - 1)
+        return F.softmax(logits, dim=1)
 
-    def _mix_policy(self, policy_prob, planner_prob, mix_alpha, action_mask):
-        alpha = torch.as_tensor(mix_alpha, dtype=torch.float32, device=self.device)
-        if alpha.dim() == policy_prob.dim() - 1:
+    def _mix_policy(
+        self,
+        policy_prob: torch.Tensor,
+        planner_prob: torch.Tensor,
+        mix_alpha: torch.Tensor,
+        legal_action: torch.Tensor,
+    ) -> torch.Tensor:
+        alpha = mix_alpha
+        if alpha.dim() == 1:
             alpha = alpha.unsqueeze(-1)
         alpha = alpha.clamp(0.0, 1.0)
         mixed = (1.0 - alpha) * planner_prob + alpha * policy_prob
-        return self._normalize_masked_prob(mixed, action_mask)
+        mixed = mixed * legal_action
+        return mixed / mixed.sum(dim=1, keepdim=True).clamp_min(1e-9)
+
+
+Position = Tuple[int, int]
+
+
+@dataclass
+class PolicyInfo:
+    safe_action_mask: np.ndarray
+    action_scores: np.ndarray
+    chosen_action: int
+    greedy_action: int
+    target_mode: str
+    target_pos: Optional[Position]
+    target_distance: float
+    battery: float
+    battery_ratio: float
+    charger_distance: float
+    charger_slack: float
+    nearest_npc_distance: float
+    frontier_density: float
+    local_dirty_ratio: float
+    local_unknown_ratio: float
+    new_known_cells: int
+    on_charger: bool
+    should_charge: bool
+
+
+class CoveragePlanner:
+    UNKNOWN = -1
+    OBSTACLE = 0
+    CLEAN = 1
+    DIRT = 2
+
+    MAP_SIZE = 128
+    VIEW_RADIUS = 10
+    ACTION_TO_DELTA: Sequence[Position] = (
+        (1, 0),
+        (1, -1),
+        (0, -1),
+        (-1, -1),
+        (-1, 0),
+        (-1, 1),
+        (0, 1),
+        (1, 1),
+    )
+    DIAGONAL_ACTIONS = {1, 3, 5, 7}
+    PATH_ACTION_ORDER = (1, 3, 5, 7, 0, 2, 4, 6)
+
+    BASE_RETURN_MARGIN = 22.0
+    NPC_RETURN_MARGIN = 28.0
+    LOW_BATTERY_RATIO = 0.30
+    EXIT_RETURN_RATIO = 0.95
+    EXPANSION_KNOWN_RATIO = 0.78
+    HARD_NPC_RADIUS = 2
+    PATH_RISK_RADIUS = 4
+    AGGRESSIVE_EDGE_STEPS = 500
+
+    def __init__(self):
+        self.reset()
+
+    def set_episode_config(self, max_step=None, robot_count=None, charger_count=None, battery_max=None):
+        if max_step is not None:
+            self.episode_max_step = max(1, int(max_step))
+        if robot_count is not None:
+            self.episode_robot_count = max(1, int(robot_count))
+        if charger_count is not None:
+            self.episode_charger_count = max(1, int(charger_count))
+        if battery_max is not None:
+            self.episode_battery_max = max(1, int(battery_max))
+
+    def reset(self):
+        self.global_map = np.full((self.MAP_SIZE, self.MAP_SIZE), self.UNKNOWN, dtype=np.int8)
+        self.visit_count = np.zeros((self.MAP_SIZE, self.MAP_SIZE), dtype=np.int16)
+        self.charger_regions: List[Set[Position]] = []
+        self.return_mode = False
+        self.last_target_pos = None
+        self.last_policy_info = None
+        self.episode_max_step = 1000
+        self.episode_robot_count = 4
+        self.episode_charger_count = 4
+        self.episode_battery_max = 200
+
+    def update(self, env_obs: Any, last_action: int = -1) -> PolicyInfo:
+        del last_action
+        obs = self._unwrap_observation(env_obs)
+        frame_state = self._get(obs, "frame_state", {})
+        hero = self._parse_hero_state(frame_state)
+        hero_pos = self._parse_position(self._get(hero, "pos", {}))
+        battery = self._safe_float(self._get(hero, "battery", self.episode_battery_max), self.episode_battery_max)
+        battery_max = max(
+            1.0,
+            self._safe_float(self._get(hero, "battery_max", self.episode_battery_max), self.episode_battery_max),
+        )
+        battery_ratio = float(np.clip(battery / battery_max, 0.0, 1.0))
+        step_no = int(self._safe_float(self._get(obs, "step_no", 0), 0.0))
+        map_info = self._parse_map_info(obs)
+        npcs = self._parse_npc_positions(frame_state)
+        self.charger_regions = self._parse_charger_regions(self._parse_organ_states(frame_state))
+
+        new_known_cells = self._merge_local_view(hero_pos, map_info)
+        self.visit_count[hero_pos[1], hero_pos[0]] += 1
+
+        charger_cells = self._charger_cells()
+        charger_path, charger_distance = self._path_to_any(hero_pos, charger_cells, allow_unknown=False)
+        if charger_path is None:
+            charger_path, charger_distance = self._path_to_any(hero_pos, charger_cells, allow_unknown=True)
+        if not np.isfinite(charger_distance):
+            charger_distance = 999.0
+
+        on_charger = self._hero_on_charger(hero_pos)
+        nearest_npc_distance = self._nearest_npc_dist(hero_pos, npcs)
+        known_ratio = float(np.mean(self.global_map != self.UNKNOWN))
+        local_dirty_ratio = float(np.mean(map_info == self.DIRT)) if map_info.size > 0 else 0.0
+        local_unknown_ratio = self._local_unknown_ratio(hero_pos)
+        frontier_density = self._frontier_density(hero_pos)
+
+        should_charge = False
+        if charger_cells:
+            danger_margin = self.BASE_RETURN_MARGIN
+            if nearest_npc_distance <= self.PATH_RISK_RADIUS:
+                danger_margin += self.NPC_RETURN_MARGIN - self.BASE_RETURN_MARGIN
+            if self.return_mode:
+                should_charge = True
+            elif battery_ratio <= self.LOW_BATTERY_RATIO:
+                should_charge = True
+            elif battery <= charger_distance + danger_margin:
+                should_charge = True
+
+        if on_charger and battery_ratio >= self.EXIT_RETURN_RATIO:
+            self.return_mode = False
+        elif should_charge:
+            self.return_mode = True
+
+        target_mode = "fallback"
+        target_pos = None
+        target_path = None
+        target_distance = 999.0
+        if self.return_mode and charger_cells:
+            target_mode = "charge"
+            target_path = charger_path
+            target_distance = charger_distance
+            if target_path:
+                target_pos = target_path[-1]
+        else:
+            target_mode, target_pos, target_path, target_distance = self._select_coverage_plan(
+                hero_pos=hero_pos,
+                step_no=step_no,
+                known_ratio=known_ratio,
+                battery=battery,
+                charger_distance=charger_distance,
+            )
+
+        action_scores, safe_action_mask = self._rank_legal_actions(
+            hero_pos=hero_pos,
+            target_mode=target_mode,
+            target_pos=target_pos,
+            target_path=target_path,
+            npcs=npcs,
+        )
+        greedy_action = int(np.argmax(action_scores))
+        chosen_action = greedy_action
+
+        info = PolicyInfo(
+            safe_action_mask=safe_action_mask.astype(np.float32),
+            action_scores=action_scores.astype(np.float32),
+            chosen_action=chosen_action,
+            greedy_action=greedy_action,
+            target_mode=target_mode,
+            target_pos=target_pos,
+            target_distance=float(target_distance),
+            battery=float(battery),
+            battery_ratio=float(battery_ratio),
+            charger_distance=float(charger_distance),
+            charger_slack=float(battery - charger_distance),
+            nearest_npc_distance=float(nearest_npc_distance),
+            frontier_density=float(frontier_density),
+            local_dirty_ratio=float(local_dirty_ratio),
+            local_unknown_ratio=float(local_unknown_ratio),
+            new_known_cells=int(new_known_cells),
+            on_charger=bool(on_charger),
+            should_charge=bool(self.return_mode),
+        )
+        self.last_policy_info = info
+        self.last_target_pos = target_pos
+        return info
+
+    def _select_coverage_plan(self, hero_pos, step_no, known_ratio, battery, charger_distance):
+        charger_unknown = len(self.charger_regions) == 0
+        if charger_unknown and step_no <= self.AGGRESSIVE_EDGE_STEPS:
+            target = self._best_frontier_target(hero_pos, prefer_edge=True, battery=battery, charger_distance=charger_distance)
+            if target[0] is not None:
+                return "find_charger_edge", target[0], target[1], target[2]
+
+        if known_ratio < self.EXPANSION_KNOWN_RATIO:
+            target = self._best_frontier_target(hero_pos, prefer_edge=True, battery=battery, charger_distance=charger_distance)
+            if target[0] is not None:
+                return "edge_frontier", target[0], target[1], target[2]
+
+        dirt_target = self._best_dirt_target(hero_pos, battery=battery, charger_distance=charger_distance)
+        frontier_target = self._best_frontier_target(hero_pos, prefer_edge=False, battery=battery, charger_distance=charger_distance)
+        if dirt_target[0] is not None and (frontier_target[0] is None or dirt_target[3] >= frontier_target[3] - 0.1):
+            return "dirt", dirt_target[0], dirt_target[1], dirt_target[2]
+        if frontier_target[0] is not None:
+            return "frontier", frontier_target[0], frontier_target[1], frontier_target[2]
+        return "fallback", None, None, 999.0
+
+    def _best_dirt_target(self, hero_pos, battery, charger_distance):
+        best = (None, None, 999.0, float("-inf"))
+        dirt_cells = np.argwhere(self.global_map == self.DIRT)
+        for row, col in dirt_cells[:512]:
+            target = (int(col), int(row))
+            path, dist = self._path_to_any(hero_pos, [target], allow_unknown=False)
+            if path is None:
+                continue
+            if not self._target_is_safe(target, battery, charger_distance):
+                continue
+            dirt_gain = self._count_dirty_cells(target, 2)
+            info_gain = self._count_unobserved_cells(target, 2)
+            revisit_penalty = float(self.visit_count[target[1], target[0]]) * 0.15
+            score = 3.0 * dirt_gain + 0.8 * info_gain - 0.08 * dist - revisit_penalty
+            if score > best[3]:
+                best = (target, path, dist, score)
+        return best
+
+    def _best_frontier_target(self, hero_pos, prefer_edge, battery, charger_distance):
+        best = (None, None, 999.0, float("-inf"))
+        for target in self._iter_frontiers():
+            path, dist = self._path_to_any(hero_pos, [target], allow_unknown=False)
+            if path is None:
+                continue
+            if not self._target_is_safe(target, battery, charger_distance):
+                continue
+            info_gain = self._count_unobserved_cells(target, 2)
+            dirt_gain = self._count_dirty_cells(target, 2)
+            edge_bonus = 0.0
+            if prefer_edge:
+                edge_bonus = self._edge_bonus(target)
+            revisit_penalty = float(self.visit_count[target[1], target[0]]) * 0.12
+            score = 2.2 * info_gain + 0.7 * dirt_gain + edge_bonus - 0.07 * dist - revisit_penalty
+            if score > best[3]:
+                best = (target, path, dist, score)
+        return best
+
+    def _rank_legal_actions(self, hero_pos, target_mode, target_pos, target_path, npcs):
+        legal_scores = np.full((Config.ACTION_NUM,), -1e6, dtype=np.float32)
+        safe_mask = np.zeros((Config.ACTION_NUM,), dtype=np.float32)
+        next_action = self._next_path_action(target_path) if target_path else None
+
+        for action, nxt in self._iter_neighbors(hero_pos):
+            if not self._can_move_to(hero_pos, nxt, allow_unknown=(target_mode != "charge")):
+                continue
+            npc_dist = self._nearest_npc_dist(nxt, npcs)
+            if npc_dist <= self.HARD_NPC_RADIUS and not self._hero_on_charger(nxt):
+                continue
+            safe_mask[action] = 1.0
+            score = 0.0
+            if target_pos is not None:
+                score += 0.35 * (self._chebyshev_dist(hero_pos, target_pos) - self._chebyshev_dist(nxt, target_pos))
+                score -= 0.05 * float(self.visit_count[nxt[1], nxt[0]])
+            if next_action is not None and action == next_action:
+                score += 3.0
+            if target_mode == "charge":
+                score += 0.12 * max(0.0, 6.0 - npc_dist)
+            else:
+                score += 0.08 * self._count_unobserved_cells(nxt, 1)
+                score += 0.06 * self._count_dirty_cells(nxt, 1)
+            legal_scores[action] = score
+
+        if float(safe_mask.sum()) <= 0.5:
+            for action, nxt in self._iter_neighbors(hero_pos):
+                if self._can_move_to(hero_pos, nxt, allow_unknown=True):
+                    safe_mask[action] = 1.0
+                    legal_scores[action] = -0.01 * float(self.visit_count[nxt[1], nxt[0]])
+
+        if float(safe_mask.sum()) <= 0.5:
+            safe_mask[:] = 1.0
+            legal_scores[:] = 0.0
+        return legal_scores, safe_mask
+
+    def _target_is_safe(self, target, battery, charger_distance):
+        if not np.isfinite(charger_distance) or charger_distance >= 999.0 or not self.charger_regions:
+            return True
+        charger_from_target = self._heuristic_charger_distance(target)
+        reserve = self.BASE_RETURN_MARGIN
+        return float(battery) > float(charger_from_target) + reserve
+
+    def _merge_local_view(self, hero_pos: Position, map_info: np.ndarray) -> int:
+        half = map_info.shape[0] // 2
+        new_known = 0
+        for row in range(map_info.shape[0]):
+            for col in range(map_info.shape[1]):
+                gx = hero_pos[0] - half + col
+                gz = hero_pos[1] - half + row
+                if not self._in_bounds((gx, gz)):
+                    continue
+                if self.global_map[gz, gx] == self.UNKNOWN:
+                    new_known += 1
+                self.global_map[gz, gx] = int(map_info[row, col])
+        return new_known
+
+    def _iter_frontiers(self):
+        known = np.argwhere((self.global_map == self.CLEAN) | (self.global_map == self.DIRT))
+        for row, col in known:
+            pos = (int(col), int(row))
+            if self._count_unobserved_cells(pos, 1) > 0:
+                yield pos
+
+    def _frontier_density(self, hero_pos):
+        total = 0
+        frontier = 0
+        for dz in range(-4, 5):
+            for dx in range(-4, 5):
+                pos = (hero_pos[0] + dx, hero_pos[1] + dz)
+                if not self._in_bounds(pos):
+                    continue
+                total += 1
+                if self._count_unobserved_cells(pos, 1) > 0:
+                    frontier += 1
+        return frontier / max(total, 1)
+
+    def _local_unknown_ratio(self, hero_pos):
+        unknown = 0
+        total = 0
+        for dz in range(-2, 3):
+            for dx in range(-2, 3):
+                pos = (hero_pos[0] + dx, hero_pos[1] + dz)
+                if not self._in_bounds(pos):
+                    continue
+                total += 1
+                if int(self.global_map[pos[1], pos[0]]) == self.UNKNOWN:
+                    unknown += 1
+        return unknown / max(total, 1)
+
+    def _edge_bonus(self, pos):
+        margin = min(pos[0], pos[1], self.MAP_SIZE - 1 - pos[0], self.MAP_SIZE - 1 - pos[1])
+        return float(max(0.0, 12.0 - margin) * 0.4)
+
+    def _path_to_any(self, start: Position, targets: Sequence[Position], allow_unknown: bool):
+        targets = [target for target in targets if self._in_bounds(target)]
+        if not targets:
+            return None, 999.0
+        target_set = set(targets)
+        open_heap = [(0.0, start)]
+        g_cost = {start: 0.0}
+        parent: Dict[Position, Position] = {}
+        best_goal = None
+
+        while open_heap:
+            _, cur = heapq.heappop(open_heap)
+            if cur in target_set:
+                best_goal = cur
+                break
+            for action in self.PATH_ACTION_ORDER:
+                nxt = self._apply_move(cur, action)
+                if not self._can_move_to(cur, nxt, allow_unknown=allow_unknown):
+                    continue
+                step_cost = 1.0
+                new_cost = g_cost[cur] + step_cost
+                if new_cost >= g_cost.get(nxt, float("inf")):
+                    continue
+                g_cost[nxt] = new_cost
+                parent[nxt] = cur
+                heuristic = min(float(self._chebyshev_dist(nxt, target)) for target in target_set)
+                heapq.heappush(open_heap, (new_cost + heuristic, nxt))
+
+        if best_goal is None:
+            return None, 999.0
+        return self._reconstruct_path(parent, start, best_goal), float(g_cost[best_goal])
+
+    def _count_unobserved_cells(self, pos: Position, radius: int) -> int:
+        return self._count_cells_of_type(pos, radius, self.UNKNOWN)
+
+    def _count_dirty_cells(self, pos: Position, radius: int) -> int:
+        return self._count_cells_of_type(pos, radius, self.DIRT)
+
+    def _count_cells_of_type(self, pos: Position, radius: int, cell_type: int) -> int:
+        count = 0
+        for dz in range(-radius, radius + 1):
+            gz = pos[1] + dz
+            if not (0 <= gz < self.MAP_SIZE):
+                continue
+            for dx in range(-radius, radius + 1):
+                gx = pos[0] + dx
+                if not (0 <= gx < self.MAP_SIZE):
+                    continue
+                if int(self.global_map[gz, gx]) == cell_type:
+                    count += 1
+        return count
+
+    def _parse_charger_regions(self, organs: Sequence[Any]) -> List[Set[Position]]:
+        regions: List[Set[Position]] = []
+        for organ in organs:
+            if int(self._safe_float(self._get(organ, "sub_type", 0), 0.0)) != 1:
+                continue
+            pos = self._parse_position(self._get(organ, "pos", {}))
+            w = max(1, int(self._safe_float(self._get(organ, "w", 3), 3.0)))
+            h = max(1, int(self._safe_float(self._get(organ, "h", 3), 3.0)))
+            half_w = w // 2
+            half_h = h // 2
+            region: Set[Position] = set()
+            for dx in range(w):
+                for dz in range(h):
+                    region.add((pos[0] + dx, pos[1] + dz))
+            for dx in range(-half_w, half_w + 1):
+                for dz in range(-half_h, half_h + 1):
+                    region.add((pos[0] + dx, pos[1] + dz))
+            region = {cell for cell in region if self._in_bounds(cell)}
+            if region:
+                regions.append(region)
+        return regions
+
+    def _charger_cells(self) -> List[Position]:
+        return [cell for region in self.charger_regions for cell in region]
+
+    def _hero_on_charger(self, pos: Position) -> bool:
+        return any(pos in region for region in self.charger_regions)
+
+    def _heuristic_charger_distance(self, pos: Position) -> float:
+        best = min(
+            (float(self._chebyshev_dist(pos, cell)) for region in self.charger_regions for cell in region),
+            default=float("inf"),
+        )
+        return best if np.isfinite(best) else 999.0
+
+    def _next_path_action(self, path: Sequence[Position] | None) -> Optional[int]:
+        if not path or len(path) < 2:
+            return None
+        cur, nxt = path[0], path[1]
+        dx = int(np.clip(nxt[0] - cur[0], -1, 1))
+        dz = int(np.clip(nxt[1] - cur[1], -1, 1))
+        for action, delta in enumerate(self.ACTION_TO_DELTA):
+            if delta == (dx, dz):
+                return action
+        return None
+
+    def _can_move_to(self, cur: Position, nxt: Position, allow_unknown: bool) -> bool:
+        if not self._in_bounds(cur) or not self._in_bounds(nxt):
+            return False
+        cell = int(self.global_map[nxt[1], nxt[0]])
+        if cell == self.OBSTACLE:
+            return False
+        if cell == self.UNKNOWN and not allow_unknown:
+            return False
+        dx = int(np.clip(nxt[0] - cur[0], -1, 1))
+        dz = int(np.clip(nxt[1] - cur[1], -1, 1))
+        if dx != 0 and dz != 0:
+            side_h = (cur[0] + dx, cur[1])
+            side_v = (cur[0], cur[1] + dz)
+            if not self._side_passable(side_h, allow_unknown) and not self._side_passable(side_v, allow_unknown):
+                return False
+        return True
+
+    def _side_passable(self, pos: Position, allow_unknown: bool) -> bool:
+        if not self._in_bounds(pos):
+            return False
+        cell = int(self.global_map[pos[1], pos[0]])
+        return cell != self.OBSTACLE and not (cell == self.UNKNOWN and not allow_unknown)
+
+    def _reconstruct_path(self, parent: Dict[Position, Position], start: Position, goal: Position) -> List[Position]:
+        path = [goal]
+        cur = goal
+        while cur != start:
+            cur = parent[cur]
+            path.append(cur)
+        path.reverse()
+        return path
+
+    def _iter_neighbors(self, pos: Position) -> Iterable[Tuple[int, Position]]:
+        for action in range(8):
+            yield action, self._apply_move(pos, action)
+
+    def _apply_move(self, pos: Position, action: int) -> Position:
+        dx, dz = self.ACTION_TO_DELTA[action]
+        return pos[0] + dx, pos[1] + dz
+
+    def _nearest_npc_dist(self, pos: Position, npcs: Sequence[Position]) -> float:
+        if not npcs:
+            return 99.0
+        return min(float(self._chebyshev_dist(pos, npc)) for npc in npcs)
+
+    @staticmethod
+    def _chebyshev_dist(a: Position, b: Position) -> int:
+        return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+
+    def _in_bounds(self, pos: Position) -> bool:
+        return 0 <= pos[0] < self.MAP_SIZE and 0 <= pos[1] < self.MAP_SIZE
+
+    def _unwrap_observation(self, env_obs: Any) -> Any:
+        if isinstance(env_obs, dict) and "observation" in env_obs:
+            return env_obs["observation"]
+        return env_obs
+
+    def _parse_hero_state(self, frame_state: Any) -> Any:
+        heroes = self._get(frame_state, "heroes", {})
+        if isinstance(heroes, (list, tuple)):
+            return heroes[0] if heroes else {}
+        return heroes
+
+    def _parse_npc_positions(self, frame_state: Any) -> List[Position]:
+        npcs = self._get(frame_state, "npcs", [])
+        if not isinstance(npcs, (list, tuple)):
+            return []
+        return [
+            self._parse_position(self._get(npc, "pos", {}))
+            for npc in npcs
+            if self._get(npc, "pos", None) is not None
+        ]
+
+    def _parse_organ_states(self, frame_state: Any) -> List[Any]:
+        organs = self._get(frame_state, "organs", [])
+        return list(organs) if isinstance(organs, (list, tuple)) else []
+
+    def _parse_map_info(self, obs: Any) -> np.ndarray:
+        map_info = self._get(obs, "map_info", None)
+        if map_info is None:
+            return np.ones((21, 21), dtype=np.int8)
+        arr = np.asarray(map_info, dtype=np.int8)
+        return arr if arr.ndim == 2 else np.ones((21, 21), dtype=np.int8)
+
+    def _parse_position(self, obj: Any) -> Position:
+        x = int(self._safe_float(self._get(obj, "x", 0), 0.0))
+        z = int(self._safe_float(self._get(obj, "z", 0), 0.0))
+        return (
+            int(np.clip(x, 0, self.MAP_SIZE - 1)),
+            int(np.clip(z, 0, self.MAP_SIZE - 1)),
+        )
+
+    @staticmethod
+    def _get(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        if obj is None:
+            return default
+        return getattr(obj, key, default)
+
+    @staticmethod
+    def _safe_float(v: Any, default: float) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float(default)

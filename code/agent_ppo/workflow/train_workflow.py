@@ -1,65 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 ###########################################################################
-# Copyright (c) 1998 - 2026 Tencent. All Rights Reserved.
+# Copyright © 1998 - 2026 Tencent. All Rights Reserved.
 ###########################################################################
 """
-Training workflow for Robot Vacuum.
+Author: Tencent AI Arena Authors
+
+Training workflow for Robot Vacuum PPO with planner-guided residual policy.
 """
 
-import json
-import hashlib
+from __future__ import annotations
+
 import os
-import re
-import shutil
-import socket
+import threading
 import time
-from collections import deque
-from copy import deepcopy
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 
 import numpy as np
-import torch
 
+from agent_ppo.algorithm.algorithm import CoveragePlanner
 from agent_ppo.conf.conf import Config
-from agent_ppo.feature.definition import sample_process
-from agent_ppo.workflow.checkpoint_score import compute_checkpoint_scores, compute_legacy_robust_score
-from agent_ppo.workflow.curriculum_policy import (
-    STAGE_INDEX,
-    curriculum_gate_ratios,
-    profile_plan_for_runtime,
-    stage_progress,
-)
-from agent_ppo.workflow.curriculum_state import SharedCurriculumStateStore
-from agent_ppo.workflow.preload_checkpoint import (
-    PRELOAD_RELATIVE_DIR,
-    RESUME_CURRICULUM_SNAPSHOT_FILE,
-    RESUME_LATEST_STATE_FILE,
-    resolve_latest_resume_state,
-)
-from agent_ppo.workflow.state_layout import (
-    MANUAL_SAVE_MANIFEST_FILE,
-    RESUME_CHECKPOINT_FILE,
-    RESUME_META_FILE,
-    RESUME_STATE_FILE,
-    RUN_SESSION_MANIFEST_FILE,
-    clear_current_runtime_state,
-    ensure_runtime_state_dirs,
-    is_resume_mode,
-    is_scratch_mode,
-    prepare_resume_bundle_in_current,
-)
-from agent_ppo.eval.lite_benchmark_bootstrap import maybe_run_lite_benchmark
-from agent_ppo.utils.constraint_utils import classify_battery_fail_severity
-from agent_ppo.utils.experiment_archive import ExperimentArchive, infer_fail_reason
-from agent_ppo.utils.return_readiness import (
-    control_stack_simplify_active,
-    evaluate_simplified_return_readiness,
-)
-from agent_ppo.utils.reward_metrics import compute_reward_contribution_payload
-from agent_ppo.utils.reward_schedule import get_reward_schedule
+from agent_ppo.feature.definition import SampleData, sample_process
 
 try:
     from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
@@ -81,1093 +41,129 @@ except Exception:  # pragma: no cover - host import fallback for local tests
     def read_usr_conf(*args, **kwargs):
         return {}
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None
-
-
-def _env_int(name, default):
-    value = os.getenv(name)
-    if value is None or value == "":
-        return int(default)
-    return int(value)
-
-
-def _env_bool(name, default=False):
-    value = os.getenv(name)
-    if value is None or value == "":
-        return bool(default)
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int_list(name, default):
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return list(default)
-    values = []
-    for item in raw.split(","):
-        item = item.strip()
-        if item:
-            values.append(int(item))
-    return values or list(default)
-
-
-def _env_clamped_int(name, default, v_min, v_max):
-    value = _env_int(name, default)
-    return int(np.clip(value, v_min, v_max))
-
-
-def _config_value(name: str, default):
-    return getattr(Config, name, default)
-
 
 class ResidualScheduler:
-    """Compatibility port of the yjy residual-alpha scheduler."""
+    """Adaptive scheduler that gradually lets PPO take more control."""
 
     def __init__(self):
-        self.alpha = float(_config_value("RESIDUAL_ALPHA_START", 0.0))
+        self.alpha = Config.RESIDUAL_ALPHA_START
         self.ema_score = None
         self.best_ema = float("-inf")
         self.stale_episodes = 0
         self.episode_cnt = 0
 
     def action_alpha(self, target_mode: str) -> float:
-        mode = str(target_mode or "").strip().lower()
-        alpha = float(self.alpha)
-        charge_cap = float(_config_value("RESIDUAL_ALPHA_CHARGE_CAP", 0.35))
-        fallback_cap = float(_config_value("RESIDUAL_ALPHA_FALLBACK_CAP", 0.15))
-        max_alpha = float(_config_value("RESIDUAL_ALPHA_MAX", 1.0))
-        if mode in {"charge", "contract", "return"}:
-            alpha = min(alpha, charge_cap)
-        elif mode in {"fallback", "evade"}:
-            alpha = min(alpha, fallback_cap)
-        return float(np.clip(alpha, 0.0, max_alpha))
+        alpha = self.alpha
+        if target_mode == "charge":
+            alpha = min(alpha, Config.RESIDUAL_ALPHA_CHARGE_CAP)
+        elif target_mode == "fallback":
+            alpha = min(alpha, Config.RESIDUAL_ALPHA_FALLBACK_CAP)
+        return float(np.clip(alpha, 0.0, Config.RESIDUAL_ALPHA_MAX))
 
     def update(self, episode_score: float, cleaning_ratio: float) -> float:
         self.episode_cnt += 1
-        decay = float(_config_value("RESIDUAL_SCORE_EMA_DECAY", 0.90))
-        score = float(episode_score)
+        decay = Config.RESIDUAL_SCORE_EMA_DECAY
         if self.ema_score is None:
-            self.ema_score = score
+            self.ema_score = float(episode_score)
         else:
-            self.ema_score = decay * float(self.ema_score) + (1.0 - decay) * score
+            self.ema_score = decay * self.ema_score + (1.0 - decay) * float(episode_score)
 
-        start_alpha = float(_config_value("RESIDUAL_ALPHA_START", 0.0))
-        warmup_target = float(_config_value("RESIDUAL_ALPHA_WARMUP_TARGET", 0.20))
-        warmup_episodes = max(int(_config_value("RESIDUAL_WARMUP_EPISODES", 200)), 1)
-        warmup_t = min(1.0, self.episode_cnt / warmup_episodes)
-        warmup_alpha = start_alpha + (warmup_target - start_alpha) * warmup_t
-        self.alpha = max(float(self.alpha), float(warmup_alpha))
+        warmup_t = min(1.0, self.episode_cnt / max(Config.RESIDUAL_WARMUP_EPISODES, 1))
+        warmup_alpha = (
+            Config.RESIDUAL_ALPHA_START
+            + (Config.RESIDUAL_ALPHA_WARMUP_TARGET - Config.RESIDUAL_ALPHA_START) * warmup_t
+        )
+        self.alpha = max(self.alpha, warmup_alpha)
 
-        improve = float(_config_value("RESIDUAL_SCORE_IMPROVE", 5.0))
-        if float(self.ema_score) > self.best_ema + improve:
-            self.best_ema = float(self.ema_score)
+        if self.ema_score > self.best_ema + Config.RESIDUAL_SCORE_IMPROVE:
+            self.best_ema = self.ema_score
             self.stale_episodes = 0
         else:
             self.stale_episodes += 1
 
-        plateau_patience = int(_config_value("RESIDUAL_PLATEAU_PATIENCE", 60))
-        plateau_score = float(_config_value("RESIDUAL_PLATEAU_SCORE", 900.0))
-        alpha_step = float(_config_value("RESIDUAL_ALPHA_STEP", 0.05))
-        score_drop = float(_config_value("RESIDUAL_SCORE_DROP", 120.0))
-        max_alpha = float(_config_value("RESIDUAL_ALPHA_MAX", 1.0))
-        if self.stale_episodes >= plateau_patience and float(self.ema_score) >= plateau_score:
-            bonus = alpha_step * (1.0 + 0.5 * max(0.0, float(cleaning_ratio) - 0.85))
-            self.alpha = min(max_alpha, float(self.alpha) + bonus)
+        if self.stale_episodes >= Config.RESIDUAL_PLATEAU_PATIENCE and self.ema_score >= Config.RESIDUAL_PLATEAU_SCORE:
+            bonus = Config.RESIDUAL_ALPHA_STEP * (1.0 + 0.5 * max(0.0, cleaning_ratio - 0.85))
+            self.alpha = min(Config.RESIDUAL_ALPHA_MAX, self.alpha + bonus)
             self.stale_episodes = 0
-        elif self.best_ema - float(self.ema_score) >= score_drop:
-            self.alpha = max(start_alpha, float(self.alpha) - 0.5 * alpha_step)
+        elif self.best_ema - self.ema_score >= Config.RESIDUAL_SCORE_DROP:
+            self.alpha = max(Config.RESIDUAL_ALPHA_START, self.alpha - 0.5 * Config.RESIDUAL_ALPHA_STEP)
             self.stale_episodes = 0
-
-        return float(self.alpha)
-
-
-def _resolve_local_ip(*names) -> str | None:
-    original_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(1.0)
-    try:
-        for name in names:
-            candidate = str(name or "").strip()
-            if not candidate:
-                continue
-            try:
-                _, _, addresses = socket.gethostbyname_ex(candidate)
-            except (OSError, socket.timeout):
-                continue
-            if addresses:
-                return addresses[0]
-        return None
-    finally:
-        socket.setdefaulttimeout(original_timeout)
-
-
-def _resolve_benchmark_aisrv_index() -> str:
-    aisrv_index = str(os.getenv("KAIWU_AISRV_INDEX", "") or "").strip()
-    if aisrv_index:
-        return aisrv_index
-
-    current_name = str(os.getenv("HOSTNAME", "") or "").strip()
-    if not current_name:
-        try:
-            current_name = Path("/etc/hostname").read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
-
-    match = re.search(r"(?:^|[-_])aisrv[-_](\d+)$", current_name)
-    if match:
-        return match.group(1)
-
-    current_ip = _resolve_local_ip(current_name)
-    if not current_ip:
-        return ""
-
-    project_name = str(os.getenv("COMPOSE_PROJECT_NAME", "kaiwu-train") or "kaiwu-train").strip() or "kaiwu-train"
-    service_count = max(_env_int("KAIWU_BENCHMARK_WORKER_COUNT", _env_int("KAIWU_AISRV_NUM", 16)), 1)
-    for index in range(1, service_count + 1):
-        service_ip = _resolve_local_ip(
-            f"{project_name}-aisrv-{index}",
-            f"{project_name}_aisrv_{index}",
-        )
-        if service_ip and service_ip == current_ip:
-            return str(index)
-
-    return ""
-
-
-REWARD_COMPONENT_KEYS = (
-    "cleaning",
-    "streak",
-    "explore",
-    "frontier",
-    "risk_release_reward",
-    "risk_release_from_progress",
-    "risk_release_from_charge_event",
-    "charger_progress_arrival_bonus",
-    "safe_return_progress_bonus",
-    "clean_per_step_efficiency_bonus",
-    "risk_growth_while_clean_penalty",
-    "route_phase_risk_growth_penalty",
-    "charge_opportunity_cost_penalty",
-    "charger_access_discovery_bonus",
-    "charger_access_probe_bonus",
-    "npc",
-    "stuck",
-    "idle",
-    "anchor_consistency",
-    "sticky_anchor_penalty",
-    "planner_alignment",
-    "charge_route_progress_bonus",
-    "return_progress_shaping_bonus",
-    "necessary_charge_bonus",
-    "unnecessary_charge_penalty",
-    "charge_detour_cost",
-    "charge_interrupt_cost",
-    "skip_needed_charge_penalty",
-    "high_need_return_stall_penalty",
-    "cleaning_context_scale",
-    "cps_bonus",
-    "effective_coverage_bonus",
-    "coverage_efficiency_bonus",
-    "coverage_tangle_penalty",
-    "clean_floor_revisit_penalty",
-    "edge_follow_bonus",
-    "charge_reward_shadow_only_active",
-)
-
-REWARD_COMPONENT_MONITOR_KEYS = (
-    "cleaning",
-    "streak",
-    "explore",
-    "frontier",
-    "risk_release_reward",
-    "risk_release_from_progress",
-    "risk_release_from_charge_event",
-    "charger_progress_arrival_bonus",
-    "safe_return_progress_bonus",
-    "clean_per_step_efficiency_bonus",
-    "risk_growth_while_clean_penalty",
-    "route_phase_risk_growth_penalty",
-    "charge_opportunity_cost_penalty",
-    "charger_access_discovery_bonus",
-    "charger_access_probe_bonus",
-    "idle",
-    "npc",
-    "planner_alignment",
-    "charge_route_progress_bonus",
-    "return_progress_shaping_bonus",
-    "necessary_charge_bonus",
-    "unnecessary_charge_penalty",
-    "charge_detour_cost",
-    "charge_interrupt_cost",
-    "skip_needed_charge_penalty",
-    "high_need_return_stall_penalty",
-    "cps_bonus",
-    "effective_coverage_bonus",
-    "coverage_tangle_penalty",
-    "clean_floor_revisit_penalty",
-    "edge_follow_bonus",
-    "charge_reward_shadow_only_active",
-)
-
-CONSTRAINT_TRACE_KEYS = (
-    "battery_process_cost",
-    "collision_process_cost",
-    "charge_need_score",
-    "route_phase_shadow_risk",
-    "route_phase_reward_ready",
-    "slack_confidence",
-    "has_known_route",
-    "high_need_stall_indicator",
-    "battery_state_idx",
-)
-
-TEACHER_LABEL_QUALITY_COUNT_KEYS = (
-    "return_teacher_count",
-    "route_phase_teacher_count",
-    "active_pair_count",
-    "agree_pair_count",
-    "disagree_pair_count",
-    "missing_route_pair_count",
-    "missing_return_pair_count",
-    "route_phase_teacher_from_return_reliable_count",
-    "route_phase_teacher_from_anchor_or_target_count",
-    "route_phase_teacher_from_critical_fallback_count",
-    "return_teacher_in_route_phase_count",
-    "return_teacher_outside_route_phase_count",
-    "return_teacher_mode_depart_count",
-    "return_teacher_mode_expand_count",
-    "return_teacher_mode_harvest_count",
-    "return_teacher_mode_contract_count",
-    "return_teacher_mode_return_count",
-    "return_teacher_mode_evade_count",
-    "return_teacher_mode_other_count",
-    "return_teacher_target_stable_count",
-    "return_teacher_target_unstable_count",
-    "return_teacher_suggested_legal_safe_count",
-    "return_teacher_action_margin_low_count",
-    "return_teacher_action_margin_mid_count",
-    "return_teacher_action_margin_high_count",
-    "return_teacher_stable_invariant_satisfied_count",
-    "return_teacher_stable_invariant_violated_count",
-    "return_teacher_legal_safe_invariant_satisfied_count",
-    "return_teacher_legal_safe_invariant_violated_count",
-    "return_teacher_action_margin_invariant_satisfied_count",
-    "return_teacher_action_margin_invariant_violated_count",
-    "return_teacher_reliability_invariant_satisfied_count",
-    "return_teacher_reliability_invariant_violated_count",
-)
-ROUTE_TEACHER_SOURCE_BUCKETS = (
-    "return_reliable",
-    "anchor_or_target",
-    "critical_fallback",
-)
-RETURN_LABEL_TIMING_BUCKETS = (
-    "inside_route_phase",
-    "outside_route_phase",
-    "mode_depart",
-    "mode_expand",
-    "mode_harvest",
-    "mode_contract",
-    "mode_return",
-    "mode_evade",
-    "mode_other",
-)
-ROUTE_SOURCE_FAILURE_BUCKETS = (*ROUTE_TEACHER_SOURCE_BUCKETS, "none")
-RETURN_TIMING_FAILURE_BUCKETS = (*RETURN_LABEL_TIMING_BUCKETS, "none")
-POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS = tuple(
-    key
-    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS
-    for key in (
-        f"route_source_{bucket}_policy_planner_divergence_count",
-        f"route_source_{bucket}_return_stall_count",
-        f"route_source_{bucket}_policy_teacher_adoption_count",
-    )
-) + tuple(
-    key
-    for bucket in RETURN_LABEL_TIMING_BUCKETS
-    for key in (
-        f"return_timing_{bucket}_policy_planner_divergence_count",
-        f"return_timing_{bucket}_return_stall_count",
-        f"return_timing_{bucket}_policy_teacher_adoption_count",
-    )
-) + tuple(
-    key
-    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS
-    for key in (
-        f"battery_fail_last_route_source_{bucket}_count",
-        f"zero_charge_battery_fail_last_route_source_{bucket}_count",
-    )
-) + tuple(
-    f"battery_fail_last_return_timing_{bucket}_count"
-    for bucket in RETURN_TIMING_FAILURE_BUCKETS
-)
-TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS = (
-    "return_route_teacher_active_pair_rate",
-    "return_route_teacher_agreement_rate",
-    "return_route_teacher_disagreement_rate",
-    "missing_route_pair_rate",
-    "missing_return_pair_rate",
-    "route_phase_teacher_from_return_reliable_rate",
-    "route_phase_teacher_from_anchor_or_target_rate",
-    "route_phase_teacher_from_critical_fallback_rate",
-    "return_teacher_in_route_phase_rate",
-    "return_teacher_outside_route_phase_rate",
-    "return_teacher_mode_depart_rate",
-    "return_teacher_mode_expand_rate",
-    "return_teacher_mode_harvest_rate",
-    "return_teacher_mode_contract_rate",
-    "return_teacher_mode_return_rate",
-    "return_teacher_mode_evade_rate",
-    "return_teacher_mode_other_rate",
-    "return_teacher_stable_invariant_satisfied_rate",
-    "return_teacher_stable_invariant_violated_rate",
-    "return_teacher_legal_safe_invariant_satisfied_rate",
-    "return_teacher_legal_safe_invariant_violated_rate",
-    "return_teacher_action_margin_invariant_satisfied_rate",
-    "return_teacher_action_margin_invariant_violated_rate",
-    "return_teacher_reliability_invariant_satisfied_rate",
-    "return_teacher_reliability_invariant_violated_rate",
-)
-POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_RATE_KEYS = tuple(
-    key
-    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS
-    for key in (
-        f"route_source_{bucket}_policy_planner_divergence_rate",
-        f"route_source_{bucket}_return_stall_rate",
-        f"route_source_{bucket}_policy_teacher_adoption_rate",
-    )
-) + tuple(
-    key
-    for bucket in RETURN_LABEL_TIMING_BUCKETS
-    for key in (
-        f"return_timing_{bucket}_policy_planner_divergence_rate",
-        f"return_timing_{bucket}_return_stall_rate",
-        f"return_timing_{bucket}_policy_teacher_adoption_rate",
-    )
-) + tuple(
-    key
-    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS
-    for key in (
-        f"battery_fail_last_route_source_{bucket}_rate",
-        f"zero_charge_battery_fail_last_route_source_{bucket}_rate",
-    )
-) + tuple(
-    f"battery_fail_last_return_timing_{bucket}_rate"
-    for bucket in RETURN_TIMING_FAILURE_BUCKETS
-)
-TEACHER_LABEL_QUALITY_METRIC_KEYS = (
-    *TEACHER_LABEL_QUALITY_COUNT_KEYS,
-    *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS,
-    *TEACHER_LABEL_QUALITY_COUNT_RATE_KEYS,
-    *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_RATE_KEYS,
-    "return_teacher_target_stable_rate",
-    "return_teacher_target_unstable_rate",
-    "return_teacher_suggested_legal_safe_rate",
-    "return_teacher_action_margin_low_rate",
-    "return_teacher_action_margin_mid_rate",
-    "return_teacher_action_margin_high_rate",
-    "return_teacher_agree_route_phase_planner_divergence_rate",
-    "return_teacher_disagree_route_phase_planner_divergence_rate",
-    "return_teacher_agree_route_phase_return_stall_rate",
-    "return_teacher_disagree_route_phase_return_stall_rate",
-    "return_teacher_margin_low_route_phase_planner_divergence_rate",
-    "return_teacher_margin_mid_route_phase_planner_divergence_rate",
-    "return_teacher_margin_high_route_phase_planner_divergence_rate",
-    "return_teacher_margin_low_route_phase_return_stall_rate",
-    "return_teacher_margin_mid_route_phase_return_stall_rate",
-    "return_teacher_margin_high_route_phase_return_stall_rate",
-)
-
-
-def _apply_teacher_label_quality_count_rates(payload: dict[str, Any]) -> dict[str, Any]:
-    def _ratio(num_key: str, den_key: str) -> float:
-        denominator = float(payload.get(den_key, 0.0) or 0.0)
-        if denominator <= 0.0:
-            return 0.0
-        return float(payload.get(num_key, 0.0) or 0.0) / denominator
-
-    payload["return_route_teacher_active_pair_rate"] = _ratio("active_pair_count", "return_teacher_count")
-    payload["return_route_teacher_agreement_rate"] = _ratio("agree_pair_count", "active_pair_count")
-    payload["return_route_teacher_disagreement_rate"] = _ratio("disagree_pair_count", "active_pair_count")
-    payload["missing_route_pair_rate"] = _ratio("missing_route_pair_count", "return_teacher_count")
-    payload["missing_return_pair_rate"] = _ratio("missing_return_pair_count", "route_phase_teacher_count")
-    payload["route_phase_teacher_from_return_reliable_rate"] = _ratio(
-        "route_phase_teacher_from_return_reliable_count", "route_phase_teacher_count"
-    )
-    payload["route_phase_teacher_from_anchor_or_target_rate"] = _ratio(
-        "route_phase_teacher_from_anchor_or_target_count", "route_phase_teacher_count"
-    )
-    payload["route_phase_teacher_from_critical_fallback_rate"] = _ratio(
-        "route_phase_teacher_from_critical_fallback_count", "route_phase_teacher_count"
-    )
-    payload["return_teacher_in_route_phase_rate"] = _ratio(
-        "return_teacher_in_route_phase_count", "return_teacher_count"
-    )
-    payload["return_teacher_outside_route_phase_rate"] = _ratio(
-        "return_teacher_outside_route_phase_count", "return_teacher_count"
-    )
-    for mode_name in ("depart", "expand", "harvest", "contract", "return", "evade", "other"):
-        payload[f"return_teacher_mode_{mode_name}_rate"] = _ratio(
-            f"return_teacher_mode_{mode_name}_count", "return_teacher_count"
-        )
-    payload["return_teacher_target_stable_rate"] = _ratio("return_teacher_target_stable_count", "return_teacher_count")
-    payload["return_teacher_target_unstable_rate"] = _ratio("return_teacher_target_unstable_count", "return_teacher_count")
-    payload["return_teacher_suggested_legal_safe_rate"] = _ratio(
-        "return_teacher_suggested_legal_safe_count", "return_teacher_count"
-    )
-    payload["return_teacher_action_margin_low_rate"] = _ratio(
-        "return_teacher_action_margin_low_count", "return_teacher_count"
-    )
-    payload["return_teacher_action_margin_mid_rate"] = _ratio(
-        "return_teacher_action_margin_mid_count", "return_teacher_count"
-    )
-    payload["return_teacher_action_margin_high_rate"] = _ratio(
-        "return_teacher_action_margin_high_count", "return_teacher_count"
-    )
-    payload["return_teacher_stable_invariant_satisfied_rate"] = _ratio(
-        "return_teacher_stable_invariant_satisfied_count", "return_teacher_count"
-    )
-    payload["return_teacher_stable_invariant_violated_rate"] = _ratio(
-        "return_teacher_stable_invariant_violated_count", "return_teacher_count"
-    )
-    payload["return_teacher_legal_safe_invariant_satisfied_rate"] = _ratio(
-        "return_teacher_legal_safe_invariant_satisfied_count", "return_teacher_count"
-    )
-    payload["return_teacher_legal_safe_invariant_violated_rate"] = _ratio(
-        "return_teacher_legal_safe_invariant_violated_count", "return_teacher_count"
-    )
-    payload["return_teacher_action_margin_invariant_satisfied_rate"] = _ratio(
-        "return_teacher_action_margin_invariant_satisfied_count", "return_teacher_count"
-    )
-    payload["return_teacher_action_margin_invariant_violated_rate"] = _ratio(
-        "return_teacher_action_margin_invariant_violated_count", "return_teacher_count"
-    )
-    payload["return_teacher_reliability_invariant_satisfied_rate"] = _ratio(
-        "return_teacher_reliability_invariant_satisfied_count", "return_teacher_count"
-    )
-    payload["return_teacher_reliability_invariant_violated_rate"] = _ratio(
-        "return_teacher_reliability_invariant_violated_count", "return_teacher_count"
-    )
-    for bucket in ROUTE_TEACHER_SOURCE_BUCKETS:
-        denominator_key = f"route_phase_teacher_from_{bucket}_count"
-        payload[f"route_source_{bucket}_policy_planner_divergence_rate"] = _ratio(
-            f"route_source_{bucket}_policy_planner_divergence_count", denominator_key
-        )
-        payload[f"route_source_{bucket}_return_stall_rate"] = _ratio(
-            f"route_source_{bucket}_return_stall_count", denominator_key
-        )
-        payload[f"route_source_{bucket}_policy_teacher_adoption_rate"] = _ratio(
-            f"route_source_{bucket}_policy_teacher_adoption_count", denominator_key
-        )
-    for bucket in RETURN_LABEL_TIMING_BUCKETS:
-        if bucket == "inside_route_phase":
-            denominator_key = "return_teacher_in_route_phase_count"
-        elif bucket == "outside_route_phase":
-            denominator_key = "return_teacher_outside_route_phase_count"
-        else:
-            denominator_key = f"return_teacher_{bucket}_count"
-        payload[f"return_timing_{bucket}_policy_planner_divergence_rate"] = _ratio(
-            f"return_timing_{bucket}_policy_planner_divergence_count", denominator_key
-        )
-        payload[f"return_timing_{bucket}_return_stall_rate"] = _ratio(
-            f"return_timing_{bucket}_return_stall_count", denominator_key
-        )
-        payload[f"return_timing_{bucket}_policy_teacher_adoption_rate"] = _ratio(
-            f"return_timing_{bucket}_policy_teacher_adoption_count", denominator_key
-        )
-    for bucket in ROUTE_SOURCE_FAILURE_BUCKETS:
-        payload[f"battery_fail_last_route_source_{bucket}_rate"] = _ratio(
-            f"battery_fail_last_route_source_{bucket}_count", "battery_fail_count"
-        )
-        payload[f"zero_charge_battery_fail_last_route_source_{bucket}_rate"] = _ratio(
-            f"zero_charge_battery_fail_last_route_source_{bucket}_count", "battery_fail_count"
-        )
-    for bucket in RETURN_TIMING_FAILURE_BUCKETS:
-        payload[f"battery_fail_last_return_timing_{bucket}_rate"] = _ratio(
-            f"battery_fail_last_return_timing_{bucket}_count", "battery_fail_count"
-        )
-    return payload
-
-_LEARNER_LOG_FLOAT_PATTERNS = {
-    "battery_process_cost_mean": re.compile(r"battery_process_cost_mean:\s*(-?\d+(?:\.\d+)?)"),
-    "collision_process_cost_mean": re.compile(r"collision_process_cost_mean:\s*(-?\d+(?:\.\d+)?)"),
-    "lambda_battery": re.compile(r"lambda_battery:\s*(-?\d+(?:\.\d+)?)"),
-    "lambda_collision": re.compile(r"lambda_collision:\s*(-?\d+(?:\.\d+)?)"),
-    "nan_batch_count": re.compile(r"nan_batch_count:\s*(-?\d+(?:\.\d+)?)"),
-    "nan_skip_rate": re.compile(r"nan_skip_rate:\s*(-?\d+(?:\.\d+)?)"),
-    "last_finite_step": re.compile(r"last_finite_step:\s*(-?\d+(?:\.\d+)?)"),
-}
-
-WINDOW_COMPARISON_METRIC_KEYS = (
-    "avg_clean_per_charge_when_charged",
-    "zero_charge_battery_fail_rate",
-    "zero_charge_among_battery_fail_rate",
-    "expert_weight_nonzero_rate",
-    "pre_return_bias_active_rate",
-    "return_bias_active_rate",
-    "return_action_teacher_mask_mean",
-    "return_action_teacher_mask_nonzero_rate",
-    "route_phase_action_teacher_mask_mean",
-    "route_phase_action_teacher_mask_nonzero_rate",
-    *TEACHER_LABEL_QUALITY_METRIC_KEYS,
-    "return_entry_count",
-    "readiness_supported_return_entry_count",
-    "pre_return_readiness_hit_rate",
-    "readiness_to_return_transition_rate",
-    "direct_return_without_readiness_rate",
-    "clean_floor_revisit_rate",
-    "clean_floor_revisit_penalty_mean",
-    "effective_coverage_bonus_mean",
-    "avg_charge_count_completed",
-    "avg_charge_count_battery_fail",
-    "reward_positive_total",
-    "reward_negative_total",
-    "reward_net_total",
-    "reward_charging_positive_total",
-    "reward_charging_negative_total",
-    "reward_charging_net_total",
-    "reward_positive_share_cleaning",
-    "reward_positive_share_streak",
-    "reward_positive_share_explore",
-    "reward_positive_share_risk_release_reward",
-    "reward_positive_share_charger_progress_arrival_bonus",
-    "reward_positive_share_safe_return_progress_bonus",
-    "reward_positive_share_clean_per_step_efficiency_bonus",
-    "reward_positive_share_charge_route_progress_bonus",
-    "reward_positive_share_necessary_charge_bonus",
-    "reward_positive_share_frontier",
-    "reward_positive_share_cps_bonus",
-    "reward_positive_share_edge_follow_bonus",
-    "reward_positive_share_charger_access_discovery_bonus",
-    "reward_positive_share_charger_access_probe_bonus",
-    "reward_negative_share_route_phase_risk_growth_penalty",
-    "reward_negative_share_risk_growth_while_clean_penalty",
-    "reward_negative_share_charge_opportunity_cost_penalty",
-    "reward_negative_share_charge_detour_cost",
-    "reward_negative_share_charge_interrupt_cost",
-    "reward_negative_share_skip_needed_charge_penalty",
-    "reward_negative_share_unnecessary_charge_penalty",
-    "reward_negative_share_planner_alignment",
-    "reward_negative_share_idle",
-    "reward_negative_share_npc",
-    "reward_negative_share_coverage_tangle_penalty",
-    "reward_charging_positive_share_risk_release_reward",
-    "reward_charging_positive_share_charger_progress_arrival_bonus",
-    "reward_charging_positive_share_safe_return_progress_bonus",
-    "reward_charging_positive_share_charge_route_progress_bonus",
-    "reward_charging_positive_share_necessary_charge_bonus",
-    "reward_charging_positive_share_charger_access_discovery_bonus",
-    "reward_charging_positive_share_charger_access_probe_bonus",
-    "reward_charging_negative_share_route_phase_risk_growth_penalty",
-    "reward_charging_negative_share_risk_growth_while_clean_penalty",
-    "reward_charging_negative_share_charge_opportunity_cost_penalty",
-    "reward_charging_negative_share_charge_detour_cost",
-    "reward_charging_negative_share_charge_interrupt_cost",
-    "reward_charging_negative_share_skip_needed_charge_penalty",
-    "reward_charging_negative_share_unnecessary_charge_penalty",
-)
-
-
-class PerfWindow:
-    def __init__(self):
-        self.values = {}
-
-    def add(self, name, duration_ms, count=1):
-        stats = self.values.setdefault(name, {"total_ms": 0.0, "count": 0})
-        stats["total_ms"] += float(duration_ms)
-        stats["count"] += int(count)
-
-    def flush(self, prefix):
-        payload = {}
-        for name, stats in self.values.items():
-            payload[f"{prefix}_{name}_total_ms"] = round(stats["total_ms"], 4)
-            payload[f"{prefix}_{name}_count"] = int(stats["count"])
-            if stats["count"] > 0:
-                payload[f"{prefix}_{name}_avg_ms"] = round(stats["total_ms"] / stats["count"], 4)
-        self.values = {}
-        return payload
-
-
-def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
-    env = envs[0]
-    agent = agents[0]
-
-    if os.getenv("KAIWU_BENCHMARK_PARALLEL_MODE", "").strip() in ("1", "true"):
-        from agent_ppo.eval.benchmark_parallel import run_parallel_benchmark
-
-        usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
-        run_parallel_benchmark(envs, agents, usr_conf, logger, process_index=kwargs.get("process_index"))
-        return
-
-    # Benchmark mode: run fixed eval scenarios, save results, exit
-    if os.getenv("KAIWU_BENCHMARK_MODE", "").strip() in ("1", "true"):
-        aisrv_index = _resolve_benchmark_aisrv_index()
-        benchmark_checkpoint = os.getenv("KAIWU_BENCHMARK_CHECKPOINT", "").strip()
-        benchmark_policy_mode = os.getenv("KAIWU_BENCHMARK_POLICY_MODE", "eval").strip().lower() or "eval"
-        benchmark_maps = os.getenv("KAIWU_BENCHMARK_MAPS", "").strip()
-        benchmark_rounds_json = os.getenv("KAIWU_BENCHMARK_ROUNDS_JSON", "").strip()
-        if logger is not None:
-            logger.info(
-                "[BENCHMARK] Entering serial benchmark branch "
-                f"active=True aisrv_index={aisrv_index or '<empty>'} "
-                f"hostname={os.getenv('HOSTNAME', '').strip() or '<empty>'} "
-                f"checkpoint={benchmark_checkpoint or '<default>'} "
-                f"policy_mode={benchmark_policy_mode} "
-                f"maps={benchmark_maps or '<default>'} "
-                f"rounds_override={'set' if benchmark_rounds_json else 'default'}"
-            )
-        if aisrv_index not in ("", "1"):
-            if logger is not None:
-                logger.info(f"[BENCHMARK] Skipping on aisrv-{aisrv_index}, only aisrv-1 runs benchmark")
-            marker = Path("/workspace/code/.benchmark_done")
-            while not marker.exists():
-                time.sleep(5)
-            if logger is not None:
-                logger.info("[BENCHMARK] aisrv-1 benchmark complete, exiting")
-            return
-        from agent_ppo.eval.benchmark import run_benchmark
-        try:
-            usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
-            run_benchmark(env, agent, usr_conf, logger)
-        except Exception:
-            if logger is not None:
-                logger.exception(
-                    "[BENCHMARK] Serial benchmark branch failed "
-                    f"aisrv_index={aisrv_index or '<empty>'} "
-                    f"checkpoint={benchmark_checkpoint or '<default>'}"
-                )
-            raise
-        return
-
-    archive = ExperimentArchive(service_name=os.getenv("KAIWU_SERVICE_NAME") or "aisrv")
-
-    usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
-    if usr_conf is None:
-        logger.error("usr_conf is None, please check agent_ppo/conf/train_env_conf.toml")
-        return
-
-    archive.ensure_run(
-        {
-            "workflow_started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "algorithm": os.getenv("KAIWU_ALGORITHM") or "ppo",
-            "usr_conf": usr_conf,
-            "training_strategy": {
-                "policy_blending": "model_logits_plus_heuristic_bias",
-                "curriculum": "anchor_mild_broad_randomization",
-                "selection_target": "checkpoint_preservation_score_v2",
-            },
-        }
-    )
-    archive.log_event(
-        "run_start",
-        {
-            "algorithm": os.getenv("KAIWU_ALGORITHM") or "ppo",
-            "usr_conf": usr_conf,
-        },
-    )
-
-    initial_stage = str(os.getenv("KAIWU_CURRICULUM_INITIAL_STAGE", Config.CURRICULUM_INITIAL_STAGE) or "warmup").strip().lower()
-    lite_benchmark_payload = maybe_run_lite_benchmark(env, agent, usr_conf, logger)
-    if lite_benchmark_payload:
-        initial_stage = str(lite_benchmark_payload.get("recommended_initial_stage") or initial_stage).strip().lower()
-
-    episode_runner = EpisodeRunner(
-        env=env,
-        agent=agent,
-        usr_conf=usr_conf,
-        config_sampler=EnvConfigSampler(usr_conf),
-        logger=logger,
-        monitor=monitor,
-        archive=archive,
-    )
-    episode_runner.curriculum_store.seed_initial_state(
-        session_id=episode_runner.run_session_id,
-        initial_stage=initial_stage,
-        lite_benchmark_used=bool(lite_benchmark_payload),
-        lite_benchmark_metrics=lite_benchmark_payload,
-    )
-    send_perf = PerfWindow()
-    last_send_perf_report_time = 0.0
-
-    while True:
-        for g_data in episode_runner.run_episodes():
-            send_begin = time.perf_counter()
-            agent.send_sample_data(g_data)
-            send_perf.add("send_sample_data", (time.perf_counter() - send_begin) * 1000.0)
-            send_perf.add("samples_sent", 0.0, count=len(g_data))
-            g_data.clear()
-            now = time.time()
-            if now - last_send_perf_report_time >= _env_int(
-                "KAIWU_PERF_STAT_WINDOW_SECONDS", Config.PERF_STAT_WINDOW_SECONDS
-            ):
-                payload = {
-                    "record_type": "aisrv_send_window",
-                    "episode_cnt": episode_runner.episode_cnt,
-                }
-                payload.update(send_perf.flush("workflow"))
-                runtime_metrics = agent.get_runtime_metrics() if hasattr(agent, "get_runtime_metrics") else {}
-                for key, value in runtime_metrics.items():
-                    payload[f"agent_{key}"] = value
-                archive.log_train_window(payload)
-                last_send_perf_report_time = now
-
-
-class EnvConfigSampler:
-    BASE_SEED = 20260409
-
-    def __init__(self, usr_conf):
-        self.base_usr_conf = deepcopy(usr_conf)
-        if isinstance(self.base_usr_conf, dict) and isinstance(self.base_usr_conf.get("env_conf"), dict):
-            self.env_key = "env_conf"
-            self.base_env_conf = deepcopy(self.base_usr_conf["env_conf"])
-        else:
-            self.env_key = None
-            self.base_env_conf = deepcopy(self.base_usr_conf)
-
-        self.maps = list(self.base_env_conf.get("map") or [1, 2, 3])
-        self.base_map_random = bool(self.base_env_conf.get("map_random", True))
-        self.base_robot_count = int(self.base_env_conf.get("robot_count", 1))
-        self.base_charger_count = int(self.base_env_conf.get("charger_count", 4))
-        self.base_max_step = int(self.base_env_conf.get("max_step", 1000))
-        self.base_battery_max = int(self.base_env_conf.get("battery_max", 200))
-        self.fixed_difficulty = _env_bool("KAIWU_ENV_FIXED_DIFFICULTY", False)
-        if self.fixed_difficulty:
-            self.maps = _env_int_list("KAIWU_TRAIN_MAPS", self.maps)
-            self.base_map_random = _env_bool("KAIWU_TRAIN_MAP_RANDOM", self.base_map_random)
-            self.base_robot_count = _env_clamped_int("KAIWU_TRAIN_ROBOT_COUNT", self.base_robot_count, 1, 4)
-            self.base_charger_count = _env_clamped_int("KAIWU_TRAIN_CHARGER_COUNT", self.base_charger_count, 1, 4)
-            self.base_max_step = _env_clamped_int("KAIWU_TRAIN_MAX_STEP", self.base_max_step, 1, 2000)
-            self.base_battery_max = _env_clamped_int("KAIWU_TRAIN_BATTERY_MAX", self.base_battery_max, 100, 999)
-        self.current_seed = int(self.BASE_SEED)
-        self.seed_source = "base"
-        self.sampled_profile_total = 0
-        self.sampled_profile_counts = {
-            "anchor": 0,
-            "mild": 0,
-            "broad": 0,
-            "broad_eval": 0,
-        }
-        self.rng = np.random.default_rng(seed=self.current_seed)
-
-    @staticmethod
-    def _derive_sampler_seed(base_seed, run_session_id, source_id):
-        payload = f"{int(base_seed)}|{str(run_session_id)}|{str(source_id)}".encode("utf-8")
-        digest = hashlib.sha256(payload).digest()
-        return int.from_bytes(digest[:8], "big") % (2**32)
-
-    def configure_runtime_identity(self, run_session_id, source_id):
-        self.current_seed = int(self._derive_sampler_seed(self.BASE_SEED, run_session_id, source_id))
-        self.seed_source = f"{run_session_id}:{source_id}"
-        self.sampled_profile_total = 0
-        self.sampled_profile_counts = {
-            "anchor": 0,
-            "mild": 0,
-            "broad": 0,
-            "broad_eval": 0,
-        }
-        self.rng = np.random.default_rng(seed=self.current_seed)
-
-    def sampled_profile_metrics(self):
-        total = max(int(self.sampled_profile_total), 1)
-        return {
-            "sampled_profile_total": float(self.sampled_profile_total),
-            "sampled_profile_anchor_count": float(self.sampled_profile_counts.get("anchor", 0)),
-            "sampled_profile_mild_count": float(self.sampled_profile_counts.get("mild", 0)),
-            "sampled_profile_broad_count": float(self.sampled_profile_counts.get("broad", 0)),
-            "sampled_profile_broad_eval_count": float(self.sampled_profile_counts.get("broad_eval", 0)),
-            "sampled_profile_anchor_rate": float(self.sampled_profile_counts.get("anchor", 0)) / total,
-            "sampled_profile_mild_rate": float(self.sampled_profile_counts.get("mild", 0)) / total,
-            "sampled_profile_broad_rate": float(self.sampled_profile_counts.get("broad", 0)) / total,
-            "sampled_profile_broad_eval_rate": float(self.sampled_profile_counts.get("broad_eval", 0)) / total,
-        }
-
-    def sample(self, curriculum_state):
-        if isinstance(curriculum_state, dict):
-            stage = str(curriculum_state.get("stage", "warmup") or "warmup")
-            profile_plan = profile_plan_for_runtime(stage, curriculum_state)
-        else:
-            stage = str(curriculum_state or "warmup")
-            profile_plan = profile_plan_for_runtime(stage, {})
-        profile = self._pick_profile(profile_plan["weights"])
-        self.sampled_profile_total += 1
-        self.sampled_profile_counts[profile] = int(self.sampled_profile_counts.get(profile, 0)) + 1
-        env_conf = deepcopy(self.base_env_conf)
-
-        if self.fixed_difficulty:
-            env_conf["map_random"] = self.base_map_random
-            env_conf["map"] = list(self.maps)
-            env_conf["robot_count"] = self.base_robot_count
-            env_conf["charger_count"] = self.base_charger_count
-            env_conf["max_step"] = self.base_max_step
-            env_conf["battery_max"] = self.base_battery_max
-        elif profile == "anchor":
-            env_conf["map_random"] = self.base_map_random
-            env_conf["map"] = list(self.maps)
-        else:
-            env_conf["map_random"] = True
-            env_conf["map"] = self._sample_maps(profile)
-            env_conf["robot_count"] = self._sample_robot_count(profile)
-            env_conf["charger_count"] = self._sample_charger_count(profile)
-            env_conf["max_step"] = self._sample_max_step(profile)
-            env_conf["battery_max"] = self._sample_battery_max(profile)
-
-        sampled_usr_conf = self._wrap_env_conf(env_conf)
-        meta = {
-            "stage": stage,
-            "profile": profile,
-            "env_conf": deepcopy(env_conf),
-            "profile_weights": deepcopy(profile_plan["weight_map"]),
-            "observation_phase_active": bool(profile_plan["observation_phase_active"]),
-            "profile_tightened": bool(profile_plan["tightened"]),
-            "profile_seed": int(self.current_seed),
-            "profile_sample_index": int(self.sampled_profile_total),
-            "fixed_difficulty": bool(self.fixed_difficulty),
-            **self.sampled_profile_metrics(),
-        }
-        return sampled_usr_conf, meta
-
-    def _pick_profile(self, weights):
-        draw = self.rng.random()
-        cumulative = 0.0
-        for profile, weight in weights:
-            cumulative += float(weight)
-            if draw < cumulative:
-                return profile
-        return weights[-1][0]
-
-    def _sample_robot_count(self, profile):
-        if profile == "mild":
-            return self._sample_near(self.base_robot_count, 1, 4, (-1, 0, 1))
-        return int(self.rng.integers(1, 5))
-
-    def _sample_charger_count(self, profile):
-        if profile == "mild":
-            return self._sample_near(self.base_charger_count, 1, 4, (-1, 0, 1))
-        return int(self.rng.integers(1, 5))
-
-    def _sample_max_step(self, profile):
-        if profile == "broad_eval":
-            if self.rng.random() < 0.50:
-                return 2000
-            return int(self.rng.choice([1100, 1400, 1700, 2000]))
-        if profile == "mild":
-            return self._sample_near(self.base_max_step, 400, 2000, (-250, -100, 0, 100, 250), quant=50)
-        levels = [500, 700, 900, 1100, 1400, 1700, 2000]
-        return int(self.rng.choice(levels))
-
-    def _sample_battery_max(self, profile):
-        if profile == "broad_eval":
-            levels = [120, 160, 200, 200, 200, 260, 320, 420]
-            return int(self.rng.choice(levels))
-        if profile == "mild":
-            return self._sample_near(self.base_battery_max, 100, 999, (-80, -40, 0, 40, 80, 120), quant=20)
-        levels = [120, 160, 200, 260, 320, 420, 560, 720]
-        return int(self.rng.choice(levels))
-
-    def _sample_maps(self, profile):
-        if len(self.maps) <= 1 or profile == "mild":
-            return list(self.maps)
-        subset_size = int(self.rng.integers(1, len(self.maps) + 1))
-        indices = self.rng.choice(len(self.maps), size=subset_size, replace=False)
-        return [self.maps[int(idx)] for idx in sorted(indices)]
-
-    def _sample_near(self, base_value, v_min, v_max, deltas, quant=1):
-        candidate = int(base_value + self.rng.choice(deltas))
-        candidate = int(np.clip(candidate, v_min, v_max))
-        if quant > 1:
-            candidate = int(round(candidate / quant) * quant)
-            candidate = int(np.clip(candidate, v_min, v_max))
-        return candidate
-
-    def _wrap_env_conf(self, env_conf):
-        if self.env_key is None:
-            return deepcopy(env_conf)
-        wrapped = deepcopy(self.base_usr_conf)
-        wrapped[self.env_key] = deepcopy(env_conf)
-        return wrapped
+        return self.alpha
 
 
 class EpisodeRunner:
-    def __init__(self, env, agent, usr_conf, config_sampler, logger, monitor, archive):
+    """Single-agent episode runner."""
+
+    def __init__(self, env, agent, usr_conf, logger, monitor, agent_id: int = 0):
         self.env = env
         self.agent = agent
         self.usr_conf = usr_conf
-        self.config_sampler = config_sampler
         self.logger = logger
         self.monitor = monitor
-        self.archive = archive
+        self.agent_id = agent_id
+
+        self.planner = CoveragePlanner()
+        self.scheduler = ResidualScheduler()
+
         self.episode_cnt = 0
         self.last_report_monitor_time = 0
-        self.last_get_training_metrics_time = 0
-        self.last_perf_stat_time = 0
-        self.perf_window = PerfWindow()
+        self.last_training_metrics_time = 0
+        self.local_predict_cnt = 0
+        self.local_frame_cnt = 0
+        self.local_yield_cnt = 0
 
-        self.episode_history = deque(maxlen=Config.MONITOR_WINDOW)
-        self.death_trajectory_buffer = []
-        self.DEATH_TRAJ_LENGTH = 20
-        self.config_stats = {}
+    def _safe_log(self, message):
+        if self.logger is not None and hasattr(self.logger, "info"):
+            self.logger.info(message)
 
-        self.best_avg_score = 0.0
-        self.best_robust_score = float("-inf")
-        self.best_resume_readiness_score = float("-inf")
-        self.best_submission_score = float("-inf")
-        self.best_preservation_score = float("-inf")
-        self.last_checkpoint_scores = {
-            "resume_readiness_score": 0.0,
-            "submission_score": 0.0,
-            "checkpoint_preservation_score": 0.0,
-            "resume_eligible": False,
-            "submission_eligible": False,
-            "resume_score_safety": 0.0,
-            "resume_score_efficiency": 0.0,
-            "resume_score_behavior": 0.0,
-            "resume_score_learning": 0.0,
-            "submission_score_completion": 0.0,
-            "submission_score_efficiency": 0.0,
-            "submission_score_stability": 0.0,
-            "submission_score_behavior": 0.0,
+    def _safe_warn(self, message):
+        if self.logger is not None and hasattr(self.logger, "warning"):
+            self.logger.warning(message)
+
+    def _early_termination_penalty(self, finished_steps: int, max_steps: int) -> float:
+        completion_ratio = finished_steps / max(max_steps, 1)
+        if completion_ratio >= 0.95:
+            return 0.0
+        if completion_ratio >= 0.85:
+            return -0.08
+        if completion_ratio >= 0.70:
+            return -0.18
+        if completion_ratio >= 0.50:
+            return -0.35
+        return -0.55
+
+    def _parse_obs(self, env_obs: dict) -> dict:
+        obs = env_obs["observation"]
+        fs = obs["frame_state"]
+        hero = fs["heroes"]
+        if isinstance(hero, list):
+            hero = hero[0] if hero else {}
+        env_info = obs.get("env_info", {})
+        return {
+            "hero_pos": (int(hero["pos"]["x"]), int(hero["pos"]["z"])),
+            "battery": int(hero.get("battery", 0)),
+            "battery_max": max(int(hero.get("battery_max", 1)), 1),
+            "dirt_cleaned": int(hero.get("dirt_cleaned", 0)),
+            "legal_act": [int(x) for x in (obs.get("legal_action") or [1] * 8)],
+            "map_info": obs.get("map_info"),
+            "npcs": fs.get("npcs", []),
+            "organs": fs.get("organs", []),
+            "total_dirt": max(int(env_info.get("total_dirt", 1)), 1),
+            "total_score": int(env_info.get("total_score", 0)),
         }
-        self.last_clean_score = 0.0
-        self.is_new_best = False
-        self.per_map_scores: dict[str, list[float]] = {}
-        self.latest_training_metrics = {}
-        self.latest_learning_metrics = {}
-        self.learning_metric_history = deque(maxlen=8)
-        self.resume_global_step_base = None
-        self.resume_global_step_offset = 0
-        self.resume_restored_checkpoint_global_step = None
-        self.resume_fast_track = True
-        self.code_path = resolve_shared_code_dir()
-        self.state_layout = ensure_runtime_state_dirs(self.code_path)
-        self.training_start_mode = (os.getenv("KAIWU_TRAINING_START_MODE", "preload") or "preload").strip().lower()
-        self.curriculum_store = SharedCurriculumStateStore(self.code_path)
-        self.signal_source_id = f"aisrv-{os.getenv('KAIWU_AISRV_INDEX', 'x')}-pid-{os.getpid()}"
-        self.code_dir = str(self.code_path)
-        self.helper_session_id = f"{time.strftime('%Y%m%d-%H%M%S')}-pid-{os.getpid()}"
-        self.run_session_id = self._claim_run_session_id(self.helper_session_id)
-        self.state_layout = ensure_runtime_state_dirs(self.code_path, self.run_session_id)
-        self.run_state = self.state_layout.for_run(self.run_session_id)
-        self.session_id = self.helper_session_id
-        if hasattr(self.config_sampler, "configure_runtime_identity"):
-            self.config_sampler.configure_runtime_identity(
-                run_session_id=self.run_session_id,
-                source_id=self.signal_source_id,
-            )
-        self._write_json_atomic(
-            self.run_state.run_manifest_path,
-            {
-                "run_session_id": self.run_session_id,
-                "train_phase": str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower(),
-                "helper_session_id": self.helper_session_id,
-                "source_id": self.signal_source_id,
-                "created_at": time.time(),
-            },
-        )
-        self.session_dir = self.run_state.session_best_dir / self.helper_session_id
-        self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.best_score_file = self.session_dir / "best_score.json"
-        self._is_primary_resume_writer = self._resolve_primary_resume_writer()
-        self.logger.info(
-            f"[SESSION] New helper session: {self.helper_session_id} run_session={self.run_session_id} "
-            f"resume_writer={int(self._is_primary_resume_writer)}"
-        )
-        self.resume_snapshot_dir = self.run_state.resume_snapshots_dir
-        self.resume_snapshot_dir.mkdir(parents=True, exist_ok=True)
-        self.resume_latest_path = self.run_state.resume_latest_checkpoint_path
-        self.resume_latest_meta_path = self.run_state.resume_latest_meta_path
-        self.resume_latest_state_path = self.run_state.resume_latest_state_path
-        self.resume_curriculum_snapshot_path = self.run_state.resume_latest_curriculum_snapshot_path
-        self.latest_model_path = self.run_state.resume_latest_dir / "latest_model.pkl"
-        self.preload_ckpt_dir = self.state_layout.preload_cache_dir
-        self.preload_ckpt_dir.mkdir(parents=True, exist_ok=True)
-        self.preload_latest_meta_path = self.state_layout.preload_latest_metadata_path
-        self.manual_ckpt_dir = self.run_state.manual_checkpoints_dir
-        self.manual_ckpt_dir.mkdir(parents=True, exist_ok=True)
-        self.last_episode_snapshot_episode = 0
-        self.last_step_snapshot_global_step = 0
-        self.last_time_snapshot_at = time.time()
-        self.last_latest_sync_episode = 0
-        self.save_interval = _env_int("KAIWU_SAVE_MODEL_INTERVAL_EPISODES", Config.SAVE_MODEL_INTERVAL_EPISODES)
-        self.resume_episode_interval = _env_int(
-            "KAIWU_RESUME_EPISODE_SNAPSHOT_INTERVAL", Config.RESUME_EPISODE_SNAPSHOT_INTERVAL
-        )
-        self.resume_step_interval = _env_int(
-            "KAIWU_RESUME_STEP_SNAPSHOT_INTERVAL", Config.RESUME_STEP_SNAPSHOT_INTERVAL
-        )
-        self.latest_sync_interval = _env_int(
-            "KAIWU_RESUME_LATEST_SYNC_INTERVAL_EPISODES", Config.RESUME_LATEST_SYNC_INTERVAL_EPISODES
-        )
-        self.time_save_interval_seconds = _env_int(
-            "KAIWU_RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS", Config.RESUME_TIME_SNAPSHOT_INTERVAL_SECONDS
-        )
-        self.keep_episode_snapshots = Config.KEEP_EPISODE_RESUME_SNAPSHOTS
-        self.keep_step_snapshots = Config.KEEP_STEP_RESUME_SNAPSHOTS
-        self.keep_time_snapshots = Config.KEEP_TIME_RESUME_SNAPSHOTS
-        self.keep_best_snapshots = Config.KEEP_BEST_RESUME_SNAPSHOTS
-        self.keep_preload_snapshots = Config.KEEP_PRELOAD_COMPAT_SNAPSHOTS
-        self.residual_scheduler = ResidualScheduler()
-        self.last_residual_alpha = self.residual_scheduler.action_alpha("expand")
-        self.last_policy_mode = "expand"
-        self.last_policy_should_charge = False
-        self._load_resume_state_metadata()
 
-    def _mode_name_from_preprocessor(self):
-        preprocessor = getattr(self.agent, "preprocessor", None)
-        if preprocessor is None:
-            return "expand"
-        mode_name_to_id = getattr(preprocessor, "MODE_NAME_TO_ID", {}) or {}
-        reverse = {}
-        for name, value in mode_name_to_id.items():
-            try:
-                reverse[int(value)] = str(name)
-            except (TypeError, ValueError):
-                continue
-        current_mode = getattr(preprocessor, "current_mode", None)
-        try:
-            return reverse.get(int(current_mode), str(getattr(preprocessor, "policy_target_mode", "") or "expand"))
-        except (TypeError, ValueError):
-            return str(getattr(preprocessor, "policy_target_mode", "") or "expand")
+    def _env_conf(self):
+        if isinstance(self.usr_conf, dict) and "env_conf" in self.usr_conf:
+            return self.usr_conf.get("env_conf") or {}
+        return self.usr_conf if isinstance(self.usr_conf, dict) else {}
 
-    def _resolve_policy_context(self):
-        preprocessor = getattr(self.agent, "preprocessor", None)
-        guidance = {}
-        if preprocessor is not None and hasattr(preprocessor, "_get_guidance"):
-            try:
-                guidance = preprocessor._get_guidance() or {}
-            except Exception:
-                guidance = {}
-        mode_name = self._mode_name_from_preprocessor()
-        should_charge = bool(
-            mode_name in {"charge", "contract", "return"}
-            or guidance.get("should_charge", False)
-            or guidance.get("on_charger", False)
-        )
-        self.last_policy_mode = mode_name
-        self.last_policy_should_charge = should_charge
-        return SimpleNamespace(
-            target_mode=mode_name,
-            should_charge=should_charge,
-            guidance=guidance,
-        )
-
-    @staticmethod
-    def _as_float_vector(value, fallback):
-        try:
-            arr = np.asarray(value, dtype=np.float32).reshape(-1)
-        except Exception:
-            arr = np.asarray(fallback, dtype=np.float32).reshape(-1)
-        if arr.size == 0:
-            arr = np.asarray(fallback, dtype=np.float32).reshape(-1)
-        return arr.astype(np.float32)
-
-    def _predict_with_residual_compat(self, obs_data, residual_alpha, policy_context):
+    def _predict_with_residual(self, obs_data, residual_alpha, policy_info):
         guided_predict = getattr(self.agent, "guided_predict", None)
         if callable(guided_predict):
             try:
                 result = guided_predict(
                     [obs_data],
-                    policy_info=policy_context,
+                    policy_info=policy_info,
                     residual_alpha=float(residual_alpha),
                 )
                 if result:
@@ -1178,1086 +174,86 @@ class EpisodeRunner:
                     if result:
                         return result[0]
                 except Exception as exc:
-                    self.logger.warning(f"[RESIDUAL] guided_predict fallback to predict due to error: {exc}")
+                    self._safe_warn(f"[RESIDUAL] guided_predict fallback to predict due to error: {exc}")
             except Exception as exc:
-                self.logger.warning(f"[RESIDUAL] guided_predict fallback to predict due to error: {exc}")
-
-        predict_result = self.agent.predict([obs_data])
-        if not predict_result:
-            self.logger.warning(f"[PREDICT] ep:{self.episode_cnt} empty result, applying safe fallback action")
-            legal_action = getattr(obs_data, "legal_action", None) or [1.0] * Config.ACTION_NUM
-            return self.agent._build_safe_fallback_act_data(legal_action, 0.0, 0.0, 0.0)
-        return predict_result[0]
-
-    def _persist_best_score(self):
-        data = {
-            "best_robust_score": self.best_robust_score,
-            "best_avg_score": self.best_avg_score,
-            "best_resume_readiness_score": self.best_resume_readiness_score,
-            "best_submission_score": self.best_submission_score,
-            "best_preservation_score": self.best_preservation_score,
-            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "episode_cnt": self.episode_cnt,
-        }
-        tmp = self.best_score_file.parent / f".{self.best_score_file.name}.{os.getpid()}.{time.time_ns()}.tmp"
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=True, indent=2)
-        os.replace(tmp, self.best_score_file)
-
-    def _update_manifest(self):
-        manifest_path = self.run_state.session_best_dir / "manifest.json"
-        entries = {}
-        if manifest_path.exists():
-            try:
-                entries = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except Exception:
-                entries = {}
-        entries[self.session_id] = {
-            "best_robust_score": round(self.best_robust_score, 4),
-            "best_avg_score": round(self.best_avg_score, 4),
-            "best_resume_readiness_score": round(self.best_resume_readiness_score, 4),
-            "best_submission_score": round(self.best_submission_score, 4),
-            "best_preservation_score": round(self.best_preservation_score, 4),
-            "episode_cnt": self.episode_cnt,
-            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        tmp = manifest_path.parent / f".manifest.{os.getpid()}.{time.time_ns()}.tmp"
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(entries, f, ensure_ascii=True, indent=2)
-        os.replace(tmp, manifest_path)
-
-    def _save_best_model(self, clean_score, score_payload):
-        best_path = self.session_dir / "best_model.pkl"
-        state_dict = {k: v.clone().cpu() for k, v in self.agent.model.state_dict().items()}
-        torch.save(state_dict, best_path)
-        self._persist_best_score()
-        self._update_manifest()
-        self.logger.info(
-            f"[BEST] session={self.session_id} ep={self.episode_cnt} avg={self.best_avg_score:.2f} "
-            f"robust={self.best_robust_score:.2f} resume={score_payload['resume_readiness_score']:.2f} "
-            f"preserve={score_payload['checkpoint_preservation_score']:.2f} score={clean_score:.1f} saved to {best_path}"
-        )
-        self.archive.log_checkpoint(
-            {
-                "episode_cnt": self.episode_cnt,
-                "clean_score": round(float(clean_score), 4),
-                "best_path": str(best_path),
-                **score_payload,
-            }
-        )
-
-    def _snapshot_state_dict(self):
-        return {k: v.detach().cpu().clone() for k, v in self.agent.model.state_dict().items()}
-
-    def _write_state_dict(self, path, state_dict):
-        tmp_path = path.parent / f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
-        torch.save(state_dict, tmp_path)
-        os.replace(tmp_path, path)
-
-    def _write_resume_meta(self, payload):
-        tmp_path = self.resume_latest_meta_path.parent / f".{self.resume_latest_meta_path.name}.{os.getpid()}.{time.time_ns()}.tmp"
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=True, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(tmp_path, self.resume_latest_meta_path)
-
-    def _run_session_manifest_path(self):
-        return self.state_layout.current.run_session_manifest_path
-
-    def _run_session_lock_path(self):
-        return self.state_layout.current.run_session_lock_path
-
-    def _claim_run_session_id(self, fallback_id):
-        override = str(os.getenv("KAIWU_RUN_SESSION_ID", "") or "").strip()
-        if override:
-            return override
-        aisrv_index = str(os.getenv("KAIWU_AISRV_INDEX", "") or "").strip()
-        train_phase = str(os.getenv("KAIWU_TRAIN_PHASE", "") or "").strip().lower()
-        training_start_mode = self.training_start_mode
-        launch_label = str(os.getenv("KAIWU_PHASE_RUN_LABEL", "") or "").strip()
-        launch_instance_id = str(os.getenv("KAIWU_PHASE_RUN_LAUNCH_INSTANCE_ID", "") or "").strip()
-        manifest_path = self._run_session_manifest_path()
-        lock_path = self._run_session_lock_path()
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-        def _read_existing():
-            try:
-                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                return None
-            if not bool(payload.get("state_initialized")):
-                return None
-            session_value = str(payload.get("run_session_id") or "").strip()
-            return session_value or None
-
-        def _read_existing_payload():
-            try:
-                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                return None
-            if not bool(payload.get("state_initialized")):
-                return None
-            session_value = str(payload.get("run_session_id") or "").strip()
-            if not session_value:
-                return None
-            return payload
-
-        def _matches_current_launch(payload):
-            if not payload:
-                return False
-            manifest_mode = str(payload.get("training_start_mode") or "").strip().lower()
-            manifest_phase = str(payload.get("train_phase") or "").strip().lower()
-            manifest_label = str(payload.get("launch_label") or "").strip()
-            manifest_launch_instance_id = str(payload.get("launch_instance_id") or "").strip()
-            if manifest_mode and manifest_mode != training_start_mode:
-                return False
-            if manifest_phase and train_phase and manifest_phase != train_phase:
-                return False
-            if launch_label or manifest_label:
-                if launch_label and launch_instance_id:
-                    return manifest_label == launch_label and manifest_launch_instance_id == launch_instance_id
-                return manifest_label == launch_label
-            return False
-
-        def _read_existing_for_current_launch():
-            payload = _read_existing_payload()
-            if payload is None:
-                return None
-            if not _matches_current_launch(payload):
-                return None
-            return str(payload.get("run_session_id") or "").strip() or None
-
-        def _read_existing_for_helper():
-            if launch_label:
-                return _read_existing_for_current_launch()
-            return _read_existing()
-
-        def _write_manifest(run_session_id, *, state_initialized):
-            payload = {
-                "run_session_id": run_session_id,
-                "train_phase": train_phase,
-                "created_at": time.time(),
-                "created_by_helper_session_id": fallback_id,
-                "created_by_source_id": self.signal_source_id,
-                "training_start_mode": training_start_mode,
-                "launch_label": launch_label,
-                "launch_instance_id": launch_instance_id,
-                "state_initialized": bool(state_initialized),
-            }
-            tmp = manifest_path.parent / f".{manifest_path.name}.{os.getpid()}.{time.time_ns()}.tmp"
-            tmp.write_text(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            os.replace(tmp, manifest_path)
-            return payload
-
-        def _write_new():
-            existing = _read_existing_for_current_launch()
-            if existing:
-                return existing
-            if is_scratch_mode(os.environ):
-                clear_current_runtime_state(self.code_path, os.environ, clear_legacy_current=True)
-            elif is_resume_mode(os.environ):
-                prepare_resume_bundle_in_current(self.code_path, os.environ)
-            run_session_id = time.strftime("%Y%m%d-%H%M%S")
-            _write_manifest(run_session_id, state_initialized=False)
-            initial_stage = str(os.getenv("KAIWU_CURRICULUM_INITIAL_STAGE", "warmup") or "warmup").strip().lower()
-            self.curriculum_store.seed_initial_state(
-                run_session_id,
-                initial_stage,
-                lite_benchmark_used=False,
-                lite_benchmark_metrics=None,
-            )
-            _write_manifest(run_session_id, state_initialized=True)
-            return run_session_id
-
-        if aisrv_index in {"", "1"}:
-            if fcntl is None:
-                return _write_new()
-            with lock_path.open("a+", encoding="utf-8") as handle:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-                try:
-                    return _write_new()
-                finally:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-        if fcntl is None:
-            existing = _read_existing_for_helper()
-            if existing:
-                return existing
-            raise RuntimeError("shared run_session manifest is not initialized yet")
-
-        deadline = time.time() + 10.0
-        while time.time() < deadline:
-            with lock_path.open("a+", encoding="utf-8") as handle:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-                try:
-                    existing = _read_existing_for_helper()
-                    if existing:
-                        return existing
-                finally:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            time.sleep(0.2)
-        raise RuntimeError("shared run_session manifest was not initialized by primary helper within 10s")
-
-    def _resolve_primary_resume_writer(self):
-        aisrv_index = str(os.getenv("KAIWU_AISRV_INDEX", "") or "").strip()
-        return aisrv_index in {"", "1"}
-
-    def _runtime_progress_payload(self):
-        current_global_step = self._current_train_global_step()
-        return {
-            "global_step_since_resume": int(self._global_step_since_resume()),
-            "checkpoint_global_step": int(current_global_step),
-        }
-
-    def _with_runtime_progress(self, env_obs):
-        payload = dict(env_obs or {})
-        runtime = dict(payload.get("runtime") or {})
-        runtime.update(self._runtime_progress_payload())
-        payload["runtime"] = runtime
-        return payload
-
-    def _read_resume_state_metadata(self):
-        payload = resolve_latest_resume_state(self.code_path, os.environ)
-        if not payload:
-            return {}
-        return payload
-
-    def _load_resume_state_metadata(self):
-        if self.training_start_mode != "resume":
-            return
-        payload = self._read_resume_state_metadata()
-        if not isinstance(payload, dict) or not payload:
-            return
-        self.resume_global_step_base = payload.get("resume_global_step_base")
-        try:
-            self.resume_global_step_offset = int(payload.get("global_step_since_resume") or 0)
-        except (TypeError, ValueError):
-            self.resume_global_step_offset = 0
-        try:
-            self.resume_restored_checkpoint_global_step = int(payload.get("global_step") or 0)
-        except (TypeError, ValueError):
-            self.resume_restored_checkpoint_global_step = None
-        if isinstance(payload.get("last_learning_metrics"), dict):
-            self.latest_learning_metrics = deepcopy(payload["last_learning_metrics"])
-
-    def _capture_curriculum_resume_snapshot(self):
-        state = self.curriculum_store.read_state()
-        return {
-            **deepcopy(state),
-            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "checkpoint_global_step": int(self._current_train_global_step()),
-            "run_session_id": self.run_session_id,
-        }
-
-    def _resume_state_payload(self, trigger, clean_score, checkpoint_path=None, curriculum_snapshot_path=None):
-        current_global_step = self._current_train_global_step()
-        return {
-            "trigger": trigger,
-            "checkpoint_id": str(current_global_step),
-            "checkpoint_path": str(checkpoint_path or self.resume_latest_path),
-            "global_step": int(current_global_step),
-            "episode_cnt": int(self.episode_cnt),
-            "clean_score": round(float(clean_score), 4),
-            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "session_id": self.run_session_id,
-            "helper_session_id": self.helper_session_id,
-            "training_start_mode": self.training_start_mode,
-            "resume_global_step_base": int(self.resume_global_step_base) if self.resume_global_step_base is not None else None,
-            "global_step_since_resume": int(self._global_step_since_resume()),
-            "curriculum_state_snapshot_path": str(curriculum_snapshot_path or self.resume_curriculum_snapshot_path),
-            "last_learning_metrics": deepcopy(self.latest_learning_metrics or {}),
-        }
-
-    def _write_json_atomic(self, path, payload):
-        tmp_path = path.parent / f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=True, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(tmp_path, path)
-
-    def _prune_snapshots(self, prefix, keep_count):
-        files = sorted(self.resume_snapshot_dir.glob(f"{prefix}-*.pkl"), key=lambda item: item.stat().st_mtime, reverse=True)
-        for old_path in files[keep_count:]:
-            old_path.unlink(missing_ok=True)
-
-    def _prune_preload_snapshots(self):
-        files = sorted(
-            self.preload_ckpt_dir.glob("model.ckpt-*.pkl"),
-            key=lambda item: item.stat().st_mtime,
-            reverse=True,
-        )
-        for old_path in files[self.keep_preload_snapshots:]:
-            old_path.unlink(missing_ok=True)
-
-    def _current_train_global_step(self):
-        if isinstance(self.latest_learning_metrics, dict):
-            value = self.latest_learning_metrics.get("global_step")
-            try:
-                if value is not None:
-                    return int(float(value))
-            except (TypeError, ValueError):
-                pass
-        basic_step = _extract_numeric_metric(self.latest_training_metrics, "basic", "train_global_step")
-        if basic_step is not None:
-            return int(basic_step)
-        learner_step = _extract_numeric_metric(self.latest_training_metrics, "learner", "global_step")
-        if learner_step is not None:
-            return int(learner_step)
-        return 0
-
-    def _save_preload_artifact(self, state_dict, clean_score):
-        global_step = self._current_train_global_step()
-        if global_step <= 0:
-            return
-        preload_path = self.preload_ckpt_dir / f"model.ckpt-{global_step}.pkl"
-        self._write_state_dict(preload_path, state_dict)
-        payload = {
-            "enabled": True,
-            "checkpoint_id": str(global_step),
-            "checkpoint_path": str(preload_path),
-            "checkpoint_dir": str(self.preload_ckpt_dir),
-            "checkpoint_dir_relative": PRELOAD_RELATIVE_DIR,
-            "global_step": int(global_step),
-            "episode_cnt": int(self.episode_cnt),
-            "clean_score": round(float(clean_score), 4),
-            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        self._write_json_atomic(self.preload_latest_meta_path, payload)
-        self._prune_preload_snapshots()
-
-    def _save_resume_artifacts(self, trigger, clean_score, with_named_snapshot=False):
-        if not self._is_primary_resume_writer:
-            return
-        state_dict = self._snapshot_state_dict()
-        current_global_step = self._current_train_global_step()
-        self._write_state_dict(self.latest_model_path, state_dict)
-        curriculum_snapshot = self._capture_curriculum_resume_snapshot()
-
-        meta = {
-            "trigger": trigger,
-            "episode_cnt": self.episode_cnt,
-            "global_step": int(current_global_step),
-            "clean_score": round(float(clean_score), 4),
-            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "pid": os.getpid(),
-            "run_session_id": self.run_session_id,
-            "helper_session_id": self.helper_session_id,
-            "resume_state_metadata_path": str(self.resume_latest_state_path),
-            "curriculum_state_snapshot_path": str(self.resume_curriculum_snapshot_path),
-        }
-        self._write_state_dict(self.resume_latest_path, state_dict)
-        self._write_json_atomic(self.resume_curriculum_snapshot_path, curriculum_snapshot)
-        self._write_resume_meta(meta)
-        self._write_json_atomic(
-            self.resume_latest_state_path,
-            self._resume_state_payload(trigger, clean_score),
-        )
-        self._save_preload_artifact(state_dict, clean_score)
-        self.archive.log_event(
-            "resume_checkpoint_refreshed",
-            {
-                "trigger": trigger,
-                "episode_cnt": self.episode_cnt,
-                "clean_score": round(float(clean_score), 4),
-                "path": str(self.resume_latest_path),
-            },
-        )
-
-        if with_named_snapshot:
-            if trigger == "best":
-                snapshot_name = f"best-ep{self.episode_cnt:06d}-score{int(round(clean_score)):05d}.pkl"
-                snapshot_path = self.session_dir / snapshot_name
-                self._write_state_dict(snapshot_path, state_dict)
-                self.archive.log_event(
-                    "resume_snapshot_saved",
-                    {
-                        "trigger": trigger,
-                        "episode_cnt": self.episode_cnt,
-                        "clean_score": round(float(clean_score), 4),
-                        "path": str(snapshot_path),
-                    },
-                )
-                self.logger.info(
-                    f"[SNAPSHOT] trigger={trigger} ep={self.episode_cnt} "
-                    f"score={clean_score:.1f} path={snapshot_path}"
-                )
-                return
-            if trigger == "episode":
-                snapshot_name = f"resume-episode-ep{self.episode_cnt:06d}.pkl"
-                keep_count = self.keep_episode_snapshots
-                prune_prefix = "resume-episode"
-            elif trigger == "step":
-                snapshot_name = f"resume-step-step{int(current_global_step):07d}.pkl"
-                keep_count = self.keep_step_snapshots
-                prune_prefix = "resume-step"
-            else:
-                snapshot_name = f"resume-time-{time.strftime('%Y%m%d-%H%M%S')}.pkl"
-                keep_count = self.keep_time_snapshots
-                prune_prefix = "resume-time"
-            snapshot_path = self.resume_snapshot_dir / snapshot_name
-            self._write_state_dict(snapshot_path, state_dict)
-            snapshot_curriculum_path = snapshot_path.with_suffix(".curriculum.json")
-            snapshot_state_path = snapshot_path.with_suffix(".state.json")
-            self._write_json_atomic(snapshot_curriculum_path, curriculum_snapshot)
-            self._write_json_atomic(
-                snapshot_state_path,
-                self._resume_state_payload(
-                    trigger,
-                    clean_score,
-                    checkpoint_path=snapshot_path,
-                    curriculum_snapshot_path=snapshot_curriculum_path,
-                ),
-            )
-            self._prune_snapshots(prune_prefix, keep_count)
-            self.archive.log_event(
-                "resume_snapshot_saved",
-                {
-                    "trigger": trigger,
-                    "episode_cnt": self.episode_cnt,
-                    "clean_score": round(float(clean_score), 4),
-                    "path": str(snapshot_path),
-                },
-            )
-            self.logger.info(
-                f"[SNAPSHOT] trigger={trigger} ep={self.episode_cnt} "
-                f"score={clean_score:.1f} path={snapshot_path}"
-            )
-
-    def _save_manual_bundle(self, checkpoint_path, trigger, clean_score):
-        source_checkpoint = Path(checkpoint_path) if checkpoint_path else self.resume_latest_path
-        if not source_checkpoint.exists():
-            return
-        save_name = (
-            f"manual-ep{self.episode_cnt:06d}-step{int(self._current_train_global_step()):07d}"
-        )
-        bundle_dir = self.state_layout.manual_saves_dir / save_name
-        bundle_dir.mkdir(parents=True, exist_ok=True)
-
-        bundle_checkpoint = bundle_dir / RESUME_CHECKPOINT_FILE
-        shutil.copy2(source_checkpoint, bundle_checkpoint)
-
-        curriculum_snapshot = self._capture_curriculum_resume_snapshot()
-        self._write_json_atomic(bundle_dir / RESUME_CURRICULUM_SNAPSHOT_FILE, curriculum_snapshot)
-
-        resume_state_payload = self._resume_state_payload(
-            trigger,
-            clean_score,
-            checkpoint_path=bundle_checkpoint,
-            curriculum_snapshot_path=bundle_dir / RESUME_CURRICULUM_SNAPSHOT_FILE,
-        )
-        self._write_json_atomic(bundle_dir / RESUME_STATE_FILE, resume_state_payload)
-        self._write_json_atomic(
-            bundle_dir / RESUME_META_FILE,
-            {
-                "trigger": trigger,
-                "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "checkpoint_path": str(bundle_checkpoint),
-                "run_session_id": self.run_session_id,
-                "helper_session_id": self.helper_session_id,
-                "clean_score": round(float(clean_score), 4),
-                "global_step": int(self._current_train_global_step()),
-                "episode_cnt": int(self.episode_cnt),
-                "resume_state_metadata_path": str(bundle_dir / RESUME_STATE_FILE),
-                "curriculum_state_snapshot_path": str(bundle_dir / RESUME_CURRICULUM_SNAPSHOT_FILE),
-            },
-        )
-        self._write_json_atomic(
-            bundle_dir / RUN_SESSION_MANIFEST_FILE,
-            {
-                "run_session_id": self.run_session_id,
-                "helper_session_id": self.helper_session_id,
-                "source_id": self.signal_source_id,
-                "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            },
-        )
-        self._write_json_atomic(
-            bundle_dir / MANUAL_SAVE_MANIFEST_FILE,
-            {
-                "save_name": save_name,
-                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "source_run_session_id": self.run_session_id,
-                "global_step": int(self._current_train_global_step()),
-                "episode_cnt": int(self.episode_cnt),
-                "training_start_mode": self.training_start_mode,
-                "resume_compatible": True,
-                "files": {
-                    "checkpoint": RESUME_CHECKPOINT_FILE,
-                    "resume_meta": RESUME_META_FILE,
-                    "resume_state": RESUME_STATE_FILE,
-                    "curriculum_snapshot": RESUME_CURRICULUM_SNAPSHOT_FILE,
-                    "run_session": RUN_SESSION_MANIFEST_FILE,
-                },
-            },
-        )
-        self._write_json_atomic(
-            self.state_layout.manual_saves_latest_index_path,
-            {
-                "save_name": save_name,
-                "bundle_dir": str(bundle_dir),
-                "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "source_run_session_id": self.run_session_id,
-            },
-        )
-        self.archive.log_event(
-            "manual_resume_bundle_saved",
-            {
-                "save_name": save_name,
-                "bundle_dir": str(bundle_dir),
-                "checkpoint_path": str(bundle_checkpoint),
-            },
-        )
-
-    def _maybe_save_progress_snapshots(self):
-        if self.episode_cnt - self.last_latest_sync_episode >= self.latest_sync_interval:
-            self._save_resume_artifacts("latest", self.last_clean_score, with_named_snapshot=False)
-            self.last_latest_sync_episode = self.episode_cnt
-
-        if self.episode_cnt - self.last_episode_snapshot_episode >= self.resume_episode_interval:
-            self._save_resume_artifacts("episode", self.last_clean_score, with_named_snapshot=True)
-            self.last_episode_snapshot_episode = self.episode_cnt
-
-        current_global_step = self._current_train_global_step()
-        if (
-            current_global_step > 0
-            and current_global_step - self.last_step_snapshot_global_step >= self.resume_step_interval
-        ):
-            self._save_resume_artifacts("step", self.last_clean_score, with_named_snapshot=True)
-            self.last_step_snapshot_global_step = current_global_step
-
-        now = time.time()
-        if now - self.last_time_snapshot_at >= self.time_save_interval_seconds:
-            self._save_resume_artifacts("time", self.last_clean_score, with_named_snapshot=True)
-            self.last_time_snapshot_at = now
-
-    def _window_metrics(self, episodes=None):
-        """Compute rolling-window metrics from episode_history."""
-        buf = list(episodes or self.episode_history)
-        n = len(buf)
-        if n == 0:
-            return {}
-        wins = [ep for ep in buf if ep["result"] == "completed"]
-        charged = [ep for ep in buf if ep.get("clean_per_charge_when_charged") is not None]
-        battery_fails = [ep for ep in buf if ep["result"] == "battery"]
-        w = len(wins)
-        reward_component_means = {
-            f"avg_reward_{key}": sum(ep.get(f"avg_reward_{key}", 0.0) for ep in buf) / n
-            for key in REWARD_COMPONENT_MONITOR_KEYS
-        }
-        contribution_metrics = compute_reward_contribution_payload(
-            {key: reward_component_means[f"avg_reward_{key}"] for key in REWARD_COMPONENT_MONITOR_KEYS}
-        )
-        payload = {
-            "_count": n,
-            "win_rate": w / n,
-            "avg_clean_score": sum(ep["clean_score"] for ep in buf) / n,
-            "avg_finished_steps": sum(ep["finished_steps"] for ep in buf) / n,
-            "avg_charge_count": sum(ep["charge_count"] for ep in buf) / n,
-            "avg_remaining_charge": sum(ep["remaining_charge"] for ep in buf) / n,
-            "avg_invalid_move_rate": sum(ep["invalid_move_rate"] for ep in buf) / n,
-            "avg_charge_efficiency": sum(ep["charge_efficiency"] for ep in buf) / n,
-            "avg_clean_per_charge_when_charged": (
-                sum(float(ep["clean_per_charge_when_charged"]) for ep in charged) / len(charged)
-            ) if charged else 0.0,
-            "avg_clean_per_step": sum(ep["clean_per_step"] for ep in buf) / n,
-            "avg_mix_alpha": sum(ep.get("avg_mix_alpha", 0.0) for ep in buf) / n,
-            "final_mix_alpha_mean": sum(ep.get("final_mix_alpha", 0.0) for ep in buf) / n,
-            "residual_alpha_next_mean": sum(ep.get("residual_alpha_next", 0.0) for ep in buf) / n,
-            "avg_charger_arrived_count": sum(ep.get("charger_arrived_count", 0.0) for ep in buf) / n,
-            "avg_arrival_confirmed_count": sum(ep.get("arrival_confirmed_count", 0.0) for ep in buf) / n,
-            "avg_arrival_canceled_count": sum(ep.get("arrival_canceled_count", 0.0) for ep in buf) / n,
-            "avg_arrival_retro_canceled_count": sum(ep.get("arrival_retro_canceled_count", 0.0) for ep in buf) / n,
-            "avg_go23_terminal_adjust": sum(ep.get("go23_terminal_adjust", 0.0) for ep in buf) / n,
-            "charge_fail_after_arrival_rate": sum(ep.get("charge_fail_after_arrival", 0.0) for ep in buf) / n,
-            "avg_expert_weight": sum(ep["expert_weight"] for ep in buf) / n,
-            "expert_weight_nonzero_rate": sum(ep.get("expert_weight_nonzero_rate", 0.0) for ep in buf) / n,
-            "pre_return_bias_active_rate": sum(ep.get("pre_return_bias_active_rate", 0.0) for ep in buf) / n,
-            "return_bias_active_rate": sum(ep.get("return_bias_active_rate", 0.0) for ep in buf) / n,
-            "return_action_teacher_mask_mean": sum(
-                ep.get("return_action_teacher_mask_mean", 0.0) for ep in buf
-            ) / n,
-            "return_action_teacher_mask_nonzero_rate": sum(
-                ep.get("return_action_teacher_mask_nonzero_rate", 0.0) for ep in buf
-            ) / n,
-            "route_phase_action_teacher_mask_mean": sum(
-                ep.get("route_phase_action_teacher_mask_mean", 0.0) for ep in buf
-            ) / n,
-            "route_phase_action_teacher_mask_nonzero_rate": sum(
-                ep.get("route_phase_action_teacher_mask_nonzero_rate", 0.0) for ep in buf
-            ) / n,
-            **{
-                key: sum(ep.get(key, 0.0) for ep in buf)
-                for key in (*TEACHER_LABEL_QUALITY_COUNT_KEYS, *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS)
-            },
-            **{
-                key: sum(ep.get(key, 0.0) for ep in buf) / n
-                for key in TEACHER_LABEL_QUALITY_METRIC_KEYS
-                if key not in {*TEACHER_LABEL_QUALITY_COUNT_KEYS, *POLICY_TEACHER_DIVERGENCE_DIAGNOSTIC_COUNT_KEYS}
-            },
-            "late_return_rate": sum(ep.get("late_return_rate", 0.0) for ep in buf) / n,
-            "late_contract_rate": sum(ep.get("late_contract_rate", 0.0) for ep in buf) / n,
-            "anchor_switch_rate": sum(ep.get("anchor_switch_rate", 0.0) for ep in buf) / n,
-            "target_switch_rate": sum(ep.get("target_switch_rate", 0.0) for ep in buf) / n,
-            "diag_rate_all": sum(ep.get("diag_rate_all", 0.0) for ep in buf) / n,
-            "diag_rate_contract": sum(ep.get("diag_rate_contract", 0.0) for ep in buf) / n,
-            "diag_rate_return": sum(ep.get("diag_rate_return", 0.0) for ep in buf) / n,
-            "return_progress_per_step": sum(ep.get("return_progress_per_step", 0.0) for ep in buf) / n,
-            "return_efficiency_ratio": sum(ep.get("return_efficiency_ratio", 0.0) for ep in buf) / n,
-            "return_stall_rate": sum(ep.get("return_stall_rate", 0.0) for ep in buf) / n,
-            "route_phase_return_stall_rate": sum(
-                ep.get("route_phase_return_stall_rate", 0.0) for ep in buf
-            ) / n,
-            "recoverability_score_avg": sum(ep.get("recoverability_score_avg", 0.0) for ep in buf) / n,
-            "recoverability_violation_rate": sum(ep.get("recoverability_violation_rate", 0.0) for ep in buf) / n,
-            "wall_hugging_clean_floor_rate": sum(ep.get("wall_hugging_clean_floor_rate", 0.0) for ep in buf) / n,
-            "stale_boundary_follow_rate": sum(ep.get("stale_boundary_follow_rate", 0.0) for ep in buf) / n,
-            "narrow_unknown_commit_rate": sum(ep.get("narrow_unknown_commit_rate", 0.0) for ep in buf) / n,
-            "missed_charge_opportunity_rate": sum(ep.get("missed_charge_opportunity_rate", 0.0) for ep in buf) / n,
-            "charger_nearby_not_charged_rate": sum(ep.get("charger_nearby_not_charged_rate", 0.0) for ep in buf) / n,
-            "suboptimal_target_hold_rate": sum(ep.get("suboptimal_target_hold_rate", 0.0) for ep in buf) / n,
-            "planner_policy_divergence_rate": sum(ep.get("planner_policy_divergence_rate", 0.0) for ep in buf) / n,
-            "route_phase_planner_divergence_rate": sum(
-                ep.get("route_phase_planner_divergence_rate", 0.0) for ep in buf
-            ) / n,
-            "reliable_planner_divergence_rate": sum(
-                ep.get("reliable_planner_divergence_rate", 0.0) for ep in buf
-            ) / n,
-            "avg_path_cross_count_50": sum(ep.get("avg_path_cross_count_50", 0.0) for ep in buf) / n,
-            "avg_coverage_efficiency_20": sum(ep.get("avg_coverage_efficiency_20", 0.0) for ep in buf) / n,
-            "avg_all_charger_known_path_count": sum(ep.get("avg_all_charger_known_path_count", 0.0) for ep in buf) / n,
-            "avg_unknown_on_target_path_ratio": sum(ep.get("avg_unknown_on_target_path_ratio", 0.0) for ep in buf) / n,
-            "avg_planner_topk_reachable_count": sum(ep.get("avg_planner_topk_reachable_count", 0.0) for ep in buf) / n,
-            "avg_planner_known_route_count_total": sum(ep.get("avg_planner_known_route_count_total", 0.0) for ep in buf) / n,
-            "avg_planner_best_target_route_diversity": sum(ep.get("avg_planner_best_target_route_diversity", 0.0) for ep in buf) / n,
-            "avg_planner_best_target_tangle_cost": sum(ep.get("avg_planner_best_target_tangle_cost", 0.0) for ep in buf) / n,
-            "avg_planner_best_target_edge_break_cost": sum(ep.get("avg_planner_best_target_edge_break_cost", 0.0) for ep in buf) / n,
-            "avg_planner_best_target_region_fragment_cost": sum(ep.get("avg_planner_best_target_region_fragment_cost", 0.0) for ep in buf) / n,
-            "avg_planner_multi_route_recoverability": sum(ep.get("avg_planner_multi_route_recoverability", 0.0) for ep in buf) / n,
-            "battery_process_cost_mean": sum(ep.get("battery_process_cost_mean", 0.0) for ep in buf) / n,
-            "collision_process_cost_mean": sum(ep.get("collision_process_cost_mean", 0.0) for ep in buf) / n,
-            "high_need_return_stall_rate": sum(ep.get("high_need_return_stall_rate", 0.0) for ep in buf) / n,
-            "avg_charge_need_score": sum(ep.get("avg_charge_need_score", 0.0) for ep in buf) / n,
-            "avg_route_phase_shadow_risk": sum(ep.get("avg_route_phase_shadow_risk", 0.0) for ep in buf) / n,
-            "avg_route_phase_reward_ready_rate": sum(ep.get("avg_route_phase_reward_ready_rate", 0.0) for ep in buf) / n,
-            "sampled_profile_anchor_count": sum(ep.get("sampled_profile_anchor_count", 0.0) for ep in buf),
-            "sampled_profile_mild_count": sum(ep.get("sampled_profile_mild_count", 0.0) for ep in buf),
-            "sampled_profile_broad_count": sum(ep.get("sampled_profile_broad_count", 0.0) for ep in buf),
-            "sampled_profile_anchor_rate": sum(ep.get("sampled_profile_anchor_count", 0.0) for ep in buf) / n,
-            "sampled_profile_mild_rate": sum(ep.get("sampled_profile_mild_count", 0.0) for ep in buf) / n,
-            "sampled_profile_broad_rate": sum(ep.get("sampled_profile_broad_count", 0.0) for ep in buf) / n,
-            "avg_slack_confidence": sum(ep.get("avg_slack_confidence", 0.0) for ep in buf) / n,
-            "clean_floor_revisit_rate": sum(ep.get("clean_floor_revisit_rate", 0.0) for ep in buf) / n,
-            "clean_floor_revisit_penalty_mean": sum(ep.get("clean_floor_revisit_penalty_mean", 0.0) for ep in buf) / n,
-            "effective_coverage_bonus_mean": sum(ep.get("effective_coverage_bonus_mean", 0.0) for ep in buf) / n,
-            "battery_fail_severity_mean": sum(ep.get("battery_fail_severity", 0.0) for ep in buf) / n,
-            "mode_usage_depart": sum(ep.get("mode_usage_depart", 0.0) for ep in buf) / n,
-            "mode_usage_expand": sum(ep.get("mode_usage_expand", 0.0) for ep in buf) / n,
-            "mode_usage_harvest": sum(ep.get("mode_usage_harvest", 0.0) for ep in buf) / n,
-            "mode_usage_contract": sum(ep.get("mode_usage_contract", 0.0) for ep in buf) / n,
-            "mode_usage_return": sum(ep.get("mode_usage_return", 0.0) for ep in buf) / n,
-            "mode_usage_evade": sum(ep.get("mode_usage_evade", 0.0) for ep in buf) / n,
-            **reward_component_means,
-            "battery_fail_rate": sum(1 for ep in buf if ep["result"] == "battery") / n,
-            "battery_fail_count": float(len(battery_fails)),
-            "collision_fail_rate": sum(1 for ep in buf if ep["result"] == "collision") / n,
-            "battery_positive_reward_count": sum(
-                1
-                for ep in battery_fails
-                if float(ep.get("total_reward", 0.0) or 0.0) > 0.0
-            ),
-            "battery_positive_reward_rate": (
-                sum(
-                    1
-                    for ep in battery_fails
-                    if float(ep.get("total_reward", 0.0) or 0.0) > 0.0
-                ) / len(battery_fails)
-            ) if battery_fails else 0.0,
-            "zero_charge_battery_fail_rate": (
-                sum(
-                    1
-                    for ep in buf
-                    if ep["result"] == "battery" and float(ep.get("charge_count", 0.0) or 0.0) <= 0.0
-                ) / n
-            ),
-            "zero_charge_among_battery_fail_rate": (
-                sum(1 for ep in battery_fails if float(ep.get("charge_count", 0.0) or 0.0) <= 0.0) / len(battery_fails)
-            ) if battery_fails else 0.0,
-            "cps_win": (sum(ep["clean_per_step"] for ep in wins) / w) if w else 0.0,
-            "avg_charge_count_win": (sum(ep["charge_count"] for ep in wins) / w) if w else 0.0,
-            "avg_clean_score_win": (sum(ep["clean_score"] for ep in wins) / w) if w else 0.0,
-            "avg_charge_count_completed": (sum(ep["charge_count"] for ep in wins) / w) if w else 0.0,
-            "avg_charge_count_battery_fail": (
-                sum(ep["charge_count"] for ep in battery_fails) / len(battery_fails)
-            ) if battery_fails else 0.0,
-            "anchor_win_rate": self._profile_win_rate(buf, "anchor"),
-            "mild_win_rate": self._profile_win_rate(buf, "mild"),
-            "broad_win_rate": self._profile_win_rate(buf, ["broad", "broad_eval"]),
-        }
-        payload.update(contribution_metrics)
-        _apply_teacher_label_quality_count_rates(payload)
-        return payload
-
-    @staticmethod
-    def _profile_win_rate(buf, profiles):
-        if isinstance(profiles, str):
-            profiles = [profiles]
-        subset = [ep for ep in buf if ep["profile"] in profiles]
-        if not subset:
-            return -1.0
-        return sum(1 for ep in subset if ep["result"] == "completed") / len(subset)
-
-    def _curriculum_progress_payload(self):
-        """Compute curriculum stage and progress towards advancement."""
-        state = self.curriculum_store.read_state()
-        stage = state.get("stage", "warmup")
-        progress = float(state.get("curriculum_progress", 0.0))
-        payload = {
-            "curriculum_stage_idx": STAGE_INDEX.get(stage, 0),
-            "curriculum_progress": round(min(progress, 1.0), 4),
-            "curriculum_start_tier": STAGE_INDEX.get(state.get("initial_stage", stage), 0),
-            "curriculum_lite_benchmark_used": 1.0 if state.get("lite_benchmark_used") else 0.0,
-            "curriculum_observation_phase_active": 1.0 if state.get("observation_phase_active") else 0.0,
-            "curriculum_stagnation_level": float(state.get("curriculum_stagnation_level", 0.0) or 0.0),
-            "curriculum_profile_anchor_weight": round(float((state.get("curriculum_profile_weights") or {}).get("anchor", 0.0)), 4),
-            "curriculum_profile_mild_weight": round(float((state.get("curriculum_profile_weights") or {}).get("mild", 0.0)), 4),
-            "curriculum_profile_broad_weight": round(float((state.get("curriculum_profile_weights") or {}).get("broad", 0.0)), 4),
-            "curriculum_profile_broad_eval_weight": round(float((state.get("curriculum_profile_weights") or {}).get("broad_eval", 0.0)), 4),
-        }
-        payload.update(
-            {
-                key: round(value, 4)
-                for key, value in curriculum_gate_ratios(
-                    stage=stage,
-                    metrics=state.get("last_global_metrics") or state.get("last_bootstrap_metrics"),
-                    learning_metrics=state.get("last_learning_metrics"),
-                    global_step_since_resume=int(state.get("global_step_since_resume", 0)),
-                    entered_global_step=int(state.get("entered_global_step", 0)),
-                ).items()
-            }
-        )
-        return payload
-
-    def _get_curriculum_metrics(self):
-        return self._window_metrics(list(self.episode_history)[-Config.CURRICULUM_WINDOW:]) if len(self.episode_history) >= Config.CURRICULUM_WINDOW else None
-
-    def _get_bootstrap_curriculum_metrics(self):
-        min_count = min(10, len(self.episode_history))
-        if min_count < 10:
-            return None
-        return self._window_metrics(list(self.episode_history)[-min_count:])
-
-    def _get_curriculum_context(self):
-        return {
-            "window_metrics": self._get_curriculum_metrics(),
-            "bootstrap_metrics": self._get_bootstrap_curriculum_metrics(),
-            "learning_metrics": deepcopy(self.latest_learning_metrics),
-            "global_step_since_resume": self._global_step_since_resume(),
-            "resume_fast_track": self.resume_fast_track,
-        }
-
-    def _emit_curriculum_signal(self):
-        payload = {
-            "window_metrics": self._get_curriculum_metrics() or {},
-            "bootstrap_metrics": self._get_bootstrap_curriculum_metrics() or {},
-            "learning_metrics": deepcopy(self.latest_learning_metrics),
-            "runtime": self._runtime_progress_payload(),
-            "session_id": self.run_session_id,
-            "helper_session_id": self.helper_session_id,
-            "episode_cnt_local": self.episode_cnt,
-            "recent_episode_metrics": deepcopy(list(self.episode_history)[-Config.CURRICULUM_WINDOW:]),
-        }
-        self.curriculum_store.write_signal(self.signal_source_id, payload)
-        return self.curriculum_store.refresh_state()
-
-    def _global_step_since_resume(self):
-        current = self._current_train_global_step()
-        if (
-            self.resume_restored_checkpoint_global_step is not None
-            and self.resume_global_step_offset > 0
-            and int(current) < int(self.resume_restored_checkpoint_global_step)
-        ):
-            return max(int(self.resume_global_step_offset) + int(current), 0)
-        if self.resume_global_step_base is None:
-            self.resume_global_step_base = int(current)
-        return max(int(current) - int(self.resume_global_step_base), 0)
-
-    def _latest_learner_log_metrics(self):
-        log_dir = Path(__file__).resolve().parents[3] / "train" / "log" / "learner"
-        if not log_dir.exists():
-            return {}
-        candidates = sorted(log_dir.glob("learner_train_pid*_log_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not candidates:
-            return {}
-        try:
-            lines = candidates[0].read_text(encoding="utf-8", errors="ignore").splitlines()[-400:]
-        except OSError:
-            return {}
-
-        found = {}
-        for line in reversed(lines):
-            for key, pattern in _LEARNER_LOG_FLOAT_PATTERNS.items():
-                if key in found:
-                    continue
-                match = pattern.search(line)
-                if match:
-                    try:
-                        found[key] = float(match.group(1))
-                    except (TypeError, ValueError):
-                        continue
-            if len(found) == len(_LEARNER_LOG_FLOAT_PATTERNS):
-                break
-        return found
-
-    def _refresh_learning_metrics(self, training_metrics):
-        learner_log_fallback = self._latest_learner_log_metrics()
-        previous = self.latest_learning_metrics if isinstance(self.latest_learning_metrics, dict) else {}
-
-        def _prefer_metric(primary, fallback_key):
-            if primary is not None:
-                return primary
-            if fallback_key in learner_log_fallback:
-                return learner_log_fallback[fallback_key]
-            return previous.get(fallback_key)
-
-        snapshot = {
-            "global_step": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "global_step")
-                if _extract_numeric_metric(training_metrics, "learner", "global_step") is not None
-                else _extract_numeric_metric(training_metrics, "basic", "train_global_step", default=0.0),
-                "global_step",
-            ),
-            "entropy_loss": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "entropy_loss")
-                if _extract_numeric_metric(training_metrics, "learner", "entropy_loss") is not None
-                else _extract_numeric_metric(training_metrics, "algorithm", "entropy_loss"),
-                "entropy_loss",
-            ),
-            "value_clean_loss": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "value_clean_loss"),
-                "value_clean_loss",
-            ),
-            "value_survive_loss": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "value_survive_loss"),
-                "value_survive_loss",
-            ),
-            "mode_teacher_active_rate": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "mode_teacher_active_rate"),
-                "mode_teacher_active_rate",
-            ),
-            "route_anchor_teacher_active_rate": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "route_anchor_teacher_active_rate"),
-                "route_anchor_teacher_active_rate",
-            ),
-            "target_teacher_active_rate": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "target_teacher_active_rate"),
-                "target_teacher_active_rate",
-            ),
-            "return_action_teacher_active_rate": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "return_action_teacher_active_rate"),
-                "return_action_teacher_active_rate",
-            ),
-            "route_phase_action_teacher_active_rate": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "route_phase_action_teacher_active_rate"),
-                "route_phase_action_teacher_active_rate",
-            ),
-            "mode_teacher_loss": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "mode_teacher_loss"),
-                "mode_teacher_loss",
-            ),
-            "route_anchor_teacher_loss": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "route_anchor_teacher_loss"),
-                "route_anchor_teacher_loss",
-            ),
-            "target_teacher_loss": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "target_teacher_loss"),
-                "target_teacher_loss",
-            ),
-            "return_action_teacher_loss": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "return_action_teacher_loss"),
-                "return_action_teacher_loss",
-            ),
-            "route_phase_policy_teacher_loss": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "learner", "route_phase_policy_teacher_loss"),
-                "route_phase_policy_teacher_loss",
-            ),
-            "env_total_score": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "env", "total_score"),
-                "env_total_score",
-            ),
-            "lambda_battery": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "algorithm", "lambda_battery"),
-                "lambda_battery",
-            ),
-            "lambda_collision": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "algorithm", "lambda_collision"),
-                "lambda_collision",
-            ),
-            "battery_process_cost_mean": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "algorithm", "battery_process_cost_mean"),
-                "battery_process_cost_mean",
-            ),
-            "collision_process_cost_mean": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "algorithm", "collision_process_cost_mean"),
-                "collision_process_cost_mean",
-            ),
-            "nan_batch_count": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "algorithm", "nan_batch_count"),
-                "nan_batch_count",
-            ),
-            "nan_skip_rate": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "algorithm", "nan_skip_rate"),
-                "nan_skip_rate",
-            ),
-            "last_finite_step": _prefer_metric(
-                _extract_numeric_metric(training_metrics, "algorithm", "last_finite_step"),
-                "last_finite_step",
-            ),
-        }
-        self.latest_training_metrics = deepcopy(training_metrics)
-        self.learning_metric_history.append(snapshot)
-
-        prev_clean = _history_average(self.learning_metric_history, "value_clean_loss", exclude_latest=True)
-        prev_survive = _history_average(self.learning_metric_history, "value_survive_loss", exclude_latest=True)
-        prev_entropy = _history_average(self.learning_metric_history, "entropy_loss", exclude_latest=True)
-        prev_env = _history_average(self.learning_metric_history, "env_total_score", exclude_latest=True)
-
-        self.latest_learning_metrics = {
-            **snapshot,
-            "value_clean_loss_trend_ratio": _ratio(snapshot.get("value_clean_loss"), prev_clean),
-            "value_survive_loss_trend_ratio": _ratio(snapshot.get("value_survive_loss"), prev_survive),
-            "entropy_trend_ratio": _ratio(snapshot.get("entropy_loss"), prev_entropy),
-            "env_total_score_trend_ratio": _ratio(snapshot.get("env_total_score"), prev_env),
-        }
+                self._safe_warn(f"[RESIDUAL] guided_predict fallback to predict due to error: {exc}")
+        return self.agent.predict([obs_data])[0]
 
     def run_episodes(self):
         while True:
             now = time.time()
-            if now - self.last_get_training_metrics_time >= 60:
-                training_metrics = get_training_metrics()
-                self.last_get_training_metrics_time = now
-                if training_metrics is not None and training_metrics is not False:
-                    self._refresh_learning_metrics(training_metrics)
-                    self.logger.info(f"training_metrics: {training_metrics}")
-                    window_payload = {
-                        "record_type": "workflow_window",
-                        "episode_cnt": self.episode_cnt,
-                        "rolling_episode_total": len(self.episode_history),
-                    }
-                    for group_name, group_metrics in training_metrics.items():
-                        if not isinstance(group_metrics, dict):
-                            continue
-                        for key, value in group_metrics.items():
-                            window_payload[f"{group_name}_{key}"] = value
-                    self.archive.log_train_window(window_payload)
-                    if now - self.last_perf_stat_time >= _env_int(
-                        "KAIWU_PERF_STAT_WINDOW_SECONDS", Config.PERF_STAT_WINDOW_SECONDS
-                    ):
-                        window_payload.update(self.perf_window.flush("episode"))
-                        runtime_metrics = self.agent.get_runtime_metrics() if hasattr(self.agent, "get_runtime_metrics") else {}
-                        for key, value in runtime_metrics.items():
-                            window_payload[f"agent_{key}"] = value
-                        self.last_perf_stat_time = now
+            if now - self.last_training_metrics_time >= 60:
+                metrics = get_training_metrics()
+                self.last_training_metrics_time = now
+                if metrics:
+                    self._safe_log(
+                        f"[Agent{self.agent_id}] training_metrics: framework={metrics}, "
+                        f"local={{'episode_cnt': {self.episode_cnt}, 'predict_cnt': {self.local_predict_cnt}, "
+                        f"'frame_cnt': {self.local_frame_cnt}, 'yield_cnt': {self.local_yield_cnt}}}"
+                    )
 
-            curriculum_state = self.curriculum_store.refresh_state()
-            sampled_usr_conf, sampled_meta = self.config_sampler.sample(
-                curriculum_state
-            )
-            sampled_env_conf = deepcopy(sampled_meta["env_conf"])
-            env_obs = self._with_runtime_progress(self.env.reset(sampled_usr_conf))
+            env_obs = self.env.reset(self.usr_conf)
             if handle_disaster_recovery(env_obs, self.logger):
-                self.archive.log_event(
-                    "disaster_recovery",
-                    {
-                        "stage": "env_reset",
-                        "train_stage": sampled_meta["stage"],
-                        "train_profile": sampled_meta["profile"],
-                        "sampled_env_conf": sampled_env_conf,
-                    },
-                )
                 continue
 
             self.agent.reset(env_obs)
-            if hasattr(self.agent, "set_episode_config"):
-                self.agent.set_episode_config(
-                    max_step=sampled_env_conf.get("max_step"),
-                    charger_count=sampled_env_conf.get("charger_count"),
-                    battery_max=sampled_env_conf.get("battery_max"),
-                )
-            elif hasattr(getattr(self.agent, "preprocessor", None), "set_episode_config"):
-                self.agent.preprocessor.set_episode_config(
-                    max_step=sampled_env_conf.get("max_step"),
-                    robot_count=sampled_env_conf.get("robot_count"),
-                    charger_count=sampled_env_conf.get("charger_count"),
-                    battery_max=sampled_env_conf.get("battery_max"),
-                )
-
-            last_stage_transition_global_step = int(curriculum_state.get("last_stage_transition_global_step", 0) or 0)
-            stage_transition_cooldown_active = (
-                last_stage_transition_global_step > 0
-                and int(curriculum_state.get("global_step_since_resume", 0) or 0) - last_stage_transition_global_step
-                < int(Config.CURRICULUM_STAGE_TRANSITION_COOLDOWN_STEPS)
+            self.planner.reset()
+            env_conf = self._env_conf()
+            episode_max_step = int(env_conf.get("max_step", 1000))
+            episode_robot_count = int(env_conf.get("robot_count", 4))
+            episode_charger_count = int(env_conf.get("charger_count", 4))
+            episode_battery_max = int(env_conf.get("battery_max", 200))
+            self.agent.set_episode_config(
+                max_step=episode_max_step,
+                robot_count=episode_robot_count,
+                charger_count=episode_charger_count,
+                battery_max=episode_battery_max,
             )
-            if hasattr(self.agent, "set_load_model_context"):
-                self.agent.set_load_model_context(
-                    transition_guard=bool(curriculum_state.get("in_transition_guard")),
-                    stage_transition_cooldown=stage_transition_cooldown_active,
-                )
-
-            load_begin = time.perf_counter()
+            self.planner.set_episode_config(
+                max_step=episode_max_step,
+                robot_count=episode_robot_count,
+                charger_count=episode_charger_count,
+                battery_max=episode_battery_max,
+            )
             self.agent.load_model(id="latest")
-            self.perf_window.add("load_model", (time.perf_counter() - load_begin) * 1000.0)
 
-            obs_begin = time.perf_counter()
-            obs_data, _ = self.agent.observation_process(env_obs)
-            self.perf_window.add("observation_process", (time.perf_counter() - obs_begin) * 1000.0)
-
-            step_records = []
             self.episode_cnt += 1
-            self.agent._predict_episode_idx = self.episode_cnt
+            step_records = []
             done = False
             step = 0
             total_reward = 0.0
+            last_mode = "explore"
+            last_alpha = self.scheduler.action_alpha(last_mode)
 
-            self.logger.info(
-                f"Episode {self.episode_cnt} start "
-                f"stage={sampled_meta['stage']} global_progress={curriculum_state.get('curriculum_progress', 0.0):.2f} "
-                f"profile={sampled_meta['profile']} obs_phase={int(sampled_meta.get('observation_phase_active', False))} "
-                f"tightened={int(sampled_meta.get('profile_tightened', False))} "
-                f"profile_seed={int(sampled_meta.get('profile_seed', 0))} "
-                f"profile_sample_index={int(sampled_meta.get('profile_sample_index', 0))} "
-                f"env={sampled_env_conf}"
+            obs_data, _ = self.agent.observation_process(env_obs)
+            self._safe_log(
+                f"[Agent{self.agent_id}] Episode {self.episode_cnt} start "
+                f"alpha={last_alpha:.3f} max_step={episode_max_step} "
+                f"robot_count={episode_robot_count} charger_count={episode_charger_count} "
+                f"battery_max={episode_battery_max}"
             )
 
             while not done:
-                policy_context = self._resolve_policy_context()
-                if hasattr(getattr(self.agent, "preprocessor", None), "set_policy_context"):
-                    self.agent.preprocessor.set_policy_context(
-                        target_mode=policy_context.target_mode,
-                        should_charge=policy_context.should_charge,
-                    )
-                self.last_residual_alpha = self.residual_scheduler.action_alpha(policy_context.target_mode)
-
-                predict_begin = time.perf_counter()
-                act_data = self._predict_with_residual_compat(
-                    obs_data,
-                    residual_alpha=self.last_residual_alpha,
-                    policy_context=policy_context,
+                policy_info = self.planner.update(env_obs, self.agent.last_action)
+                last_mode = policy_info.target_mode
+                self.agent.preprocessor.set_policy_context(
+                    target_mode=last_mode,
+                    should_charge=getattr(policy_info, "should_charge", False),
                 )
-                self.perf_window.add("predict", (time.perf_counter() - predict_begin) * 1000.0)
-                act = self.agent.action_process(act_data)
+                last_alpha = self.scheduler.action_alpha(last_mode)
 
-                env_reward, env_obs = self.env.step(act)
-                env_obs = self._with_runtime_progress(env_obs)
+                act_data = self._predict_with_residual(
+                    obs_data,
+                    residual_alpha=last_alpha,
+                    policy_info=policy_info,
+                )
+                self.local_predict_cnt += 1
+                final_act = self.agent.action_process(act_data, is_stochastic=True)
+                self.agent.last_action = final_act
+
+                env_reward, env_obs = self.env.step(final_act)
+                del env_reward
                 if handle_disaster_recovery(env_obs, self.logger):
-                    self.archive.log_event(
-                        "disaster_recovery",
-                        {
-                            "stage": "env_step",
-                            "episode_cnt": self.episode_cnt,
-                            "train_stage": sampled_meta["stage"],
-                            "train_profile": sampled_meta["profile"],
-                            "sampled_env_conf": sampled_env_conf,
-                        },
-                    )
                     break
 
                 terminated = env_obs["terminated"]
@@ -2266,1803 +262,192 @@ class EpisodeRunner:
                 step += 1
                 done = terminated or truncated
 
-                # Record death trajectory snapshot
-                fm = self.agent.preprocessor
-                self.death_trajectory_buffer.append({
-                    "step": step, "battery": fm.battery, "battery_max": fm.battery_max,
-                    "charger_slack": fm.charger_slack, "nearest_npc_dist": fm.nearest_npc_dist,
-                    "mode": fm.current_mode, "action": self.agent.last_action,
-                })
-                if len(self.death_trajectory_buffer) > self.DEATH_TRAJ_LENGTH:
-                    self.death_trajectory_buffer.pop(0)
-
-                next_obs_begin = time.perf_counter()
                 next_obs_data, _ = self.agent.observation_process(env_obs)
-                self.perf_window.add("observation_process", (time.perf_counter() - next_obs_begin) * 1000.0)
                 next_obs_data.frame_no = frame_no
 
-                reward_payload = self._normalize_reward_payload(getattr(self.agent, "last_reward", 0.0))
-                reward_total = float(reward_payload["reward_total"])
-                total_reward += reward_total
-                planner_prob = self._as_float_vector(
-                    getattr(act_data, "planner_prob", None),
-                    getattr(act_data, "prob", np.zeros((Config.ACTION_NUM,), dtype=np.float32)),
+                reward_scalar = float(self.agent.last_reward)
+                total_reward += reward_scalar
+
+                value_arr = np.asarray(getattr(act_data, "value", np.asarray([0.0], dtype=np.float32)), dtype=np.float32).reshape(-1)
+                planner_prob = np.asarray(getattr(act_data, "planner_prob", act_data.prob), dtype=np.float32).reshape(-1)
+                mix_alpha = np.asarray(getattr(act_data, "mix_alpha", np.asarray([last_alpha], dtype=np.float32)), dtype=np.float32).reshape(-1)
+                action_mask = np.asarray(
+                    getattr(act_data, "action_mask", getattr(obs_data, "legal_action", [1.0] * Config.ACTION_NUM)),
+                    dtype=np.float32,
+                ).reshape(-1)
+
+                frame = SampleData(
+                    obs=np.asarray(obs_data.feature, dtype=np.float32),
+                    legal_action=np.asarray(action_mask, dtype=np.float32),
+                    act=np.asarray([final_act], dtype=np.int64),
+                    reward=np.asarray([reward_scalar], dtype=np.float32),
+                    done=np.asarray([float(done)], dtype=np.float32),
+                    reward_sum=np.zeros(Config.VALUE_NUM, dtype=np.float32),
+                    value=value_arr[:Config.VALUE_NUM] if value_arr.size > 0 else np.zeros(Config.VALUE_NUM, dtype=np.float32),
+                    next_value=np.zeros(Config.VALUE_NUM, dtype=np.float32),
+                    advantage=np.zeros(Config.VALUE_NUM, dtype=np.float32),
+                    prob=np.asarray(act_data.prob, dtype=np.float32).reshape(-1),
+                    planner_prob=planner_prob,
+                    mix_alpha=mix_alpha[:Config.VALUE_NUM] if mix_alpha.size > 0 else np.zeros(Config.VALUE_NUM, dtype=np.float32),
                 )
-                mix_alpha = self._as_float_vector(
-                    getattr(act_data, "mix_alpha", None),
-                    np.asarray([self.last_residual_alpha], dtype=np.float32),
-                )
-                mix_alpha_scalar = float(mix_alpha[0]) if mix_alpha.size > 0 else float(self.last_residual_alpha)
-                self.last_residual_alpha = mix_alpha_scalar
-                guidance = self.agent.preprocessor._get_guidance() if hasattr(self.agent.preprocessor, "_get_guidance") else {}
-                battery_ratio = float(getattr(self.agent.preprocessor, "battery", 0.0)) / max(
-                    float(getattr(self.agent.preprocessor, "battery_max", 1.0)), 1.0
-                )
-                wall_adjacent = int(getattr(self.agent.preprocessor, "wall_adjacent", 0))
-                dirty_adjacent = int(getattr(self.agent.preprocessor, "dirty_adjacent", 0))
-                cleaned_this_step = int(getattr(self.agent.preprocessor, "cleaned_this_step", 0))
-                local_frontier_density = float(getattr(self.agent.preprocessor, "local_frontier_density", 0.0))
-                wall_follow_streak = 0
-                for rec in reversed(step_records):
-                    if rec.get("wall_adjacent", 0) > 0:
-                        wall_follow_streak += 1
+                step_records.append(frame)
+                self.local_frame_cnt += 1
+
+                if done:
+                    final_parsed = self._parse_obs(env_obs)
+                    fm = self.agent.preprocessor
+                    cleaning_ratio = fm.dirt_cleaned / max(fm.total_dirt, 1)
+                    episode_score = float(final_parsed["total_score"])
+                    arrival_steps = sorted(fm.charger_arrival_steps.values())
+                    confirmed_arrival_steps = sorted(fm.confirmed_charger_arrival_steps.values())
+                    charger_arrived_count = len(arrival_steps)
+                    arrival_candidate_confirmed_count = int(fm.arrival_candidate_confirmed_count)
+                    arrival_confirmed_count = int(fm.arrival_confirmed_count)
+                    arrival_canceled_count = int(fm.arrival_canceled_count)
+                    arrival_retro_canceled_count = int(fm.arrival_retro_canceled_count)
+                    pending_arrival_count = len(fm.pending_arrivals)
+                    first_arrival_step = arrival_steps[0] if charger_arrived_count >= 1 else -1
+                    second_arrival_step = arrival_steps[1] if charger_arrived_count >= 2 else -1
+                    third_arrival_step = arrival_steps[2] if charger_arrived_count >= 3 else -1
+                    first_confirmed_arrival_step = confirmed_arrival_steps[0] if confirmed_arrival_steps else -1
+                    arrival_confirm_to_fail_gap = int(fm.arrival_confirm_to_fail_gap)
+                    score_ratio = episode_score / 2000.0
+                    quality_bonus = 0.0
+                    if truncated:
+                        if last_mode == "charge":
+                            quality_bonus += 0.05
+                        if charger_arrived_count >= 3:
+                            quality_bonus += 0.30
+                        elif charger_arrived_count == 2:
+                            quality_bonus += 0.12
+                        if charger_arrived_count >= 2 and second_arrival_step > 0 and second_arrival_step <= 500:
+                            quality_bonus += 0.08
+                        if charger_arrived_count == 1 and episode_score < 900:
+                            quality_bonus -= 0.18
+                        if charger_arrived_count == 1 and episode_score < 820:
+                            quality_bonus -= 0.25
+                        final_reward = 2.5 * cleaning_ratio + 1.5 * score_ratio + quality_bonus
+                        result_str = "WIN"
+                        early_termination_penalty = 0.0
                     else:
-                        break
-                if wall_adjacent > 0:
-                    wall_follow_streak += 1
-                wall_hugging_clean_floor = (
-                    wall_adjacent > 0 and wall_follow_streak >= 4 and cleaned_this_step == 0 and dirty_adjacent == 0
-                )
-                stale_boundary_follow = wall_hugging_clean_floor and local_frontier_density <= 0.05
-                local_passage_width = float(guidance.get("local_passage_width", 0.0))
-                narrow_unknown_commit = bool(self.agent.preprocessor._is_narrow_unknown_commit(guidance, battery_ratio))
-                missed_charge_opportunity = bool(self.agent.preprocessor._is_missed_charge_opportunity(guidance, battery_ratio))
-                charger_nearby_not_charged = bool(
-                    self.agent.preprocessor._is_charger_nearby_not_charged(guidance, battery_ratio)
-                )
-                suboptimal_target_hold = bool(self.agent.preprocessor._is_suboptimal_target_hold(guidance))
-                planner_suggested_action = int(guidance.get("suggested_action", -1) if guidance.get("suggested_action") is not None else -1)
-                selected_action = int(np.asarray(act_data.action).reshape(-1)[0])
-                planner_action_match = planner_suggested_action < 0 or planner_suggested_action == selected_action
-                all_charger_known_path_count = int(guidance.get("all_charger_known_path_count", 0))
-                unknown_on_target_path_ratio = float(guidance.get("unknown_path_ratio", 0.0))
-                target_selection_gap = float(guidance.get("target_gap", 0.0))
-                charge_margin_now = float(guidance.get("margin", getattr(self.agent.preprocessor, "charger_slack", 0.0)))
-                planner_topk_reachable_count = float(guidance.get("planner_topk_reachable_count", 0.0))
-                planner_known_route_count_total = float(guidance.get("planner_known_route_count_total", 0.0))
-                planner_best_target_route_diversity = float(guidance.get("planner_best_target_route_diversity", 0.0))
-                planner_best_target_tangle_cost = float(guidance.get("planner_best_target_tangle_cost", 0.0))
-                planner_best_target_edge_break_cost = float(guidance.get("planner_best_target_edge_break_cost", 0.0))
-                planner_best_target_region_fragment_cost = float(guidance.get("planner_best_target_region_fragment_cost", 0.0))
-                planner_multi_route_recoverability = float(guidance.get("planner_multi_route_recoverability", 0.0))
-                simplify_control_stack = control_stack_simplify_active()
-                readiness_flag = 0.0
-                return_now_flag = 0.0
-                if simplify_control_stack:
-                    readiness = evaluate_simplified_return_readiness(
-                        charger_slack=float(getattr(self.agent.preprocessor, "charger_slack", 0.0)),
-                        battery_ratio=float(battery_ratio),
-                        future_recoverability_score=float(getattr(self.agent.preprocessor, "future_recoverability_score", 0.0)),
-                        planner_multi_route_recoverability=float(
-                            guidance.get(
-                                "planner_multi_route_recoverability",
-                                getattr(self.agent.preprocessor, "future_recoverability_score", 0.0),
-                            )
-                        ),
-                        margin=float(guidance.get("margin", getattr(self.agent.preprocessor, "charger_slack", 0.0))),
-                        route_contract_pressure=float(getattr(self.agent.preprocessor, "route_contract_pressure", 0.0)),
-                        known_path_count=int(guidance.get("all_charger_known_path_count", 0)),
-                        total_charger=int(getattr(self.agent.preprocessor, "total_charger", 1)),
-                        planner_topk_reachable_count=int(guidance.get("planner_topk_reachable_count", 0)),
-                        unknown_ratio=float(guidance.get("unknown_path_ratio", 0.0)),
-                        return_slack_threshold=Config.RETURN_SLACK_THRESHOLD,
-                        return_battery_ratio=Config.RETURN_BATTERY_RATIO,
-                        return_recoverability_threshold=Config.RETURN_RECOVERABILITY_THRESHOLD,
-                        prepare_return_slack_threshold=Config.PREPARE_RETURN_SLACK_THRESHOLD,
-                        contract_battery_ratio=Config.CONTRACT_BATTERY_RATIO,
-                        contract_recoverability_threshold=Config.CONTRACT_RECOVERABILITY_THRESHOLD,
-                        charge_margin_low=Config.CHARGE_MARGIN_LOW,
-                        charge_margin_warn=Config.CHARGE_MARGIN_WARN,
-                        contract_route_pressure_threshold=Config.CONTRACT_ROUTE_PRESSURE_THRESHOLD,
-                        unknown_path_risk_battery_ratio=Config.UNKNOWN_PATH_RISK_BATTERY_RATIO,
-                        unknown_path_risk_threshold=Config.UNKNOWN_PATH_RISK_THRESHOLD,
+                        if charger_arrived_count >= 3:
+                            quality_bonus += 0.05
+                        elif charger_arrived_count == 2:
+                            quality_bonus += 0.02
+                        if last_mode == "charge":
+                            quality_bonus -= 0.20
+                            if step <= 250:
+                                quality_bonus -= 0.15
+                        early_termination_penalty = self._early_termination_penalty(step, episode_max_step)
+                        final_reward = -2.5 - 0.5 * max(0.0, 0.9 - cleaning_ratio) + quality_bonus + early_termination_penalty
+                        result_str = "FAIL"
+
+                    charge_fail_after_arrival = int(not truncated and arrival_confirmed_count > 0)
+                    go23_terminal_adjust = fm.finalize_episode_rewards(
+                        result_str=result_str,
+                        final_mode=last_mode,
+                        final_step=step,
+                        charge_fail_after_arrival=bool(charge_fail_after_arrival),
                     )
-                    readiness_flag = 1.0 if readiness["pre_return_ready"] else 0.0
-                    return_now_flag = 1.0 if readiness["return_now"] else 0.0
-                runtime_target = 0
-                if hasattr(self.agent.preprocessor, "_target_teacher_from_guidance"):
-                    try:
-                        runtime_target = int(self.agent.preprocessor._target_teacher_from_guidance(guidance))
-                    except Exception:
-                        runtime_target = 0
-                runtime_route_anchor = int(getattr(self.agent.preprocessor, "route_anchor_idx", 0))
-                runtime_mode = int(getattr(self.agent.preprocessor, "current_mode", -1))
+                    final_reward += go23_terminal_adjust
+                    step_records[-1].reward = step_records[-1].reward + np.asarray([final_reward], dtype=np.float32)
 
-                terminal_outcome = {
-                    "task_terminal_bonus": 0.0,
-                    "battery_terminal_cost": 0.0,
-                    "collision_terminal_cost": 0.0,
-                    "final_reward": 0.0,
-                    "task_reward_scale": 1.0,
-                    "effective_total_reward": total_reward,
-                    "fail_reason": None,
-                    "battery_fail_type": None,
-                    "battery_fail_severity": 0.0,
-                }
-                if done:
-                    terminal_outcome = self._handle_episode_end(
-                        env_obs=env_obs,
-                        terminated=terminated,
-                        truncated=truncated,
-                        step=step,
-                        total_reward=total_reward,
-                        sampled_env_conf=sampled_env_conf,
-                        sampled_meta=sampled_meta,
-                        step_records=step_records,
+                    new_alpha = self.scheduler.update(episode_score, cleaning_ratio)
+                    self._safe_log(
+                        f"[Agent{self.agent_id}][GAMEOVER] "
+                        f"ep={self.episode_cnt} steps={step} result={result_str} "
+                        f"mode={last_mode} alpha={last_alpha:.3f}->{new_alpha:.3f} "
+                        f"quality_bonus={quality_bonus:.3f} "
+                        f"early_termination_penalty={early_termination_penalty:.3f} "
+                        f"score={episode_score:.1f} reward={total_reward + final_reward:.3f} "
+                        f"dirt={fm.dirt_cleaned}/{fm.total_dirt} "
+                        f"charger_arrivals={charger_arrived_count} "
+                        f"arrival_steps=[{first_arrival_step},{second_arrival_step},{third_arrival_step}] "
+                        f"arrival_candidate_confirmed={arrival_candidate_confirmed_count} "
+                        f"arrival_confirmed={arrival_confirmed_count} "
+                        f"arrival_canceled={arrival_canceled_count} "
+                        f"arrival_retro_canceled={arrival_retro_canceled_count} "
+                        f"arrival_pending={pending_arrival_count} "
+                        f"first_confirmed_arrival_step={first_confirmed_arrival_step} "
+                        f"arrival_confirm_to_fail_gap={arrival_confirm_to_fail_gap} "
+                        f"charge_loop_frames={fm.charge_loop_frames} "
+                        f"charge_fail_after_arrival={charge_fail_after_arrival} "
+                        f"go23_terminal_adjust={go23_terminal_adjust:.3f}"
                     )
-
-                step_records.append(
-                    {
-                        "obs": np.array(obs_data.feature, dtype=np.float32),
-                        "legal_action": np.array(obs_data.legal_action, dtype=np.float32),
-                        "act": int(np.asarray(act_data.action).reshape(-1)[0]),
-                        "prob": np.array(act_data.prob, dtype=np.float32).reshape(-1),
-                        "planner_prob": planner_prob,
-                        "mix_alpha": mix_alpha,
-                        "mix_alpha_scalar": mix_alpha_scalar,
-                        "done": float(done),
-                        "reward_clean": float(reward_payload["reward_clean"]),
-                        "reward_survive": float(reward_payload["reward_survive"]),
-                        "reward_total": float(reward_payload["reward_total"]),
-                        **{
-                            f"reward_{key}": float(reward_payload.get(f"reward_{key}", 0.0))
-                            for key in REWARD_COMPONENT_KEYS
-                        },
-                        **{
-                            f"constraint_{key}": float(reward_payload.get(f"constraint_{key}", 0.0))
-                            for key in CONSTRAINT_TRACE_KEYS
-                        },
-                        "value_clean": float(self._scalar_from_any(getattr(act_data, "value_clean", None))),
-                        "value_survive": float(self._scalar_from_any(getattr(act_data, "value_survive", None))),
-                        "mode": runtime_mode,
-                        "target": runtime_target,
-                        "charger_slack": float(getattr(self.agent.preprocessor, "charger_slack", 0.0)),
-                        "charge_count": float(getattr(self.agent.preprocessor, "charge_count", 0.0)),
-                        "mode_teacher": int(reward_payload["mode_teacher"]),
-                        "route_anchor_teacher": int(reward_payload["route_anchor_teacher"]),
-                        "target_teacher": int(reward_payload["target_teacher"]),
-                        "mode_teacher_mask": float(reward_payload["mode_teacher_mask"]),
-                        "route_anchor_teacher_mask": float(reward_payload["route_anchor_teacher_mask"]),
-                        "target_teacher_mask": float(reward_payload["target_teacher_mask"]),
-                        "return_action_teacher": int(reward_payload["return_action_teacher"]),
-                        "return_action_teacher_mask": float(reward_payload["return_action_teacher_mask"]),
-                        "route_phase_action_teacher": int(reward_payload["route_phase_action_teacher"]),
-                        "route_phase_action_teacher_mask": float(reward_payload["route_phase_action_teacher_mask"]),
-                        "route_phase_teacher_from_return_reliable": float(
-                            reward_payload.get("route_phase_teacher_from_return_reliable", 0.0)
-                        ),
-                        "route_phase_teacher_from_anchor_or_target": float(
-                            reward_payload.get("route_phase_teacher_from_anchor_or_target", 0.0)
-                        ),
-                        "route_phase_teacher_from_critical_fallback": float(
-                            reward_payload.get("route_phase_teacher_from_critical_fallback", 0.0)
-                        ),
-                        "teacher_target_stable": 1.0 if bool(guidance.get("target_stable", False)) else 0.0,
-                        "teacher_suggested_legal_safe": 1.0 if bool(guidance.get("suggested_action_legal", False)) else 0.0,
-                        "teacher_action_margin": float(guidance.get("action_margin", 0.0)),
-                        "battery_risk_label": float(reward_payload["battery_risk_label"]),
-                        "collision_risk_label": float(reward_payload["collision_risk_label"]),
-                        "fallback_mask": float(reward_payload["fallback_mask"]),
-                        "expert_weight": float(getattr(self.agent, "_last_expert_weight", 0.0)),
-                        "expert_weight_nonzero": 1.0
-                        if float(getattr(self.agent, "_last_expert_weight", 0.0)) > 0.0
-                        else 0.0,
-                        "pre_return_bias_active": float(getattr(self.agent, "_last_pre_return_bias_active", 0.0)),
-                        "return_bias_active": float(getattr(self.agent, "_last_return_bias_active", 0.0)),
-                        "route_anchor": runtime_route_anchor,
-                        "predicted_mode": int(self._scalar_from_any(getattr(act_data, "mode", -1), default=-1)),
-                        "predicted_target": int(self._scalar_from_any(getattr(act_data, "target", 0), default=0)),
-                        "predicted_route_anchor": int(self._scalar_from_any(getattr(act_data, "route_anchor", 0), default=0)),
-                        "future_recoverability_score": float(getattr(self.agent.preprocessor, "future_recoverability_score", 0.0)),
-                        "anchor_return_dist": float(getattr(self.agent.preprocessor, "anchor_return_dist", 0.0)),
-                        "is_diag_action": 1.0 if int(np.asarray(act_data.action).reshape(-1)[0]) in (1, 3, 5, 7) else 0.0,
-                        "wall_adjacent": wall_adjacent,
-                        "dirty_adjacent": dirty_adjacent,
-                        "cleaned_this_step": cleaned_this_step,
-                        "local_frontier_density": local_frontier_density,
-                        "same_region_streak": float(getattr(self.agent.preprocessor, "same_region_streak", 0.0)),
-                        "path_cross_count_50": float(getattr(self.agent.preprocessor, "path_cross_count_50", 0.0)),
-                        "coverage_efficiency_20": float(getattr(self.agent.preprocessor, "coverage_efficiency_20", 1.0)),
-                        "wall_hugging_clean_floor": 1.0 if wall_hugging_clean_floor else 0.0,
-                        "stale_boundary_follow": 1.0 if stale_boundary_follow else 0.0,
-                        "narrow_unknown_commit": 1.0 if narrow_unknown_commit else 0.0,
-                        "missed_charge_opportunity": 1.0 if missed_charge_opportunity else 0.0,
-                        "charger_nearby_not_charged": 1.0 if charger_nearby_not_charged else 0.0,
-                        "suboptimal_target_hold": 1.0 if suboptimal_target_hold else 0.0,
-                        "planner_policy_divergence": 0.0 if planner_action_match else 1.0,
-                        "route_phase_active": 1.0 if runtime_mode in (3, 4) else 0.0,
-                        "route_phase_reliable_active": 1.0
-                        if (
-                            runtime_mode in (3, 4)
-                            and bool(guidance.get("return_action_reliable", False))
-                            and planner_suggested_action >= 0
-                        )
-                        else 0.0,
-                        "planner_suggested_action": planner_suggested_action,
-                        "planner_action_margin": float(guidance.get("action_margin", 0.0)),
-                        "all_charger_known_path_count": float(all_charger_known_path_count),
-                        "unknown_on_target_path_ratio": float(unknown_on_target_path_ratio),
-                        "target_selection_gap": float(target_selection_gap),
-                        "planner_topk_reachable_count": planner_topk_reachable_count,
-                        "planner_known_route_count_total": planner_known_route_count_total,
-                        "planner_best_target_route_diversity": planner_best_target_route_diversity,
-                        "planner_best_target_tangle_cost": planner_best_target_tangle_cost,
-                        "planner_best_target_edge_break_cost": planner_best_target_edge_break_cost,
-                        "planner_best_target_region_fragment_cost": planner_best_target_region_fragment_cost,
-                        "planner_multi_route_recoverability": planner_multi_route_recoverability,
-                        "control_stack_simplify_active": 1.0 if simplify_control_stack else 0.0,
-                        "pre_return_readiness_flag": float(readiness_flag),
-                        "return_now_flag": float(return_now_flag),
-                        "current_cell_is_clean_floor": float(reward_payload.get("current_cell_is_clean_floor", 0.0)),
-                        "low_value_revisit_flag": float(reward_payload.get("low_value_revisit_flag", 0.0)),
-                        "charge_margin_now": float(charge_margin_now),
-                        "local_passage_width": float(local_passage_width),
-                        "battery_fail_type": terminal_outcome["battery_fail_type"],
-                        "battery_fail_severity": float(terminal_outcome["battery_fail_severity"]),
-                        "collision_terminal_cost": float(terminal_outcome["collision_terminal_cost"]),
-                    }
-                )
-
-                if done:
-                    self._apply_terminal_outcome_to_step_records(step_records, terminal_outcome)
-
-                    if self.is_new_best:
-                        self._save_best_model(self.last_clean_score, self.last_checkpoint_scores)
-                        self._save_resume_artifacts("best", self.last_clean_score, with_named_snapshot=True)
-
-                    self._maybe_save_progress_snapshots()
-
-                    if self.episode_cnt % self.save_interval == 0:
-                        self.agent.save_model(path=str(self.manual_ckpt_dir), id=str(self.episode_cnt))
-                        manual_checkpoint_path = self.manual_ckpt_dir / f"model.ckpt-{self.episode_cnt}.pkl"
-                        self._save_manual_bundle(
-                            manual_checkpoint_path if manual_checkpoint_path.exists() else None,
-                            trigger="manual",
-                            clean_score=self.last_clean_score,
-                        )
-                        self.archive.log_event(
-                            "framework_checkpoint_saved",
-                            {
-                                "episode_cnt": self.episode_cnt,
-                                "checkpoint_id": str(self.episode_cnt),
-                                "path": str(manual_checkpoint_path),
-                            },
-                        )
 
                     now = time.time()
                     if now - self.last_report_monitor_time >= 60 and self.monitor:
                         self.monitor.put_data(
                             {
-                                os.getpid(): self._build_monitor_payload(
-                                    float(terminal_outcome.get("effective_total_reward", total_reward))
-                                )
+                                os.getpid(): {
+                                    "reward": total_reward + final_reward,
+                                    "episode_cnt": self.episode_cnt,
+                                    "mix_alpha": new_alpha,
+                                    "score": episode_score,
+                                    "quality_bonus": quality_bonus,
+                                    "early_termination_penalty": early_termination_penalty,
+                                    "local_predict_cnt": self.local_predict_cnt,
+                                    "local_frame_cnt": self.local_frame_cnt,
+                                    "local_yield_cnt": self.local_yield_cnt,
+                                }
                             }
                         )
                         self.last_report_monitor_time = now
 
                     if step_records:
-                        sample_process_begin = time.perf_counter()
-                        collector = sample_process(step_records, episode_idx=self.episode_cnt)
-                        self.perf_window.add("sample_process", (time.perf_counter() - sample_process_begin) * 1000.0)
-                        self.perf_window.add("episodes_yielded", 0.0, count=1)
-                        self.perf_window.add("samples_built", 0.0, count=len(collector))
+                        collector = sample_process(step_records)
+                        self.local_yield_cnt += len(collector)
                         yield collector
                     break
 
                 obs_data = next_obs_data
 
-    def _handle_episode_end(self, env_obs, terminated, truncated, step, total_reward, sampled_env_conf, sampled_meta, step_records):
-        observation = env_obs.get("observation") or {}
-        frame_state = observation.get("frame_state") or {}
-        env_info = observation.get("env_info") or {}
-        hero = frame_state.get("heroes") or {}
-        fm = self.agent.preprocessor
 
-        total_score = float(env_info.get("total_score", 0))
-        clean_score = float(env_info.get("clean_score", total_score))
-        battery = hero.get("battery")
-        extra_info = env_obs.get("extra_info") or observation.get("extra_info") or {}
+def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
+    del args, kwargs
+    usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
+    if usr_conf is None:
+        if logger is not None and hasattr(logger, "error"):
+            logger.error("usr_conf is None, please check agent_ppo/conf/train_env_conf.toml")
+        return
 
-        fail_reason = infer_fail_reason(
-            terminated=terminated,
-            truncated=truncated,
-            battery=battery,
-            extra_info=extra_info,
-        )
+    n_agents = min(len(envs), len(agents), Config.NUM_AGENTS)
+    if logger is not None and hasattr(logger, "info"):
+        logger.info(f"Starting {n_agents} parallel agent(s) in this workflow process")
 
-        cleaning_ratio = fm.dirt_cleaned / max(fm.total_dirt, 1)
-        self.last_clean_score = clean_score
-        actual_max_step = max(int(env_info.get("max_step", sampled_env_conf.get("max_step", step))), 1)
-        finished_steps = float(env_info.get("finished_steps", step))
-        charge_count = float(env_info.get("charge_count", 0))
-        remaining_charge = float(env_info.get("remaining_charge", battery or 0))
-        clean_per_step = clean_score / max(finished_steps, 1.0)
+    last_save_time = [time.time()]
+    save_lock = threading.Lock()
 
-        battery_fail_type, battery_fail_severity = classify_battery_fail_severity(
-            fail_reason=fail_reason,
-            finished_steps=finished_steps,
-            max_step=actual_max_step,
-            clean_per_step=clean_per_step,
-            all_charger_known_path_count=float(
-                sum(float(rec.get("all_charger_known_path_count", 0.0)) for rec in step_records) / max(len(step_records), 1)
-            ),
-            avg_unknown_on_target_path_ratio=float(
-                sum(float(rec.get("unknown_on_target_path_ratio", 0.0)) for rec in step_records) / max(len(step_records), 1)
-            ),
-            remaining_charge=remaining_charge,
-            charge_count=charge_count,
+    def run_agent(idx: int):
+        runner = EpisodeRunner(
+            env=envs[idx],
+            agent=agents[idx],
+            usr_conf=usr_conf,
+            logger=logger,
+            monitor=monitor,
+            agent_id=idx,
         )
-        task_terminal_bonus = 0.0
-        battery_terminal_cost = 0.0
-        collision_terminal_cost = 0.0
-        reward_schedule = get_reward_schedule(self._global_step_since_resume())
-        task_reward_scale = 1.0
-        if fail_reason == "completed":
-            efficiency_bonus = 0.5 * cleaning_ratio + 0.5 * min(clean_score / max(step, 1), 1.0)
-            task_terminal_bonus = Config.EPISODE_COMPLETED_BONUS + efficiency_bonus
-        elif fail_reason == "battery":
-            battery_terminal_cost, task_reward_scale, zero_charge_battery_fail = self._compute_battery_fail_outcome(
-                charge_count=charge_count,
-                battery_fail_type=battery_fail_type,
-                battery_fail_severity=float(battery_fail_severity),
-                reward_schedule=reward_schedule,
-            )
-        elif fail_reason == "collision":
-            remaining_ratio = max(0.0, 1.0 - float(step) / actual_max_step)
-            collision_terminal_cost = abs(Config.EPISODE_COLLISION_FAIL_BONUS) * (
-                1.0 + Config.EPISODE_FAIL_EARLY_SCALE * remaining_ratio
-            )
-        elif fail_reason == "unknown":
-            remaining_ratio = max(0.0, 1.0 - float(step) / actual_max_step)
-            collision_terminal_cost = abs(Config.EPISODE_UNKNOWN_FAIL_BONUS) * (
-                1.0 + Config.EPISODE_FAIL_EARLY_SCALE * remaining_ratio
-            )
-        final_reward = task_terminal_bonus - battery_terminal_cost - collision_terminal_cost
-        result_str = "WIN" if fail_reason == "completed" else "FAIL"
-        charge_fail_after_arrival = bool(
-            fail_reason == "battery" and int(getattr(fm, "arrival_confirmed_count", 0) or 0) > 0
-        )
-        go23_terminal_adjust = 0.0
-        if hasattr(fm, "finalize_episode_rewards"):
-            go23_terminal_adjust = float(
-                fm.finalize_episode_rewards(
-                    result_str=result_str,
-                    final_mode=str(getattr(fm, "policy_target_mode", "") or self.last_policy_mode),
-                    final_step=int(step),
-                    charge_fail_after_arrival=charge_fail_after_arrival,
-                )
-            )
-            final_reward += go23_terminal_adjust
-        (
-            battery_terminal_cost,
-            final_reward,
-            effective_total_reward,
-            battery_positive_clamp_cost,
-        ) = self._finalize_terminal_outcome(
-            fail_reason=fail_reason,
-            total_reward=total_reward,
-            task_reward_scale=task_reward_scale,
-            battery_terminal_cost=battery_terminal_cost,
-            final_reward=final_reward,
-        )
-        avg_mix_alpha = (
-            sum(float(rec.get("mix_alpha_scalar", self.last_residual_alpha)) for rec in step_records)
-            / max(len(step_records), 1)
-        )
-        new_residual_alpha = self.residual_scheduler.update(total_score, cleaning_ratio)
+        for g_data in runner.run_episodes():
+            agents[idx].send_sample_data(g_data)
+            g_data.clear()
+            if idx == 0:
+                with save_lock:
+                    now = time.time()
+                    if now - last_save_time[0] >= 1800:
+                        agents[0].save_model()
+                        last_save_time[0] = now
 
-        # Death trajectory logging
-        if fail_reason in ("battery", "collision"):
-            traj_parts = []
-            for s in self.death_trajectory_buffer:
-                traj_parts.append(
-                    f"s{s['step']}:bat={s['battery']}/{s['battery_max']}"
-                    f" slack={s['charger_slack']:.1f} npc={s['nearest_npc_dist']:.0f}"
-                    f" mode={s['mode']} act={s['action']}"
-                )
-            self.logger.info(
-                f"[DEATH_TRAJ] ep:{self.episode_cnt} reason:{fail_reason} "
-                f"traj=[{' | '.join(traj_parts)}]"
-            )
-            self.death_trajectory_buffer.clear()
-        elif fail_reason == "completed":
-            self.death_trajectory_buffer.clear()
+    if n_agents == 1:
+        run_agent(0)
+        return
 
-        invalid_move_rate = fm.invalid_move_count / max(step, 1)
-        charge_efficiency = clean_score / max(charge_count, 1.0)
-        clean_per_charge_when_charged = (clean_score / charge_count) if charge_count > 0 else None
-        diagnostics = self._episode_sequence_diagnostics(step_records)
-        reward_component_means = {
-            key: float(diagnostics[f"avg_reward_{key}"])
-            for key in REWARD_COMPONENT_MONITOR_KEYS
-        }
-
-        self.episode_history.append({
-            "episode_cnt_local": self.episode_cnt,
-            "completed_at_ts": time.time(),
-            "result": fail_reason,
-            "clean_score": clean_score,
-            "finished_steps": finished_steps,
-            "charge_count": charge_count,
-            "remaining_charge": remaining_charge,
-            "invalid_move_rate": invalid_move_rate,
-            "charge_efficiency": charge_efficiency,
-            "clean_per_charge_when_charged": clean_per_charge_when_charged,
-            "clean_per_step": clean_per_step,
-            "task_reward_scale": task_reward_scale,
-            "expert_weight": getattr(self.agent, '_last_expert_weight', 0.0),
-            "profile": sampled_meta['profile'],
-            "profile_seed": int(sampled_meta.get("profile_seed", 0)),
-            "sampled_profile_anchor_count": 1.0 if sampled_meta["profile"] == "anchor" else 0.0,
-            "sampled_profile_mild_count": 1.0 if sampled_meta["profile"] == "mild" else 0.0,
-            "sampled_profile_broad_count": 1.0 if sampled_meta["profile"] == "broad" else 0.0,
-            "sampled_profile_broad_eval_count": 1.0 if sampled_meta["profile"] == "broad_eval" else 0.0,
-            "total_reward": effective_total_reward,
-            "avg_mix_alpha": avg_mix_alpha,
-            "final_mix_alpha": float(self.last_residual_alpha),
-            "residual_alpha_next": float(new_residual_alpha),
-            "charger_arrived_count": float(len(getattr(fm, "charger_arrival_steps", {}) or {})),
-            "arrival_confirmed_count": float(getattr(fm, "arrival_confirmed_count", 0.0) or 0.0),
-            "arrival_canceled_count": float(getattr(fm, "arrival_canceled_count", 0.0) or 0.0),
-            "arrival_retro_canceled_count": float(getattr(fm, "arrival_retro_canceled_count", 0.0) or 0.0),
-            "go23_terminal_adjust": float(go23_terminal_adjust),
-            "charge_fail_after_arrival": 1.0 if charge_fail_after_arrival else 0.0,
-            "late_return_rate": diagnostics["late_return_rate"],
-            "late_contract_rate": diagnostics["late_contract_rate"],
-            "anchor_switch_rate": diagnostics["anchor_switch_rate"],
-            "target_switch_rate": diagnostics["target_switch_rate"],
-            "diag_rate_all": diagnostics["diag_rate_all"],
-            "diag_rate_contract": diagnostics["diag_rate_contract"],
-            "diag_rate_return": diagnostics["diag_rate_return"],
-            "return_progress_per_step": diagnostics["return_progress_per_step"],
-            "return_efficiency_ratio": diagnostics["return_efficiency_ratio"],
-            "return_stall_rate": diagnostics["return_stall_rate"],
-            "route_phase_return_stall_rate": diagnostics["route_phase_return_stall_rate"],
-            "recoverability_score_avg": diagnostics["recoverability_score_avg"],
-            "recoverability_violation_rate": diagnostics["recoverability_violation_rate"],
-            "wall_hugging_clean_floor_rate": diagnostics["wall_hugging_clean_floor_rate"],
-            "stale_boundary_follow_rate": diagnostics["stale_boundary_follow_rate"],
-            "narrow_unknown_commit_rate": diagnostics["narrow_unknown_commit_rate"],
-            "missed_charge_opportunity_rate": diagnostics["missed_charge_opportunity_rate"],
-            "charger_nearby_not_charged_rate": diagnostics["charger_nearby_not_charged_rate"],
-            "suboptimal_target_hold_rate": diagnostics["suboptimal_target_hold_rate"],
-            "planner_policy_divergence_rate": diagnostics["planner_policy_divergence_rate"],
-            "route_phase_planner_divergence_rate": diagnostics["route_phase_planner_divergence_rate"],
-            "reliable_planner_divergence_rate": diagnostics["reliable_planner_divergence_rate"],
-            "avg_path_cross_count_50": diagnostics["avg_path_cross_count_50"],
-            "avg_coverage_efficiency_20": diagnostics["avg_coverage_efficiency_20"],
-            "avg_all_charger_known_path_count": diagnostics["avg_all_charger_known_path_count"],
-            "avg_unknown_on_target_path_ratio": diagnostics["avg_unknown_on_target_path_ratio"],
-            "avg_planner_topk_reachable_count": diagnostics["avg_planner_topk_reachable_count"],
-            "avg_planner_known_route_count_total": diagnostics["avg_planner_known_route_count_total"],
-            "avg_planner_best_target_route_diversity": diagnostics["avg_planner_best_target_route_diversity"],
-            "avg_planner_best_target_tangle_cost": diagnostics["avg_planner_best_target_tangle_cost"],
-            "avg_planner_best_target_edge_break_cost": diagnostics["avg_planner_best_target_edge_break_cost"],
-            "avg_planner_best_target_region_fragment_cost": diagnostics["avg_planner_best_target_region_fragment_cost"],
-            "avg_planner_multi_route_recoverability": diagnostics["avg_planner_multi_route_recoverability"],
-            "battery_process_cost_mean": diagnostics["battery_process_cost_mean"],
-            "collision_process_cost_mean": diagnostics["collision_process_cost_mean"],
-            "high_need_return_stall_rate": diagnostics["high_need_return_stall_rate"],
-            "avg_charge_need_score": diagnostics["avg_charge_need_score"],
-            "avg_route_phase_shadow_risk": diagnostics["avg_route_phase_shadow_risk"],
-            "avg_route_phase_reward_ready_rate": diagnostics["avg_route_phase_reward_ready_rate"],
-            "avg_slack_confidence": diagnostics["avg_slack_confidence"],
-            "clean_floor_revisit_rate": diagnostics["clean_floor_revisit_rate"],
-            "clean_floor_revisit_penalty_mean": diagnostics["clean_floor_revisit_penalty_mean"],
-            "effective_coverage_bonus_mean": diagnostics["effective_coverage_bonus_mean"],
-            "expert_weight_nonzero_rate": diagnostics["expert_weight_nonzero_rate"],
-            "pre_return_bias_active_rate": diagnostics["pre_return_bias_active_rate"],
-            "return_bias_active_rate": diagnostics["return_bias_active_rate"],
-            "return_action_teacher_mask_mean": diagnostics["return_action_teacher_mask_mean"],
-            "return_action_teacher_mask_nonzero_rate": diagnostics["return_action_teacher_mask_nonzero_rate"],
-            "route_phase_action_teacher_mask_mean": diagnostics["route_phase_action_teacher_mask_mean"],
-            "route_phase_action_teacher_mask_nonzero_rate": diagnostics["route_phase_action_teacher_mask_nonzero_rate"],
-            **{key: diagnostics[key] for key in TEACHER_LABEL_QUALITY_METRIC_KEYS},
-            "battery_fail_type": battery_fail_type,
-            "battery_fail_severity": float(battery_fail_severity),
-            "scheduled_battery_fail_task_reward_scale": float(
-                reward_schedule["scheduled_battery_fail_task_reward_scale"]
-            ),
-            "scheduled_early_battery_fail_task_reward_scale": float(
-                reward_schedule["scheduled_early_battery_fail_task_reward_scale"]
-            ),
-            "mode_usage_depart": diagnostics["mode_usage_depart"],
-            "mode_usage_expand": diagnostics["mode_usage_expand"],
-            "mode_usage_harvest": diagnostics["mode_usage_harvest"],
-            "mode_usage_contract": diagnostics["mode_usage_contract"],
-            "mode_usage_return": diagnostics["mode_usage_return"],
-            "mode_usage_evade": diagnostics["mode_usage_evade"],
-            **{f"avg_reward_{key}": value for key, value in reward_component_means.items()},
-        })
-        curriculum_state = self._emit_curriculum_signal()
-
-        map_id = extra_info.get("map_id") or extra_info.get("map_code") or "?"
-        actual_robot_count = int(env_info.get("npc_count", sampled_env_conf.get("robot_count", 1)))
-        actual_charger_count = int(env_info.get("total_charger", sampled_env_conf.get("charger_count", 4)))
-        episode_total_reward = total_reward + final_reward
-        self.logger.info(
-            f"[GAMEOVER] ep:{self.episode_cnt} steps:{step} "
-            f"result:{result_str} final_bonus:{final_reward:.2f} "
-            f"step_reward:{total_reward:.3f} episode_reward:{episode_total_reward:.3f} "
-            f"effective_episode_reward:{effective_total_reward:.3f} task_reward_scale:{task_reward_scale:.2f} "
-            f"mix_alpha:{avg_mix_alpha:.3f}->{new_residual_alpha:.3f} "
-            f"clean_score:{clean_score:.1f} "
-            f"dirt_cleaned:{fm.dirt_cleaned}/{fm.total_dirt} "
-            f"invalid_move_rate:{invalid_move_rate:.3f} "
-            f"profile:{sampled_meta['profile']} "
-            f"map:{map_id} chargers:{actual_charger_count} robots:{actual_robot_count}"
-        )
-        sorted_positive_components = [
-            (key, value) for key, value in sorted(reward_component_means.items(), key=lambda item: item[1], reverse=True)
-            if value > 0.0
-        ]
-        sorted_negative_components = [
-            (key, value) for key, value in sorted(reward_component_means.items(), key=lambda item: item[1])
-            if value < 0.0
-        ]
-        neg_summary = ", ".join(f"{key}={value:.3f}" for key, value in sorted_negative_components[:3]) or "none"
-        pos_summary = ", ".join(f"{key}={value:.3f}" for key, value in sorted_positive_components[:3]) or "none"
-        self.logger.info(f"[REWARD_TOP] ep:{self.episode_cnt} neg:[{neg_summary}] pos:[{pos_summary}]")
-
-        self.is_new_best = False
-
-        # Log curriculum metrics periodically
-        cur_metrics = self._get_curriculum_metrics()
-        if cur_metrics is not None and self.episode_cnt % 10 == 0:
-            self.logger.info(
-                f"[CURRICULUM] ep:{self.episode_cnt} local_stage:{sampled_meta['stage']} "
-                f"global_stage:{curriculum_state.get('stage', 'warmup')} "
-                f"progress:{curriculum_state.get('curriculum_progress', 0.0):.2f} "
-                f"win_rate:{cur_metrics['win_rate']:.2f} "
-                f"avg_cs:{cur_metrics['avg_clean_score']:.0f} avg_cc:{cur_metrics['avg_charge_count']:.1f} "
-                f"battery_fail:{cur_metrics['battery_fail_rate']:.2f} "
-                f"return_stall:{cur_metrics['return_stall_rate']:.2f} "
-                f"route_phase_stall:{cur_metrics.get('route_phase_return_stall_rate', 0.0):.2f} "
-                f"planner_div:{cur_metrics['planner_policy_divergence_rate']:.2f} "
-                f"reliable_planner_div:{cur_metrics.get('reliable_planner_divergence_rate', 0.0):.2f}"
-            )
-
-        # Per-map score tracking for generalization monitoring
-        if map_id != "?":
-            self.per_map_scores.setdefault(str(map_id), []).append(clean_score)
-            if len(self.per_map_scores[str(map_id)]) > 30:
-                self.per_map_scores[str(map_id)] = self.per_map_scores[str(map_id)][-30:]
-
-        # Log cross-map variance every 10 episodes
-        if self.episode_cnt % 10 == 0 and len(self.per_map_scores) >= 3:
-            map_avgs = {}
-            for mid, scores in sorted(self.per_map_scores.items()):
-                if len(scores) >= 3:
-                    map_avgs[mid] = round(sum(scores[-10:]) / len(scores[-10:]), 1)
-            if len(map_avgs) >= 3:
-                avg_vals = list(map_avgs.values())
-                variance = float(np.std(avg_vals))
-                min_avg = min(avg_vals)
-                spread = max(avg_vals) - min_avg
-                self.logger.info(
-                    f"[MAP_STATS] maps:{map_avgs} "
-                    f"variance:{variance:.1f} min_avg:{min_avg:.1f} spread:{spread:.1f}"
-                )
-
-        scores = [ep["clean_score"] for ep in self.episode_history]
-        robust_score = float("-inf")
-        if len(scores) >= 20:
-            rolling_avg = sum(scores) / len(scores)
-            robust_score = compute_legacy_robust_score(scores, invalid_move_rate, fail_reason)
-            if rolling_avg > self.best_avg_score:
-                self.best_avg_score = rolling_avg
-            if robust_score > self.best_robust_score:
-                self.best_robust_score = robust_score
-
-        window_metrics = self._window_metrics()
-        try:
-            checkpoint_scores = compute_checkpoint_scores(window_metrics, self.latest_learning_metrics)
-        except Exception as exc:
-            self.logger.warning(f"[CHECKPOINT_SCORE] ep:{self.episode_cnt} fallback due to error: {exc}")
-            checkpoint_scores = {
-                "resume_eligible": False,
-                "submission_eligible": False,
-                "resume_readiness_score": 0.0,
-                "submission_score": 0.0,
-                "training_stability_bonus": 0.0,
-                "benchmark_stability_bonus": 0.0,
-                "checkpoint_preservation_score": 0.0,
-                "resume_score_safety": 0.0,
-                "resume_score_efficiency": 0.0,
-                "resume_score_behavior": 0.0,
-                "resume_score_learning": 0.0,
-                "submission_score_completion": 0.0,
-                "submission_score_efficiency": 0.0,
-                "submission_score_stability": 0.0,
-                "submission_score_behavior": 0.0,
-            }
-        self.last_checkpoint_scores = checkpoint_scores
-        if self.episode_cnt % 10 == 0:
-            self.logger.info(
-                "[SCORE] ep:%d preserve=%.2f resume=%.2f (safe=%.2f eff=%.2f beh=%.2f learn=%.2f) "
-                "submission=%.2f (comp=%.2f eff=%.2f stab=%.2f beh=%.2f)",
-                self.episode_cnt,
-                checkpoint_scores["checkpoint_preservation_score"],
-                checkpoint_scores["resume_readiness_score"],
-                checkpoint_scores["resume_score_safety"],
-                checkpoint_scores["resume_score_efficiency"],
-                checkpoint_scores["resume_score_behavior"],
-                checkpoint_scores["resume_score_learning"],
-                checkpoint_scores["submission_score"],
-                checkpoint_scores["submission_score_completion"],
-                checkpoint_scores["submission_score_efficiency"],
-                checkpoint_scores["submission_score_stability"],
-                checkpoint_scores["submission_score_behavior"],
-            )
-        self.best_resume_readiness_score = max(
-            self.best_resume_readiness_score, checkpoint_scores["resume_readiness_score"]
-        )
-        self.best_submission_score = max(
-            self.best_submission_score, checkpoint_scores["submission_score"]
-        )
-        if checkpoint_scores["resume_eligible"] and (
-            checkpoint_scores["checkpoint_preservation_score"] > self.best_preservation_score
-        ):
-            self.best_preservation_score = checkpoint_scores["checkpoint_preservation_score"]
-            self.is_new_best = True
-
-        checkpoint_ref = getattr(self.agent, "current_model_ref", {}) or {}
-        actual_battery_max = int(hero.get("battery_max", env_info.get("battery_max", sampled_env_conf.get("battery_max", 200))))
-        actual_max_step = int(env_info.get("max_step", sampled_env_conf.get("max_step", step)))
-        episode_payload = {
-            "episode_id": self.episode_cnt,
-            "checkpoint_id": checkpoint_ref.get("checkpoint_id"),
-            "checkpoint_path": checkpoint_ref.get("path"),
-            "map_id": extra_info.get("map_id") or extra_info.get("map_code"),
-            "result": result_str.lower(),
-            "fail_reason": fail_reason,
-            "zero_charge_battery_fail": bool(fail_reason == "battery" and charge_count <= 0.0),
-            "battery_positive_reward": int(fail_reason == "battery" and effective_total_reward > 0.0),
-            "total_score": total_score,
-            "clean_score": clean_score,
-            "finished_steps": finished_steps,
-            "charge_count": charge_count,
-            "remaining_charge": remaining_charge,
-            "total_reward": round(effective_total_reward, 4),
-            "robot_count": actual_robot_count,
-            "charger_count": actual_charger_count,
-            "battery_max": actual_battery_max,
-            "max_step": actual_max_step,
-            "map_random": int(env_info.get("map_random", sampled_env_conf.get("map_random", 0))),
-            "train_stage": sampled_meta["stage"],
-            "train_profile": sampled_meta["profile"],
-            "invalid_move_rate": round(invalid_move_rate, 4),
-            "charge_efficiency": round(charge_efficiency, 4),
-            "clean_per_step": round(clean_per_step, 4),
-            "legacy_robust_score": round(float(robust_score), 4) if robust_score != float("-inf") else None,
-            "resume_readiness_score": checkpoint_scores["resume_readiness_score"],
-            "submission_score": checkpoint_scores["submission_score"],
-            "checkpoint_preservation_score": checkpoint_scores["checkpoint_preservation_score"],
-            "resume_score_safety": checkpoint_scores["resume_score_safety"],
-            "resume_score_efficiency": checkpoint_scores["resume_score_efficiency"],
-            "resume_score_behavior": checkpoint_scores["resume_score_behavior"],
-            "resume_score_learning": checkpoint_scores["resume_score_learning"],
-            "submission_score_completion": checkpoint_scores["submission_score_completion"],
-            "submission_score_efficiency": checkpoint_scores["submission_score_efficiency"],
-            "submission_score_stability": checkpoint_scores["submission_score_stability"],
-            "submission_score_behavior": checkpoint_scores["submission_score_behavior"],
-            "resume_eligible": checkpoint_scores["resume_eligible"],
-            "mode": int(getattr(fm, "current_mode", -1)),
-            "task_reward_scale": round(task_reward_scale, 4),
-            "avg_mix_alpha": round(float(avg_mix_alpha), 4),
-            "final_mix_alpha": round(float(self.last_residual_alpha), 4),
-            "residual_alpha_next": round(float(new_residual_alpha), 4),
-            "charger_arrived_count": int(len(getattr(fm, "charger_arrival_steps", {}) or {})),
-            "arrival_confirmed_count": int(getattr(fm, "arrival_confirmed_count", 0) or 0),
-            "arrival_canceled_count": int(getattr(fm, "arrival_canceled_count", 0) or 0),
-            "arrival_retro_canceled_count": int(getattr(fm, "arrival_retro_canceled_count", 0) or 0),
-            "go23_terminal_adjust": round(float(go23_terminal_adjust), 4),
-            "charge_fail_after_arrival": bool(charge_fail_after_arrival),
-            "profile_seed": int(sampled_meta.get("profile_seed", 0)),
-            "sampled_env_conf": deepcopy(sampled_env_conf),
-        }
-        self.archive.log_episode_summary(episode_payload)
-        self.archive.log_event("episode_end", episode_payload)
-        if fail_reason == "battery":
-            self.archive.log_event("battery_fail", episode_payload)
-            if battery_positive_clamp_cost > 0.0:
-                self.logger.warning(
-                    f"[BATTERY_POSITIVE_FAIL] ep:{self.episode_cnt} "
-                    f"total_reward_before_cap:{battery_positive_clamp_cost:.3f} "
-                    f"clean_score:{clean_score:.1f} steps:{finished_steps:.0f} "
-                    f"charge_count:{charge_count:.1f} scale:{task_reward_scale:.2f} "
-                    f"clamp:{battery_positive_clamp_cost:.3f}"
-                )
-        elif fail_reason == "collision":
-            self.archive.log_event("collision_fail", episode_payload)
-
-        # Per-config failure rate tracking
-        battery_bin = min(int(actual_battery_max / 100) * 100, 800)
-        max_step_bin = min(int(actual_max_step / 500) * 500, 2000)
-        config_key = f"r{actual_robot_count}_c{actual_charger_count}_b{battery_bin}_s{max_step_bin}"
-        if config_key not in self.config_stats:
-            self.config_stats[config_key] = {"total": 0, "battery": 0, "collision": 0, "completed": 0}
-        stats = self.config_stats[config_key]
-        stats["total"] += 1
-        stats[fail_reason] = stats.get(fail_reason, 0) + 1
-
-        if self.episode_cnt % 50 == 0 and len(self.config_stats) >= 3:
-            high_death = []
-            for ck, cs in sorted(self.config_stats.items()):
-                if cs["total"] >= 3:
-                    dr = (cs.get("battery", 0) + cs.get("collision", 0)) / cs["total"]
-                    if dr > 0.3:
-                        high_death.append(f"{ck}:{dr:.0%}({cs['total']}ep)")
-            if high_death:
-                self.logger.info(f"[CONFIG_RISK] {' '.join(high_death)}")
-
-        return {
-            "task_terminal_bonus": float(task_terminal_bonus),
-            "battery_terminal_cost": float(battery_terminal_cost),
-            "collision_terminal_cost": float(collision_terminal_cost),
-            "final_reward": float(final_reward),
-            "task_reward_scale": float(task_reward_scale),
-            "effective_total_reward": float(effective_total_reward),
-            "fail_reason": fail_reason,
-            "battery_fail_type": battery_fail_type,
-            "battery_fail_severity": float(battery_fail_severity),
-            "battery_positive_clamp_cost": float(battery_positive_clamp_cost),
-        }
-
-    @staticmethod
-    def _compute_battery_fail_outcome(charge_count, battery_fail_type, battery_fail_severity, reward_schedule):
-        severity = float(max(battery_fail_severity, 0.0))
-        battery_terminal_cost = Config.BATTERY_TERMINAL_COST_SCALE * severity
-        battery_terminal_cost += abs(Config.EPISODE_BATTERY_FAIL_BONUS)
-        if battery_fail_type == "early_unrecoverable":
-            task_reward_scale = reward_schedule["scheduled_early_battery_fail_task_reward_scale"]
-        else:
-            task_reward_scale = reward_schedule["scheduled_battery_fail_task_reward_scale"]
-
-        zero_charge_battery_fail = float(charge_count or 0.0) <= 0.0
-        if zero_charge_battery_fail:
-            task_reward_scale = min(task_reward_scale, reward_schedule["scheduled_early_battery_fail_task_reward_scale"])
-            battery_terminal_cost += Config.ZERO_CHARGE_BATTERY_FAIL_EXTRA_COST * max(severity, 0.5)
-
-        return float(battery_terminal_cost), float(task_reward_scale), bool(zero_charge_battery_fail)
-
-    @staticmethod
-    def _finalize_terminal_outcome(
-        *,
-        fail_reason,
-        total_reward,
-        task_reward_scale,
-        battery_terminal_cost,
-        final_reward,
-    ):
-        effective_total_reward = float(total_reward) * float(task_reward_scale) + float(final_reward)
-        battery_positive_clamp_cost = 0.0
-        if str(fail_reason) == "battery" and effective_total_reward > 0.0:
-            battery_positive_clamp_cost = float(effective_total_reward)
-            battery_terminal_cost = float(battery_terminal_cost) + battery_positive_clamp_cost
-            final_reward = float(final_reward) - battery_positive_clamp_cost
-            effective_total_reward = 0.0
-        return (
-            float(battery_terminal_cost),
-            float(final_reward),
-            float(effective_total_reward),
-            float(battery_positive_clamp_cost),
-        )
-
-    @staticmethod
-    def _apply_terminal_outcome_to_step_records(step_records, terminal_outcome):
-        if not step_records:
-            return
-
-        task_reward_scale = float(terminal_outcome.get("task_reward_scale", 1.0))
-        if task_reward_scale != 1.0:
-            for rec in step_records:
-                rec["reward_clean"] = float(rec["reward_clean"]) * task_reward_scale
-                rec["reward_total"] = float(rec.get("reward_total", 0.0)) * task_reward_scale
-
-        last_record = step_records[-1]
-        last_record["reward_clean"] = float(last_record["reward_clean"]) + float(
-            terminal_outcome.get("task_terminal_bonus", 0.0)
-        )
-        last_record["reward_survive"] = float(last_record["reward_survive"]) + float(
-            terminal_outcome.get("battery_terminal_cost", 0.0)
-        ) + float(terminal_outcome.get("collision_terminal_cost", 0.0))
-        last_record["reward_total"] = float(last_record.get("reward_total", 0.0)) + float(
-            terminal_outcome.get("final_reward", 0.0)
-        )
-
-    @staticmethod
-    def _scalar_from_any(value, default=0.0):
-        if value is None:
-            return float(default)
-        arr = np.asarray(value, dtype=np.float32).reshape(-1)
-        if arr.size == 0:
-            return float(default)
-        return float(arr[0])
-
-    def _normalize_reward_payload(self, reward):
-        if isinstance(reward, dict):
-            reward_clean = float(reward.get("reward_clean", reward.get("clean", 0.0)))
-            reward_survive = float(
-                reward.get("reward_survive", reward.get("survive", reward.get("total", reward_clean)))
-            )
-            reward_total = float(reward.get("reward_total", reward.get("total", reward_clean + reward_survive)))
-            payload = {
-                "reward_clean": reward_clean,
-                "reward_survive": reward_survive,
-                "reward_total": reward_total,
-                "mode_teacher": int(reward.get("mode_teacher", -1)),
-                "route_anchor_teacher": int(reward.get("route_anchor_teacher", 0)),
-                "target_teacher": int(reward.get("target_teacher", 0)),
-                "mode_teacher_mask": float(reward.get("mode_teacher_mask", 0.0)),
-                "route_anchor_teacher_mask": float(reward.get("route_anchor_teacher_mask", 0.0)),
-                "target_teacher_mask": float(reward.get("target_teacher_mask", 0.0)),
-                "return_action_teacher": int(reward.get("return_action_teacher", -1)),
-                "return_action_teacher_mask": float(reward.get("return_action_teacher_mask", 0.0)),
-                "route_phase_action_teacher": int(reward.get("route_phase_action_teacher", -1)),
-                "route_phase_action_teacher_mask": float(reward.get("route_phase_action_teacher_mask", 0.0)),
-                "route_phase_teacher_from_return_reliable": float(
-                    reward.get("route_phase_teacher_from_return_reliable", 0.0)
-                ),
-                "route_phase_teacher_from_anchor_or_target": float(
-                    reward.get("route_phase_teacher_from_anchor_or_target", 0.0)
-                ),
-                "route_phase_teacher_from_critical_fallback": float(
-                    reward.get("route_phase_teacher_from_critical_fallback", 0.0)
-                ),
-                "teacher_target_stable": float(reward.get("teacher_target_stable", 0.0)),
-                "teacher_suggested_legal_safe": float(reward.get("teacher_suggested_legal_safe", 0.0)),
-                "teacher_action_margin": float(reward.get("teacher_action_margin", 0.0)),
-                "battery_risk_label": float(reward.get("battery_risk_label", 0.0)),
-                "collision_risk_label": float(reward.get("collision_risk_label", 0.0)),
-                "fallback_mask": float(reward.get("fallback_mask", 0.0)),
-                "current_cell_is_clean_floor": float(reward.get("current_cell_is_clean_floor", 0.0)),
-                "low_value_revisit_flag": float(reward.get("low_value_revisit_flag", 0.0)),
-            }
-            for key in REWARD_COMPONENT_KEYS:
-                payload[f"reward_{key}"] = float(reward.get(key, 0.0))
-            for key in CONSTRAINT_TRACE_KEYS:
-                payload[f"constraint_{key}"] = float(reward.get(key, 0.0))
-            return payload
-
-        reward_scalar = float(reward)
-        payload = {
-            "reward_clean": reward_scalar,
-            "reward_survive": 0.0,
-            "reward_total": reward_scalar,
-            "mode_teacher": -1,
-            "route_anchor_teacher": 0,
-            "target_teacher": 0,
-            "mode_teacher_mask": 0.0,
-            "route_anchor_teacher_mask": 0.0,
-            "target_teacher_mask": 0.0,
-            "return_action_teacher": -1,
-            "return_action_teacher_mask": 0.0,
-            "route_phase_action_teacher": -1,
-            "route_phase_action_teacher_mask": 0.0,
-            "route_phase_teacher_from_return_reliable": 0.0,
-            "route_phase_teacher_from_anchor_or_target": 0.0,
-            "route_phase_teacher_from_critical_fallback": 0.0,
-            "teacher_target_stable": 0.0,
-            "teacher_suggested_legal_safe": 0.0,
-            "teacher_action_margin": 0.0,
-            "battery_risk_label": 0.0,
-            "collision_risk_label": 0.0,
-            "fallback_mask": 0.0,
-        }
-        for key in REWARD_COMPONENT_KEYS:
-            payload[f"reward_{key}"] = 0.0
-        for key in CONSTRAINT_TRACE_KEYS:
-            payload[f"constraint_{key}"] = 0.0
-        return payload
-
-    @staticmethod
-    def _episode_sequence_diagnostics(step_records):
-        if not step_records:
-            return {
-                "late_return_rate": 0.0,
-                "late_contract_rate": 0.0,
-                "anchor_switch_rate": 0.0,
-                "target_switch_rate": 0.0,
-                "diag_rate_all": 0.0,
-                "diag_rate_contract": 0.0,
-                "diag_rate_return": 0.0,
-                "return_progress_per_step": 0.0,
-                "return_efficiency_ratio": 0.0,
-                "return_stall_rate": 0.0,
-                "route_phase_return_stall_rate": 0.0,
-                "recoverability_score_avg": 0.0,
-                "recoverability_violation_rate": 0.0,
-                "wall_hugging_clean_floor_rate": 0.0,
-                "stale_boundary_follow_rate": 0.0,
-                "narrow_unknown_commit_rate": 0.0,
-                "missed_charge_opportunity_rate": 0.0,
-                "charger_nearby_not_charged_rate": 0.0,
-                "suboptimal_target_hold_rate": 0.0,
-                "planner_policy_divergence_rate": 0.0,
-                "route_phase_planner_divergence_rate": 0.0,
-                "reliable_planner_divergence_rate": 0.0,
-                "avg_path_cross_count_50": 0.0,
-                "avg_coverage_efficiency_20": 0.0,
-                "avg_all_charger_known_path_count": 0.0,
-                "avg_unknown_on_target_path_ratio": 0.0,
-                "avg_planner_topk_reachable_count": 0.0,
-                "avg_planner_known_route_count_total": 0.0,
-                "avg_planner_best_target_route_diversity": 0.0,
-                "avg_planner_best_target_tangle_cost": 0.0,
-                "avg_planner_best_target_edge_break_cost": 0.0,
-                "avg_planner_best_target_region_fragment_cost": 0.0,
-                "avg_planner_multi_route_recoverability": 0.0,
-                "battery_process_cost_mean": 0.0,
-                "collision_process_cost_mean": 0.0,
-                "high_need_return_stall_rate": 0.0,
-                "avg_charge_need_score": 0.0,
-                "avg_route_phase_shadow_risk": 0.0,
-                "avg_route_phase_reward_ready_rate": 0.0,
-                "avg_slack_confidence": 0.0,
-                "return_entry_count": 0.0,
-                "readiness_supported_return_entry_count": 0.0,
-                "pre_return_readiness_hit_rate": 0.0,
-                "readiness_to_return_transition_rate": None,
-                "direct_return_without_readiness_rate": None,
-                "clean_floor_revisit_rate": 0.0,
-                "clean_floor_revisit_penalty_mean": 0.0,
-                "effective_coverage_bonus_mean": 0.0,
-                "expert_weight_nonzero_rate": 0.0,
-                "pre_return_bias_active_rate": 0.0,
-                "return_bias_active_rate": 0.0,
-                "return_action_teacher_mask_mean": 0.0,
-                "return_action_teacher_mask_nonzero_rate": 0.0,
-                "route_phase_action_teacher_mask_mean": 0.0,
-                "route_phase_action_teacher_mask_nonzero_rate": 0.0,
-                **{key: 0.0 for key in TEACHER_LABEL_QUALITY_METRIC_KEYS},
-                "mode_usage_depart": 0.0,
-                "mode_usage_expand": 0.0,
-                "mode_usage_harvest": 0.0,
-                "mode_usage_contract": 0.0,
-                "mode_usage_return": 0.0,
-                "mode_usage_evade": 0.0,
-                **{f"avg_reward_{key}": 0.0 for key in REWARD_COMPONENT_MONITOR_KEYS},
-            }
-
-        modes = [int(rec.get("mode", -1)) for rec in step_records]
-        targets = [int(rec.get("target", 0)) for rec in step_records]
-        anchors = [int(rec.get("route_anchor", 0)) for rec in step_records]
-        slacks = [float(rec.get("charger_slack", 0.0)) for rec in step_records]
-        recoverability = [float(rec.get("future_recoverability_score", 0.0)) for rec in step_records]
-        anchor_dists = [float(rec.get("anchor_return_dist", 0.0)) for rec in step_records]
-        diag_actions = [float(rec.get("is_diag_action", 0.0)) for rec in step_records]
-        planner_divergence_flags = [float(rec.get("planner_policy_divergence", 0.0)) for rec in step_records]
-        route_phase_masks = [float(rec.get("route_phase_active", 0.0)) for rec in step_records]
-        route_phase_reliable_masks = [float(rec.get("route_phase_reliable_active", 0.0)) for rec in step_records]
-        simplify_flags = [float(rec.get("control_stack_simplify_active", 0.0)) for rec in step_records]
-        readiness_flags = [float(rec.get("pre_return_readiness_flag", 0.0)) for rec in step_records]
-        expert_weight_nonzero_flags = [float(rec.get("expert_weight_nonzero", 0.0)) for rec in step_records]
-        pre_return_bias_flags = [float(rec.get("pre_return_bias_active", 0.0)) for rec in step_records]
-        return_bias_flags = [float(rec.get("return_bias_active", 0.0)) for rec in step_records]
-        return_action_teacher_masks = [float(rec.get("return_action_teacher_mask", 0.0)) for rec in step_records]
-        route_phase_action_teacher_masks = [
-            float(rec.get("route_phase_action_teacher_mask", 0.0)) for rec in step_records
-        ]
-        route_phase_teacher_from_return_reliable_flags = [
-            float(rec.get("route_phase_teacher_from_return_reliable", 0.0)) for rec in step_records
-        ]
-        route_phase_teacher_from_anchor_or_target_flags = [
-            float(rec.get("route_phase_teacher_from_anchor_or_target", 0.0)) for rec in step_records
-        ]
-        route_phase_teacher_from_critical_fallback_flags = [
-            float(rec.get("route_phase_teacher_from_critical_fallback", 0.0)) for rec in step_records
-        ]
-        return_action_teachers = [int(rec.get("return_action_teacher", -1)) for rec in step_records]
-        route_phase_action_teachers = [int(rec.get("route_phase_action_teacher", -1)) for rec in step_records]
-        teacher_target_stable_flags = [float(rec.get("teacher_target_stable", 0.0)) for rec in step_records]
-        teacher_suggested_legal_safe_flags = [
-            float(rec.get("teacher_suggested_legal_safe", 0.0)) for rec in step_records
-        ]
-        teacher_action_margins = [float(rec.get("teacher_action_margin", 0.0)) for rec in step_records]
-        total = float(len(step_records))
-
-        def _rate(indices, values):
-            selected = [float(values[idx]) for idx in indices]
-            return float(sum(selected) / max(len(selected), 1))
-
-        def _mean_flag(indices, predicate):
-            selected = [1.0 for idx in indices if predicate(idx)]
-            return float(sum(selected) / max(len(indices), 1))
-
-        def _sum_flag(indices, values):
-            return float(sum(float(values[idx]) for idx in indices))
-
-        def _count_matching(indices, predicate):
-            return float(sum(1 for idx in indices if predicate(idx)))
-
-        target_steps = [t for t in targets if t > 0]
-        target_switches = sum(1 for a, b in zip(target_steps, target_steps[1:]) if a != b)
-        target_switch_rate = target_switches / max(len(target_steps) - 1, 1)
-        anchor_steps = [a for a in anchors if a > 0]
-        anchor_switches = sum(1 for a, b in zip(anchor_steps, anchor_steps[1:]) if a != b)
-        anchor_switch_rate = anchor_switches / max(len(anchor_steps) - 1, 1)
-
-        first_contract_idx = next((idx for idx, mode in enumerate(modes) if mode in (3, 4)), None)
-        late_contract_rate = 1.0 if first_contract_idx is not None and recoverability[first_contract_idx] < 0.0 else 0.0
-        first_return_idx = next((idx for idx, mode in enumerate(modes) if mode == 4), None)
-        if first_return_idx is None:
-            late_return_rate = 1.0
-        else:
-            late_return_rate = 1.0 if slacks[first_return_idx] < 0.0 else 0.0
-
-        contract_steps = [idx for idx, mode in enumerate(modes) if mode == 3]
-        return_steps = [idx for idx, mode in enumerate(modes) if mode == 4]
-        diag_rate_all = sum(diag_actions) / total
-        diag_rate_contract = sum(diag_actions[idx] for idx in contract_steps) / max(len(contract_steps), 1)
-        diag_rate_return = sum(diag_actions[idx] for idx in return_steps) / max(len(return_steps), 1)
-        route_phase_steps = [idx for idx, mode in enumerate(modes) if mode in (3, 4)]
-        progress_deltas = []
-        stall_count = 0
-        route_phase_stall_count = 0
-        route_phase_stall_flags = [0.0 for _ in step_records]
-        for prev_idx, cur_idx in zip(route_phase_steps, route_phase_steps[1:]):
-            progress = anchor_dists[prev_idx] - anchor_dists[cur_idx]
-            progress_deltas.append(progress)
-            if progress <= 0.0:
-                stall_count += 1
-                if route_phase_masks[cur_idx] > 0.0:
-                    route_phase_stall_count += 1
-                    route_phase_stall_flags[cur_idx] = 1.0
-        return_progress_per_step = float(sum(progress_deltas) / max(len(progress_deltas), 1))
-        return_efficiency_ratio = float(
-            (anchor_dists[route_phase_steps[0]] / max(len(route_phase_steps), 1))
-            if route_phase_steps and anchor_dists[route_phase_steps[0]] > 0.0
-            else 0.0
-        )
-        return_stall_rate = float(stall_count / max(len(progress_deltas), 1))
-        wall_hugging_clean_floor_rate = float(
-            sum(float(rec.get("wall_hugging_clean_floor", 0.0)) for rec in step_records) / total
-        )
-        stale_boundary_follow_rate = float(
-            sum(float(rec.get("stale_boundary_follow", 0.0)) for rec in step_records) / total
-        )
-        narrow_unknown_commit_rate = float(
-            sum(float(rec.get("narrow_unknown_commit", 0.0)) for rec in step_records) / total
-        )
-        missed_charge_opportunity_rate = float(
-            sum(float(rec.get("missed_charge_opportunity", 0.0)) for rec in step_records) / total
-        )
-        charger_nearby_not_charged_rate = float(
-            sum(float(rec.get("charger_nearby_not_charged", 0.0)) for rec in step_records) / total
-        )
-        clean_floor_revisit_rate = float(
-            sum(float(rec.get("low_value_revisit_flag", 0.0)) for rec in step_records) / total
-        )
-        clean_floor_revisit_penalty_mean = float(
-            sum(float(rec.get("reward_clean_floor_revisit_penalty", 0.0)) for rec in step_records) / total
-        )
-        effective_coverage_bonus_mean = float(
-            sum(float(rec.get("reward_effective_coverage_bonus", 0.0)) for rec in step_records) / total
-        )
-        expert_weight_nonzero_rate = float(sum(expert_weight_nonzero_flags) / total)
-        pre_return_bias_active_rate = float(sum(pre_return_bias_flags) / total)
-        return_bias_active_rate = float(sum(return_bias_flags) / total)
-        return_action_teacher_mask_mean = float(sum(return_action_teacher_masks) / total)
-        route_phase_action_teacher_mask_mean = float(sum(route_phase_action_teacher_masks) / total)
-        return_action_teacher_mask_nonzero_rate = float(
-            sum(1.0 for mask in return_action_teacher_masks if mask > 0.0) / total
-        )
-        route_phase_action_teacher_mask_nonzero_rate = float(
-            sum(1.0 for mask in route_phase_action_teacher_masks if mask > 0.0) / total
-        )
-        return_teacher_indices = [
-            idx
-            for idx, mask in enumerate(return_action_teacher_masks)
-            if mask > 0.0 and return_action_teachers[idx] >= 0
-        ]
-        route_phase_teacher_indices = [
-            idx
-            for idx, mask in enumerate(route_phase_action_teacher_masks)
-            if mask > 0.0 and route_phase_action_teachers[idx] >= 0
-        ]
-        active_pair_indices = [
-            idx
-            for idx in return_teacher_indices
-            if route_phase_action_teacher_masks[idx] > 0.0 and route_phase_action_teachers[idx] >= 0
-        ]
-        active_pair_index_set = set(active_pair_indices)
-        missing_route_pair_indices = [idx for idx in return_teacher_indices if idx not in active_pair_index_set]
-        return_teacher_index_set = set(return_teacher_indices)
-        missing_return_pair_indices = [idx for idx in route_phase_teacher_indices if idx not in return_teacher_index_set]
-        agree_indices = [
-            idx for idx in active_pair_indices
-            if return_action_teachers[idx] == route_phase_action_teachers[idx]
-        ]
-        agree_index_set = set(agree_indices)
-        disagree_indices = [idx for idx in active_pair_indices if idx not in agree_index_set]
-        return_action_margin_min = float(getattr(Config, "TEACHER_RETURN_ACTION_MARGIN_MIN", 1.0))
-        stable_invariant_satisfied_indices = [idx for idx in return_teacher_indices if teacher_target_stable_flags[idx] > 0.0]
-        stable_invariant_violated_indices = [idx for idx in return_teacher_indices if teacher_target_stable_flags[idx] <= 0.0]
-        legal_safe_invariant_satisfied_indices = [idx for idx in return_teacher_indices if teacher_suggested_legal_safe_flags[idx] > 0.0]
-        legal_safe_invariant_violated_indices = [idx for idx in return_teacher_indices if teacher_suggested_legal_safe_flags[idx] <= 0.0]
-        action_margin_invariant_satisfied_indices = [
-            idx for idx in return_teacher_indices if teacher_action_margins[idx] >= return_action_margin_min
-        ]
-        action_margin_invariant_violated_indices = [
-            idx for idx in return_teacher_indices if teacher_action_margins[idx] < return_action_margin_min
-        ]
-        reliability_invariant_satisfied_indices = [
-            idx
-            for idx in return_teacher_indices
-            if (
-                teacher_target_stable_flags[idx] > 0.0
-                and teacher_suggested_legal_safe_flags[idx] > 0.0
-                and teacher_action_margins[idx] >= return_action_margin_min
-            )
-        ]
-        reliability_invariant_satisfied_set = set(reliability_invariant_satisfied_indices)
-        reliability_invariant_violated_indices = [
-            idx for idx in return_teacher_indices if idx not in reliability_invariant_satisfied_set
-        ]
-        low_margin_indices = [idx for idx in return_teacher_indices if teacher_action_margins[idx] < 1.0]
-        mid_margin_indices = [idx for idx in return_teacher_indices if 1.0 <= teacher_action_margins[idx] < 3.0]
-        high_margin_indices = [idx for idx in return_teacher_indices if teacher_action_margins[idx] >= 3.0]
-        return_teacher_count = len(return_teacher_indices)
-        route_phase_teacher_count = len(route_phase_teacher_indices)
-        active_pair_count = len(active_pair_indices)
-        agree_pair_count = len(agree_indices)
-        disagree_pair_count = len(disagree_indices)
-        missing_route_pair_count = len(missing_route_pair_indices)
-        missing_return_pair_count = len(missing_return_pair_indices)
-        route_phase_teacher_from_return_reliable_count = sum(
-            1 for idx in route_phase_teacher_indices if route_phase_teacher_from_return_reliable_flags[idx] > 0.0
-        )
-        route_phase_teacher_from_anchor_or_target_count = sum(
-            1 for idx in route_phase_teacher_indices if route_phase_teacher_from_anchor_or_target_flags[idx] > 0.0
-        )
-        route_phase_teacher_from_critical_fallback_count = sum(
-            1 for idx in route_phase_teacher_indices if route_phase_teacher_from_critical_fallback_flags[idx] > 0.0
-        )
-        route_source_indices = {
-            "return_reliable": [
-                idx for idx in route_phase_teacher_indices
-                if route_phase_teacher_from_return_reliable_flags[idx] > 0.0
-            ],
-            "anchor_or_target": [
-                idx for idx in route_phase_teacher_indices
-                if route_phase_teacher_from_anchor_or_target_flags[idx] > 0.0
-            ],
-            "critical_fallback": [
-                idx for idx in route_phase_teacher_indices
-                if route_phase_teacher_from_critical_fallback_flags[idx] > 0.0
-            ],
-        }
-        return_teacher_in_route_phase_count = sum(1 for idx in return_teacher_indices if modes[idx] in (3, 4))
-        return_teacher_outside_route_phase_count = return_teacher_count - return_teacher_in_route_phase_count
-        return_timing_indices = {
-            "inside_route_phase": [idx for idx in return_teacher_indices if modes[idx] in (3, 4)],
-            "outside_route_phase": [idx for idx in return_teacher_indices if modes[idx] not in (3, 4)],
-            "mode_depart": [idx for idx in return_teacher_indices if modes[idx] == 0],
-            "mode_expand": [idx for idx in return_teacher_indices if modes[idx] == 1],
-            "mode_harvest": [idx for idx in return_teacher_indices if modes[idx] == 2],
-            "mode_contract": [idx for idx in return_teacher_indices if modes[idx] == 3],
-            "mode_return": [idx for idx in return_teacher_indices if modes[idx] == 4],
-            "mode_evade": [idx for idx in return_teacher_indices if modes[idx] == 5],
-        }
-        return_teacher_mode_counts = {
-            "depart": sum(1 for idx in return_teacher_indices if modes[idx] == 0),
-            "expand": sum(1 for idx in return_teacher_indices if modes[idx] == 1),
-            "harvest": sum(1 for idx in return_teacher_indices if modes[idx] == 2),
-            "contract": sum(1 for idx in return_teacher_indices if modes[idx] == 3),
-            "return": sum(1 for idx in return_teacher_indices if modes[idx] == 4),
-            "evade": sum(1 for idx in return_teacher_indices if modes[idx] == 5),
-        }
-        return_teacher_mode_counts["other"] = return_teacher_count - sum(return_teacher_mode_counts.values())
-        return_timing_indices["mode_other"] = [
-            idx for idx in return_teacher_indices if modes[idx] not in (0, 1, 2, 3, 4, 5)
-        ]
-        last_route_source_bucket = "none"
-        for idx in reversed(route_phase_teacher_indices):
-            if route_phase_teacher_from_return_reliable_flags[idx] > 0.0:
-                last_route_source_bucket = "return_reliable"
-                break
-            if route_phase_teacher_from_anchor_or_target_flags[idx] > 0.0:
-                last_route_source_bucket = "anchor_or_target"
-                break
-            if route_phase_teacher_from_critical_fallback_flags[idx] > 0.0:
-                last_route_source_bucket = "critical_fallback"
-                break
-        last_return_timing_bucket = "none"
-        if return_teacher_indices:
-            last_return_idx = return_teacher_indices[-1]
-            if modes[last_return_idx] in (3, 4):
-                last_return_timing_bucket = "inside_route_phase"
-            elif modes[last_return_idx] == 0:
-                last_return_timing_bucket = "mode_depart"
-            elif modes[last_return_idx] == 1:
-                last_return_timing_bucket = "mode_expand"
-            elif modes[last_return_idx] == 2:
-                last_return_timing_bucket = "mode_harvest"
-            elif modes[last_return_idx] == 5:
-                last_return_timing_bucket = "mode_evade"
-            else:
-                last_return_timing_bucket = "outside_route_phase"
-        terminal_record = step_records[-1]
-        episode_battery_failed = bool(terminal_record.get("battery_fail_type"))
-        episode_zero_charge_battery_failed = bool(
-            episode_battery_failed
-            and float(terminal_record.get("charge_count", terminal_record.get("episode_charge_count", 1.0)) or 0.0) <= 0.0
-        )
-        policy_teacher_divergence_diagnostics = {}
-        for bucket, indices in route_source_indices.items():
-            policy_teacher_divergence_diagnostics[f"route_source_{bucket}_policy_planner_divergence_count"] = _sum_flag(
-                indices, planner_divergence_flags
-            )
-            policy_teacher_divergence_diagnostics[f"route_source_{bucket}_return_stall_count"] = _sum_flag(
-                indices, route_phase_stall_flags
-            )
-            policy_teacher_divergence_diagnostics[f"route_source_{bucket}_policy_teacher_adoption_count"] = _count_matching(
-                indices, lambda idx: int(step_records[idx].get("act", -1)) == route_phase_action_teachers[idx]
-            )
-        for bucket, indices in return_timing_indices.items():
-            policy_teacher_divergence_diagnostics[f"return_timing_{bucket}_policy_planner_divergence_count"] = _sum_flag(
-                indices, planner_divergence_flags
-            )
-            policy_teacher_divergence_diagnostics[f"return_timing_{bucket}_return_stall_count"] = _sum_flag(
-                indices, route_phase_stall_flags
-            )
-            policy_teacher_divergence_diagnostics[f"return_timing_{bucket}_policy_teacher_adoption_count"] = _count_matching(
-                indices, lambda idx: int(step_records[idx].get("act", -1)) == return_action_teachers[idx]
-            )
-        for bucket in ROUTE_SOURCE_FAILURE_BUCKETS:
-            policy_teacher_divergence_diagnostics[f"battery_fail_last_route_source_{bucket}_count"] = float(
-                episode_battery_failed and last_route_source_bucket == bucket
-            )
-            policy_teacher_divergence_diagnostics[f"zero_charge_battery_fail_last_route_source_{bucket}_count"] = float(
-                episode_zero_charge_battery_failed and last_route_source_bucket == bucket
-            )
-        for bucket in RETURN_TIMING_FAILURE_BUCKETS:
-            policy_teacher_divergence_diagnostics[f"battery_fail_last_return_timing_{bucket}_count"] = float(
-                episode_battery_failed and last_return_timing_bucket == bucket
-            )
-        return_route_teacher_active_pair_rate = float(active_pair_count / max(return_teacher_count, 1))
-        return_route_teacher_agreement_rate = float(agree_pair_count / max(active_pair_count, 1))
-        return_route_teacher_disagreement_rate = float(disagree_pair_count / max(active_pair_count, 1))
-        missing_route_pair_rate = float(missing_route_pair_count / max(return_teacher_count, 1))
-        missing_return_pair_rate = float(missing_return_pair_count / max(route_phase_teacher_count, 1))
-        route_phase_teacher_from_return_reliable_rate = float(
-            route_phase_teacher_from_return_reliable_count / max(route_phase_teacher_count, 1)
-        )
-        route_phase_teacher_from_anchor_or_target_rate = float(
-            route_phase_teacher_from_anchor_or_target_count / max(route_phase_teacher_count, 1)
-        )
-        route_phase_teacher_from_critical_fallback_rate = float(
-            route_phase_teacher_from_critical_fallback_count / max(route_phase_teacher_count, 1)
-        )
-        return_teacher_in_route_phase_rate = float(return_teacher_in_route_phase_count / max(return_teacher_count, 1))
-        return_teacher_outside_route_phase_rate = float(
-            return_teacher_outside_route_phase_count / max(return_teacher_count, 1)
-        )
-        return_teacher_mode_rates = {
-            mode_name: float(count / max(return_teacher_count, 1))
-            for mode_name, count in return_teacher_mode_counts.items()
-        }
-        return_teacher_stable_invariant_satisfied_rate = float(
-            len(stable_invariant_satisfied_indices) / max(return_teacher_count, 1)
-        )
-        return_teacher_stable_invariant_violated_rate = float(
-            len(stable_invariant_violated_indices) / max(return_teacher_count, 1)
-        )
-        return_teacher_legal_safe_invariant_satisfied_rate = float(
-            len(legal_safe_invariant_satisfied_indices) / max(return_teacher_count, 1)
-        )
-        return_teacher_legal_safe_invariant_violated_rate = float(
-            len(legal_safe_invariant_violated_indices) / max(return_teacher_count, 1)
-        )
-        return_teacher_action_margin_invariant_satisfied_rate = float(
-            len(action_margin_invariant_satisfied_indices) / max(return_teacher_count, 1)
-        )
-        return_teacher_action_margin_invariant_violated_rate = float(
-            len(action_margin_invariant_violated_indices) / max(return_teacher_count, 1)
-        )
-        return_teacher_reliability_invariant_satisfied_rate = float(
-            len(reliability_invariant_satisfied_indices) / max(return_teacher_count, 1)
-        )
-        return_teacher_reliability_invariant_violated_rate = float(
-            len(reliability_invariant_violated_indices) / max(return_teacher_count, 1)
-        )
-        return_teacher_target_stable_rate = _rate(return_teacher_indices, teacher_target_stable_flags)
-        return_teacher_target_unstable_rate = _mean_flag(
-            return_teacher_indices, lambda idx: teacher_target_stable_flags[idx] <= 0.0
-        )
-        return_teacher_suggested_legal_safe_rate = _rate(return_teacher_indices, teacher_suggested_legal_safe_flags)
-        return_teacher_action_margin_low_rate = float(len(low_margin_indices) / max(len(return_teacher_indices), 1))
-        return_teacher_action_margin_mid_rate = float(len(mid_margin_indices) / max(len(return_teacher_indices), 1))
-        return_teacher_action_margin_high_rate = float(len(high_margin_indices) / max(len(return_teacher_indices), 1))
-        return_teacher_agree_route_phase_planner_divergence_rate = _rate(agree_indices, planner_divergence_flags)
-        return_teacher_disagree_route_phase_planner_divergence_rate = _rate(disagree_indices, planner_divergence_flags)
-        return_teacher_agree_route_phase_return_stall_rate = _rate(agree_indices, route_phase_stall_flags)
-        return_teacher_disagree_route_phase_return_stall_rate = _rate(disagree_indices, route_phase_stall_flags)
-        return_teacher_margin_low_route_phase_planner_divergence_rate = _rate(low_margin_indices, planner_divergence_flags)
-        return_teacher_margin_mid_route_phase_planner_divergence_rate = _rate(mid_margin_indices, planner_divergence_flags)
-        return_teacher_margin_high_route_phase_planner_divergence_rate = _rate(high_margin_indices, planner_divergence_flags)
-        return_teacher_margin_low_route_phase_return_stall_rate = _rate(low_margin_indices, route_phase_stall_flags)
-        return_teacher_margin_mid_route_phase_return_stall_rate = _rate(mid_margin_indices, route_phase_stall_flags)
-        return_teacher_margin_high_route_phase_return_stall_rate = _rate(high_margin_indices, route_phase_stall_flags)
-        suboptimal_target_hold_rate = float(
-            sum(float(rec.get("suboptimal_target_hold", 0.0)) for rec in step_records) / total
-        )
-        planner_policy_divergence_rate = float(
-            sum(float(rec.get("planner_policy_divergence", 0.0)) for rec in step_records) / total
-        )
-        route_phase_planner_den = max(sum(route_phase_masks), 1.0)
-        route_phase_planner_divergence_rate = float(
-            sum(div for div, active in zip(planner_divergence_flags, route_phase_masks) if active > 0.0)
-            / route_phase_planner_den
-        )
-        reliable_planner_den = max(sum(route_phase_reliable_masks), 1.0)
-        reliable_planner_divergence_rate = float(
-            sum(div for div, active in zip(planner_divergence_flags, route_phase_reliable_masks) if active > 0.0)
-            / reliable_planner_den
-        )
-        route_phase_return_stall_rate = float(route_phase_stall_count / max(len(progress_deltas), 1))
-        return_entry_indices = [
-            idx
-            for idx in range(1, len(modes))
-            if modes[idx] == 4 and modes[idx - 1] != 4
-        ]
-        readiness_supported_entries = sum(
-            1 for idx in return_entry_indices
-            if readiness_flags[idx - 1] > 0.0 or modes[idx - 1] == 3
-        )
-        return_entry_count = int(len(return_entry_indices))
-        readiness_supported_return_entry_count = int(readiness_supported_entries)
-        simplify_active_episode = bool(sum(simplify_flags) > 0.0)
-        if simplify_active_episode:
-            pre_return_readiness_hit_rate = float(sum(readiness_flags) / total)
-        else:
-            pre_return_readiness_hit_rate = None
-        if simplify_active_episode and return_entry_count > 0:
-            readiness_to_return_transition_rate = float(
-                readiness_supported_return_entry_count / return_entry_count
-            )
-            direct_return_without_readiness_rate = float(
-                (return_entry_count - readiness_supported_return_entry_count) / return_entry_count
-            )
-        else:
-            readiness_to_return_transition_rate = None
-            direct_return_without_readiness_rate = None
-
-        payload = {
-            "late_return_rate": float(late_return_rate),
-            "late_contract_rate": float(late_contract_rate),
-            "anchor_switch_rate": float(anchor_switch_rate),
-            "target_switch_rate": float(target_switch_rate),
-            "diag_rate_all": float(diag_rate_all),
-            "diag_rate_contract": float(diag_rate_contract),
-            "diag_rate_return": float(diag_rate_return),
-            "return_progress_per_step": float(return_progress_per_step),
-            "return_efficiency_ratio": float(return_efficiency_ratio),
-            "return_stall_rate": float(return_stall_rate),
-            "route_phase_return_stall_rate": float(route_phase_return_stall_rate),
-            "recoverability_score_avg": float(sum(recoverability) / max(len(recoverability), 1)),
-            "recoverability_violation_rate": float(sum(1 for x in recoverability if x < 0.0) / max(len(recoverability), 1)),
-            "wall_hugging_clean_floor_rate": wall_hugging_clean_floor_rate,
-            "stale_boundary_follow_rate": stale_boundary_follow_rate,
-            "narrow_unknown_commit_rate": narrow_unknown_commit_rate,
-            "missed_charge_opportunity_rate": missed_charge_opportunity_rate,
-            "charger_nearby_not_charged_rate": charger_nearby_not_charged_rate,
-            "clean_floor_revisit_rate": clean_floor_revisit_rate,
-            "clean_floor_revisit_penalty_mean": clean_floor_revisit_penalty_mean,
-            "effective_coverage_bonus_mean": effective_coverage_bonus_mean,
-            "expert_weight_nonzero_rate": expert_weight_nonzero_rate,
-            "pre_return_bias_active_rate": pre_return_bias_active_rate,
-            "return_bias_active_rate": return_bias_active_rate,
-            "return_action_teacher_mask_mean": return_action_teacher_mask_mean,
-            "return_action_teacher_mask_nonzero_rate": return_action_teacher_mask_nonzero_rate,
-            "route_phase_action_teacher_mask_mean": route_phase_action_teacher_mask_mean,
-            "route_phase_action_teacher_mask_nonzero_rate": route_phase_action_teacher_mask_nonzero_rate,
-            "return_teacher_count": float(return_teacher_count),
-            "route_phase_teacher_count": float(route_phase_teacher_count),
-            "active_pair_count": float(active_pair_count),
-            "agree_pair_count": float(agree_pair_count),
-            "disagree_pair_count": float(disagree_pair_count),
-            "missing_route_pair_count": float(missing_route_pair_count),
-            "missing_return_pair_count": float(missing_return_pair_count),
-            "route_phase_teacher_from_return_reliable_count": float(route_phase_teacher_from_return_reliable_count),
-            "route_phase_teacher_from_anchor_or_target_count": float(route_phase_teacher_from_anchor_or_target_count),
-            "route_phase_teacher_from_critical_fallback_count": float(route_phase_teacher_from_critical_fallback_count),
-            "return_teacher_in_route_phase_count": float(return_teacher_in_route_phase_count),
-            "return_teacher_outside_route_phase_count": float(return_teacher_outside_route_phase_count),
-            "return_teacher_mode_depart_count": float(return_teacher_mode_counts["depart"]),
-            "return_teacher_mode_expand_count": float(return_teacher_mode_counts["expand"]),
-            "return_teacher_mode_harvest_count": float(return_teacher_mode_counts["harvest"]),
-            "return_teacher_mode_contract_count": float(return_teacher_mode_counts["contract"]),
-            "return_teacher_mode_return_count": float(return_teacher_mode_counts["return"]),
-            "return_teacher_mode_evade_count": float(return_teacher_mode_counts["evade"]),
-            "return_teacher_mode_other_count": float(return_teacher_mode_counts["other"]),
-            "return_teacher_target_stable_count": float(len(stable_invariant_satisfied_indices)),
-            "return_teacher_target_unstable_count": float(len(stable_invariant_violated_indices)),
-            "return_teacher_suggested_legal_safe_count": float(len(legal_safe_invariant_satisfied_indices)),
-            "return_teacher_action_margin_low_count": float(len(low_margin_indices)),
-            "return_teacher_action_margin_mid_count": float(len(mid_margin_indices)),
-            "return_teacher_action_margin_high_count": float(len(high_margin_indices)),
-            "return_teacher_stable_invariant_satisfied_count": float(len(stable_invariant_satisfied_indices)),
-            "return_teacher_stable_invariant_violated_count": float(len(stable_invariant_violated_indices)),
-            "return_teacher_legal_safe_invariant_satisfied_count": float(len(legal_safe_invariant_satisfied_indices)),
-            "return_teacher_legal_safe_invariant_violated_count": float(len(legal_safe_invariant_violated_indices)),
-            "return_teacher_action_margin_invariant_satisfied_count": float(len(action_margin_invariant_satisfied_indices)),
-            "return_teacher_action_margin_invariant_violated_count": float(len(action_margin_invariant_violated_indices)),
-            "return_teacher_reliability_invariant_satisfied_count": float(len(reliability_invariant_satisfied_indices)),
-            "return_teacher_reliability_invariant_violated_count": float(len(reliability_invariant_violated_indices)),
-            "battery_fail_count": float(episode_battery_failed),
-            **policy_teacher_divergence_diagnostics,
-            "return_route_teacher_active_pair_rate": return_route_teacher_active_pair_rate,
-            "return_route_teacher_agreement_rate": return_route_teacher_agreement_rate,
-            "return_route_teacher_disagreement_rate": return_route_teacher_disagreement_rate,
-            "missing_route_pair_rate": missing_route_pair_rate,
-            "missing_return_pair_rate": missing_return_pair_rate,
-            "route_phase_teacher_from_return_reliable_rate": route_phase_teacher_from_return_reliable_rate,
-            "route_phase_teacher_from_anchor_or_target_rate": route_phase_teacher_from_anchor_or_target_rate,
-            "route_phase_teacher_from_critical_fallback_rate": route_phase_teacher_from_critical_fallback_rate,
-            "return_teacher_in_route_phase_rate": return_teacher_in_route_phase_rate,
-            "return_teacher_outside_route_phase_rate": return_teacher_outside_route_phase_rate,
-            "return_teacher_mode_depart_rate": return_teacher_mode_rates["depart"],
-            "return_teacher_mode_expand_rate": return_teacher_mode_rates["expand"],
-            "return_teacher_mode_harvest_rate": return_teacher_mode_rates["harvest"],
-            "return_teacher_mode_contract_rate": return_teacher_mode_rates["contract"],
-            "return_teacher_mode_return_rate": return_teacher_mode_rates["return"],
-            "return_teacher_mode_evade_rate": return_teacher_mode_rates["evade"],
-            "return_teacher_mode_other_rate": return_teacher_mode_rates["other"],
-            "return_teacher_stable_invariant_satisfied_rate": return_teacher_stable_invariant_satisfied_rate,
-            "return_teacher_stable_invariant_violated_rate": return_teacher_stable_invariant_violated_rate,
-            "return_teacher_legal_safe_invariant_satisfied_rate": return_teacher_legal_safe_invariant_satisfied_rate,
-            "return_teacher_legal_safe_invariant_violated_rate": return_teacher_legal_safe_invariant_violated_rate,
-            "return_teacher_action_margin_invariant_satisfied_rate": return_teacher_action_margin_invariant_satisfied_rate,
-            "return_teacher_action_margin_invariant_violated_rate": return_teacher_action_margin_invariant_violated_rate,
-            "return_teacher_reliability_invariant_satisfied_rate": return_teacher_reliability_invariant_satisfied_rate,
-            "return_teacher_reliability_invariant_violated_rate": return_teacher_reliability_invariant_violated_rate,
-            "return_teacher_target_stable_rate": return_teacher_target_stable_rate,
-            "return_teacher_target_unstable_rate": return_teacher_target_unstable_rate,
-            "return_teacher_suggested_legal_safe_rate": return_teacher_suggested_legal_safe_rate,
-            "return_teacher_action_margin_low_rate": return_teacher_action_margin_low_rate,
-            "return_teacher_action_margin_mid_rate": return_teacher_action_margin_mid_rate,
-            "return_teacher_action_margin_high_rate": return_teacher_action_margin_high_rate,
-            "return_teacher_agree_route_phase_planner_divergence_rate": return_teacher_agree_route_phase_planner_divergence_rate,
-            "return_teacher_disagree_route_phase_planner_divergence_rate": return_teacher_disagree_route_phase_planner_divergence_rate,
-            "return_teacher_agree_route_phase_return_stall_rate": return_teacher_agree_route_phase_return_stall_rate,
-            "return_teacher_disagree_route_phase_return_stall_rate": return_teacher_disagree_route_phase_return_stall_rate,
-            "return_teacher_margin_low_route_phase_planner_divergence_rate": return_teacher_margin_low_route_phase_planner_divergence_rate,
-            "return_teacher_margin_mid_route_phase_planner_divergence_rate": return_teacher_margin_mid_route_phase_planner_divergence_rate,
-            "return_teacher_margin_high_route_phase_planner_divergence_rate": return_teacher_margin_high_route_phase_planner_divergence_rate,
-            "return_teacher_margin_low_route_phase_return_stall_rate": return_teacher_margin_low_route_phase_return_stall_rate,
-            "return_teacher_margin_mid_route_phase_return_stall_rate": return_teacher_margin_mid_route_phase_return_stall_rate,
-            "return_teacher_margin_high_route_phase_return_stall_rate": return_teacher_margin_high_route_phase_return_stall_rate,
-            "suboptimal_target_hold_rate": suboptimal_target_hold_rate,
-            "planner_policy_divergence_rate": planner_policy_divergence_rate,
-            "route_phase_planner_divergence_rate": route_phase_planner_divergence_rate,
-            "reliable_planner_divergence_rate": reliable_planner_divergence_rate,
-            "avg_path_cross_count_50": float(sum(float(rec.get("path_cross_count_50", 0.0)) for rec in step_records) / total),
-            "avg_coverage_efficiency_20": float(sum(float(rec.get("coverage_efficiency_20", 0.0)) for rec in step_records) / total),
-            "avg_all_charger_known_path_count": float(
-                sum(float(rec.get("all_charger_known_path_count", 0.0)) for rec in step_records) / total
-            ),
-            "avg_unknown_on_target_path_ratio": float(
-                sum(float(rec.get("unknown_on_target_path_ratio", 0.0)) for rec in step_records) / total
-            ),
-            "avg_planner_topk_reachable_count": float(
-                sum(float(rec.get("planner_topk_reachable_count", 0.0)) for rec in step_records) / total
-            ),
-            "avg_planner_known_route_count_total": float(
-                sum(float(rec.get("planner_known_route_count_total", 0.0)) for rec in step_records) / total
-            ),
-            "avg_planner_best_target_route_diversity": float(
-                sum(float(rec.get("planner_best_target_route_diversity", 0.0)) for rec in step_records) / total
-            ),
-            "avg_planner_best_target_tangle_cost": float(
-                sum(float(rec.get("planner_best_target_tangle_cost", 0.0)) for rec in step_records) / total
-            ),
-            "avg_planner_best_target_edge_break_cost": float(
-                sum(float(rec.get("planner_best_target_edge_break_cost", 0.0)) for rec in step_records) / total
-            ),
-            "avg_planner_best_target_region_fragment_cost": float(
-                sum(float(rec.get("planner_best_target_region_fragment_cost", 0.0)) for rec in step_records) / total
-            ),
-            "avg_planner_multi_route_recoverability": float(
-                sum(float(rec.get("planner_multi_route_recoverability", 0.0)) for rec in step_records) / total
-            ),
-            "battery_process_cost_mean": float(
-                sum(float(rec.get("constraint_battery_process_cost", 0.0)) for rec in step_records) / total
-            ),
-            "collision_process_cost_mean": float(
-                sum(float(rec.get("constraint_collision_process_cost", 0.0)) for rec in step_records) / total
-            ),
-            "high_need_return_stall_rate": float(
-                sum(float(rec.get("constraint_high_need_stall_indicator", 0.0)) for rec in step_records) / total
-            ),
-            "avg_charge_need_score": float(
-                sum(float(rec.get("constraint_charge_need_score", 0.0)) for rec in step_records) / total
-            ),
-            "avg_route_phase_shadow_risk": float(
-                sum(float(rec.get("constraint_route_phase_shadow_risk", 0.0)) for rec in step_records) / total
-            ),
-            "avg_route_phase_reward_ready_rate": float(
-                sum(float(rec.get("constraint_route_phase_reward_ready", 0.0)) for rec in step_records) / total
-            ),
-            "avg_slack_confidence": float(
-                sum(float(rec.get("constraint_slack_confidence", 0.0)) for rec in step_records) / total
-            ),
-            "return_entry_count": float(return_entry_count),
-            "readiness_supported_return_entry_count": float(readiness_supported_return_entry_count),
-            "pre_return_readiness_hit_rate": (
-                float(pre_return_readiness_hit_rate) if pre_return_readiness_hit_rate is not None else None
-            ),
-            "readiness_to_return_transition_rate": (
-                float(readiness_to_return_transition_rate)
-                if readiness_to_return_transition_rate is not None else None
-            ),
-            "direct_return_without_readiness_rate": (
-                float(direct_return_without_readiness_rate)
-                if direct_return_without_readiness_rate is not None else None
-            ),
-            "mode_usage_depart": sum(1 for mode in modes if mode == 0) / total,
-            "mode_usage_expand": sum(1 for mode in modes if mode == 1) / total,
-            "mode_usage_harvest": sum(1 for mode in modes if mode == 2) / total,
-            "mode_usage_contract": sum(1 for mode in modes if mode == 3) / total,
-            "mode_usage_return": sum(1 for mode in modes if mode == 4) / total,
-            "mode_usage_evade": sum(1 for mode in modes if mode == 5) / total,
-            **{
-                f"avg_reward_{key}": float(
-                    sum(float(rec.get(f"reward_{key}", 0.0)) for rec in step_records) / total
-                )
-                for key in REWARD_COMPONENT_MONITOR_KEYS
-            },
-        }
-        _apply_teacher_label_quality_count_rates(payload)
-        return payload
-
-    def _build_monitor_payload(self, reward):
-        m = self._window_metrics()
-        if not m:
-            return {"reward": reward, "episode_cnt": self.episode_cnt}
-        payload = {
-            "reward": reward,
-            "episode_cnt": self.episode_cnt,
-            "avg_episode_steps": round(m["avg_finished_steps"], 2),
-            "avg_charge_count": round(m["avg_charge_count"], 2),
-            "avg_cleaned_cells": round(m["avg_clean_score"], 2),
-            "avg_remaining_charge": round(m["avg_remaining_charge"], 2),
-            "avg_invalid_move_rate": round(m["avg_invalid_move_rate"], 4),
-            "avg_charge_efficiency": round(m["avg_charge_efficiency"], 4),
-            "avg_clean_per_charge_when_charged": round(m["avg_clean_per_charge_when_charged"], 4),
-            "avg_clean_per_step": round(m["avg_clean_per_step"], 4),
-            "avg_mix_alpha": round(m.get("avg_mix_alpha", 0.0), 4),
-            "final_mix_alpha_mean": round(m.get("final_mix_alpha_mean", 0.0), 4),
-            "residual_alpha_next_mean": round(m.get("residual_alpha_next_mean", 0.0), 4),
-            "avg_charger_arrived_count": round(m.get("avg_charger_arrived_count", 0.0), 4),
-            "avg_arrival_confirmed_count": round(m.get("avg_arrival_confirmed_count", 0.0), 4),
-            "avg_arrival_canceled_count": round(m.get("avg_arrival_canceled_count", 0.0), 4),
-            "avg_arrival_retro_canceled_count": round(m.get("avg_arrival_retro_canceled_count", 0.0), 4),
-            "avg_go23_terminal_adjust": round(m.get("avg_go23_terminal_adjust", 0.0), 4),
-            "charge_fail_after_arrival_rate": round(m.get("charge_fail_after_arrival_rate", 0.0), 4),
-            "battery_fail_rate": round(m["battery_fail_rate"], 4),
-            "collision_fail_rate": round(m["collision_fail_rate"], 4),
-            "zero_charge_battery_fail_rate": round(m["zero_charge_battery_fail_rate"], 4),
-            "zero_charge_among_battery_fail_rate": round(m["zero_charge_among_battery_fail_rate"], 4),
-            "completed_rate": round(m["win_rate"], 4),
-            "cps_win": round(m["cps_win"], 4),
-            "avg_charge_count_win": round(m["avg_charge_count_win"], 2),
-            "avg_clean_score_win": round(m["avg_clean_score_win"], 2),
-            "avg_charge_count_completed": round(m["avg_charge_count_completed"], 2),
-            "avg_charge_count_battery_fail": round(m["avg_charge_count_battery_fail"], 2),
-            "avg_expert_weight": round(m["avg_expert_weight"], 2),
-            "expert_weight_nonzero_rate": round(m.get("expert_weight_nonzero_rate", 0.0), 4),
-            "pre_return_bias_active_rate": round(m.get("pre_return_bias_active_rate", 0.0), 4),
-            "return_bias_active_rate": round(m.get("return_bias_active_rate", 0.0), 4),
-            "late_return_rate": round(m["late_return_rate"], 4),
-            "late_contract_rate": round(m["late_contract_rate"], 4),
-            "anchor_switch_rate": round(m["anchor_switch_rate"], 4),
-            "target_switch_rate": round(m["target_switch_rate"], 4),
-            "diag_rate_all": round(m["diag_rate_all"], 4),
-            "diag_rate_contract": round(m["diag_rate_contract"], 4),
-            "diag_rate_return": round(m["diag_rate_return"], 4),
-            "return_progress_per_step": round(m["return_progress_per_step"], 4),
-            "return_efficiency_ratio": round(m["return_efficiency_ratio"], 4),
-            "return_stall_rate": round(m["return_stall_rate"], 4),
-            "avg_route_phase_return_stall_rate": round(m.get("route_phase_return_stall_rate", 0.0), 4),
-            "recoverability_score_avg": round(m["recoverability_score_avg"], 4),
-            "recoverability_violation_rate": round(m["recoverability_violation_rate"], 4),
-            "wall_hugging_clean_floor_rate": round(m["wall_hugging_clean_floor_rate"], 4),
-            "stale_boundary_follow_rate": round(m["stale_boundary_follow_rate"], 4),
-            "narrow_unknown_commit_rate": round(m["narrow_unknown_commit_rate"], 4),
-            "missed_charge_opportunity_rate": round(m["missed_charge_opportunity_rate"], 4),
-            "charger_nearby_not_charged_rate": round(m["charger_nearby_not_charged_rate"], 4),
-            "suboptimal_target_hold_rate": round(m["suboptimal_target_hold_rate"], 4),
-            "planner_policy_divergence_rate": round(m["planner_policy_divergence_rate"], 4),
-            "avg_route_phase_planner_divergence_rate": round(
-                m.get("route_phase_planner_divergence_rate", 0.0), 4
-            ),
-            "avg_reliable_planner_divergence_rate": round(
-                m.get("reliable_planner_divergence_rate", 0.0), 4
-            ),
-            "avg_path_cross_count_50": round(m["avg_path_cross_count_50"], 4),
-            "avg_coverage_efficiency_20": round(m["avg_coverage_efficiency_20"], 4),
-            "avg_all_charger_known_path_count": round(m["avg_all_charger_known_path_count"], 4),
-            "avg_unknown_on_target_path_ratio": round(m["avg_unknown_on_target_path_ratio"], 4),
-            "avg_planner_topk_reachable_count": round(m["avg_planner_topk_reachable_count"], 4),
-            "avg_planner_known_route_count_total": round(m["avg_planner_known_route_count_total"], 4),
-            "avg_planner_best_target_route_diversity": round(m["avg_planner_best_target_route_diversity"], 4),
-            "avg_planner_best_target_tangle_cost": round(m["avg_planner_best_target_tangle_cost"], 4),
-            "avg_planner_best_target_edge_break_cost": round(m["avg_planner_best_target_edge_break_cost"], 4),
-            "avg_planner_best_target_region_fragment_cost": round(m["avg_planner_best_target_region_fragment_cost"], 4),
-            "avg_planner_multi_route_recoverability": round(m["avg_planner_multi_route_recoverability"], 4),
-            "battery_process_cost_mean": round(m["battery_process_cost_mean"], 4),
-            "collision_process_cost_mean": round(m["collision_process_cost_mean"], 4),
-            "high_need_return_stall_rate": round(m["high_need_return_stall_rate"], 4),
-            "avg_charge_need_score": round(m["avg_charge_need_score"], 4),
-            "avg_slack_confidence": round(m["avg_slack_confidence"], 4),
-            "return_entry_count": round(m.get("return_entry_count", 0.0), 4),
-            "readiness_supported_return_entry_count": round(m.get("readiness_supported_return_entry_count", 0.0), 4),
-            "battery_fail_severity_mean": round(m["battery_fail_severity_mean"], 4),
-            "mode_usage_depart": round(m["mode_usage_depart"], 4),
-            "mode_usage_expand": round(m["mode_usage_expand"], 4),
-            "mode_usage_harvest": round(m["mode_usage_harvest"], 4),
-            "mode_usage_contract": round(m["mode_usage_contract"], 4),
-            "mode_usage_return": round(m["mode_usage_return"], 4),
-            "mode_usage_evade": round(m["mode_usage_evade"], 4),
-        **{
-            f"avg_reward_{key}": round(float(m.get(f"avg_reward_{key}", 0.0) or 0.0), 4)
-            for key in REWARD_COMPONENT_MONITOR_KEYS
-        },
-            **{
-                key: round(float(value), 4)
-                for key in WINDOW_COMPARISON_METRIC_KEYS
-                if (value := m.get(key)) is not None
-            },
-            "anchor_win_rate": round(m["anchor_win_rate"], 4) if m["anchor_win_rate"] >= 0 else -1,
-            "mild_win_rate": round(m["mild_win_rate"], 4) if m["mild_win_rate"] >= 0 else -1,
-            "broad_win_rate": round(m["broad_win_rate"], 4) if m["broad_win_rate"] >= 0 else -1,
-            "resume_readiness_score": round(self.last_checkpoint_scores["resume_readiness_score"], 4),
-            "submission_score": round(self.last_checkpoint_scores["submission_score"], 4),
-            "checkpoint_preservation_score": round(self.last_checkpoint_scores["checkpoint_preservation_score"], 4),
-            "resume_score_safety": round(self.last_checkpoint_scores["resume_score_safety"], 4),
-            "resume_score_efficiency": round(self.last_checkpoint_scores["resume_score_efficiency"], 4),
-            "resume_score_behavior": round(self.last_checkpoint_scores["resume_score_behavior"], 4),
-            "resume_score_learning": round(self.last_checkpoint_scores["resume_score_learning"], 4),
-            "submission_score_completion": round(self.last_checkpoint_scores["submission_score_completion"], 4),
-            "submission_score_efficiency": round(self.last_checkpoint_scores["submission_score_efficiency"], 4),
-            "submission_score_stability": round(self.last_checkpoint_scores["submission_score_stability"], 4),
-            "submission_score_behavior": round(self.last_checkpoint_scores["submission_score_behavior"], 4),
-            "resume_eligible": 1.0 if self.last_checkpoint_scores["resume_eligible"] else 0.0,
-        }
-        runtime_metrics = self.agent.get_runtime_metrics() if hasattr(self.agent, "get_runtime_metrics") else {}
-        payload["predict_fallback_count"] = float(runtime_metrics.get("predict_fallback_count", 0.0))
-        payload["predict_error_count"] = float(runtime_metrics.get("predict_error_count", 0.0))
-        payload["load_model_calls"] = float(runtime_metrics.get("load_model_calls", 0.0))
-        payload["load_model_reloads"] = float(runtime_metrics.get("load_model_reloads", 0.0))
-        payload["load_model_cache_hits"] = float(runtime_metrics.get("load_model_cache_hits", 0.0))
-        payload["last_loaded_checkpoint_step"] = float(runtime_metrics.get("last_loaded_checkpoint_step", 0.0) or 0.0)
-        for key in (
-            "pre_return_readiness_hit_rate",
-            "readiness_to_return_transition_rate",
-            "direct_return_without_readiness_rate",
-        ):
-            value = m.get(key)
-            if value is not None:
-                payload[key] = round(float(value), 4)
-        for key in (
-            "clean_floor_revisit_rate",
-            "clean_floor_revisit_penalty_mean",
-            "effective_coverage_bonus_mean",
-        ):
-            payload[key] = round(float(m.get(key, 0.0) or 0.0), 4)
-        payload["avg_reward_route_risk_growth_pen"] = round(
-            float(m.get("avg_reward_route_phase_risk_growth_penalty", 0.0) or 0.0), 4
-        )
-        payload["avg_reward_clean_risk_shadow"] = round(
-            float(m.get("avg_reward_risk_growth_while_clean_penalty", 0.0) or 0.0), 4
-        )
-        payload["avg_route_phase_shadow_risk"] = round(
-            float(m.get("avg_route_phase_shadow_risk", 0.0) or 0.0), 4
-        )
-        payload["avg_route_phase_reward_ready_rate"] = round(
-            float(m.get("avg_route_phase_reward_ready_rate", 0.0) or 0.0), 4
-        )
-        payload["sampled_profile_anchor_rate"] = round(
-            float(m.get("sampled_profile_anchor_rate", 0.0) or 0.0), 4
-        )
-        payload["sampled_profile_mild_rate"] = round(
-            float(m.get("sampled_profile_mild_rate", 0.0) or 0.0), 4
-        )
-        payload["sampled_profile_broad_rate"] = round(
-            float(m.get("sampled_profile_broad_rate", 0.0) or 0.0), 4
-        )
-        payload["battery_positive_reward_rate"] = round(
-            float(m.get("battery_positive_reward_rate", 0.0) or 0.0), 4
-        )
-        payload["avg_reward_charge_opp_cost_pen"] = round(
-            float(m.get("avg_reward_charge_opportunity_cost_penalty", 0.0) or 0.0), 4
-        )
-        for key in (
-            "mode_teacher_active_rate",
-            "route_anchor_teacher_active_rate",
-            "target_teacher_active_rate",
-            "return_action_teacher_active_rate",
-            "route_phase_action_teacher_active_rate",
-            "mode_teacher_loss",
-            "route_anchor_teacher_loss",
-            "target_teacher_loss",
-            "return_action_teacher_loss",
-            "route_phase_policy_teacher_loss",
-        ):
-            value = self.latest_learning_metrics.get(key)
-            if value is not None:
-                payload[key] = round(float(value), 4)
-        payload.update(self._curriculum_progress_payload())
-        return payload
-
-
-def _extract_numeric_metric(payload, group, key, default=None):
-    if not isinstance(payload, dict):
-        return default
-    group_payload = payload.get(group, {})
-    if not isinstance(group_payload, dict):
-        return default
-    try:
-        value = group_payload.get(key, default)
-        if value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _history_average(history, key, exclude_latest=False):
-    items = list(history)
-    if exclude_latest and items:
-        items = items[:-1]
-    values = []
-    for item in items:
-        try:
-            value = item.get(key)
-            if value is None:
-                continue
-            values.append(float(value))
-        except (TypeError, ValueError):
-            continue
-    if not values:
-        return None
-    return sum(values) / len(values)
-
-
-def _ratio(current, previous):
-    try:
-        current = float(current)
-    except (TypeError, ValueError):
-        return 1.0
-    if previous in (None, 0.0):
-        return 1.0
-    try:
-        previous = float(previous)
-    except (TypeError, ValueError):
-        return 1.0
-    if abs(previous) < 1e-6:
-        return 1.0
-    return current / previous
-
-
-def resolve_shared_code_dir():
-    shared_candidates = [Path("/workspace/code")]
-    env_shared_code_dir = os.getenv("KAIWU_SHARED_CODE_DIR")
-    if env_shared_code_dir:
-        shared_candidates.append(Path(env_shared_code_dir))
-    for candidate in shared_candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    return Path(__file__).resolve().parents[2]
+    threads = [
+        threading.Thread(target=run_agent, args=(i,), daemon=True, name=f"Agent-{i}")
+        for i in range(n_agents)
+    ]
+    for thread in threads:
+        thread.start()
+        if logger is not None and hasattr(logger, "info"):
+            logger.info(f"Thread {thread.name} started")
+    for thread in threads:
+        thread.join()
