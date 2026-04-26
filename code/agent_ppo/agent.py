@@ -197,14 +197,18 @@ class Agent(BaseAgent):
             return alpha
         charger_distance = float(getattr(policy_info, "charger_distance", 999.0))
         battery = float(getattr(policy_info, "battery", 0.0))
+        battery_ratio = float(getattr(policy_info, "battery_ratio", 0.0))
         target_mode = getattr(policy_info, "target_mode", "")
         should_charge = bool(getattr(policy_info, "should_charge", False))
+        on_charger = bool(getattr(policy_info, "on_charger", False))
         if (
             should_charge
             and target_mode == "charge"
             and np.isfinite(charger_distance)
             and charger_distance < 900.0
         ):
+            if (not on_charger) and (battery_ratio <= 0.72 or battery <= charger_distance + 28.0):
+                return 0.0
             if battery <= charger_distance + 16.0:
                 return 0.0
             if battery <= charger_distance + 22.0:

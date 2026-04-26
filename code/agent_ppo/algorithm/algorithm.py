@@ -377,6 +377,10 @@ class CoveragePlanner:
         self.episode_max_step = 1000
         self.episode_charger_count = 4
         self.episode_battery_max = 200
+        self.arrived_charger_region_keys: Set[Position] = set()
+        self.charger_arrival_count = 0
+        self.first_arrival_step = -1
+        self.last_arrival_step = -1
 
     def set_episode_config(self, max_step=None, robot_count=None, charger_count=None, battery_max=None):
         if max_step is not None:
@@ -413,6 +417,117 @@ class CoveragePlanner:
         charger_scarcity = (4.0 - float(self.episode_charger_count)) / 3.0
         low_capacity_factor = np.clip((260.0 - float(self.episode_battery_max)) / 160.0, 0.0, 1.0)
         return float(np.clip(self.EXIT_RETURN_RATIO + 0.02 * charger_scarcity + 0.01 * low_capacity_factor, 0.93, 0.99))
+
+    def _phase_c_step_ratio(self) -> float:
+        return float(np.clip(
+            self.current_step / max(float(self.episode_max_step), 1.0),
+            0.0,
+            1.0,
+        ))
+
+    def _charger_region_key(self, region: Set[Position]) -> Position:
+        return min(region)
+
+    def _update_arrival_state(self, hero_pos: Position) -> None:
+        for region in self.charger_regions:
+            if hero_pos not in region:
+                continue
+            region_key = self._charger_region_key(region)
+            if region_key in self.arrived_charger_region_keys:
+                return
+            self.arrived_charger_region_keys.add(region_key)
+            self.charger_arrival_count += 1
+            self.last_arrival_step = self.current_step
+            if self.first_arrival_step < 0:
+                self.first_arrival_step = self.current_step
+            return
+
+    def _first_arrival_guard_active(
+        self,
+        *,
+        charger_known: bool,
+        battery: float,
+        charger_distance: float,
+        battery_ratio: float,
+    ) -> bool:
+        if self.charger_arrival_count != 1 or self.first_arrival_step < 0:
+            return False
+        if self.current_step > min(self.episode_max_step - 80, self.first_arrival_step + 280):
+            return False
+        charger_slack = battery - charger_distance if charger_known and np.isfinite(charger_distance) else battery
+        if battery_ratio >= 0.92 and charger_slack >= self._dynamic_return_margin() + 24.0:
+            return False
+        return True
+
+    def _multi_arrival_guard_active(
+        self,
+        *,
+        charger_known: bool,
+        battery: float,
+        charger_distance: float,
+        battery_ratio: float,
+    ) -> bool:
+        if self.charger_arrival_count < 2:
+            return False
+        if self.current_step < max(360, int(0.35 * self.episode_max_step)):
+            return False
+        charger_slack = battery - charger_distance if charger_known and np.isfinite(charger_distance) else battery
+        return (
+            battery_ratio <= 0.62
+            or charger_slack <= self._dynamic_return_margin() + 18.0
+        )
+
+    def _pre_first_arrival_guard_active(
+        self,
+        *,
+        charger_known: bool,
+        battery: float,
+        charger_distance: float,
+        battery_ratio: float,
+    ) -> bool:
+        if self.charger_arrival_count > 0:
+            return False
+        if self.current_step > min(260, self.episode_max_step - 120):
+            return False
+        if not charger_known:
+            return self.current_step >= 110
+        charger_slack = battery - charger_distance if np.isfinite(charger_distance) else battery
+        return (
+            battery_ratio <= 0.72
+            or charger_slack <= self._dynamic_return_margin() + 28.0
+        )
+
+    def _phase_c_gate(
+        self,
+        *,
+        charger_known: bool,
+        should_charge: bool,
+        battery: float,
+        charger_distance: float,
+        battery_ratio: float,
+    ) -> Tuple[bool, float, float]:
+        step_ratio = self._phase_c_step_ratio()
+        charger_slack = battery - charger_distance if charger_known and np.isfinite(charger_distance) else battery
+        safe_slack = self._dynamic_return_margin() + 10.0
+        enabled = (
+            charger_known
+            and not should_charge
+            and step_ratio >= 0.55
+            and charger_slack >= safe_slack
+            and not self._first_arrival_guard_active(
+                charger_known=charger_known,
+                battery=battery,
+                charger_distance=charger_distance,
+                battery_ratio=battery_ratio,
+            )
+            and not self._pre_first_arrival_guard_active(
+                charger_known=charger_known,
+                battery=battery,
+                charger_distance=charger_distance,
+                battery_ratio=battery_ratio,
+            )
+        )
+        return enabled, float(step_ratio), float(charger_slack)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Main update — called once per frame（每帧主调用）
@@ -471,6 +586,7 @@ class CoveragePlanner:
             np.iinfo(np.int16).max,
             self.visit_count[hero_pos[1], hero_pos[0]] + 1,
         )
+        self._update_arrival_state(hero_pos)
 
         # ── 构建动作掩码 ────────────────────────────────────────────────────
         # legal_action mask：基于局部视野 (map_info) 判断哪些方向不会撞墙
@@ -492,6 +608,34 @@ class CoveragePlanner:
         # 规划到充电桩的路径（A*），获取路径、距离、目标格子
         charger_path, charger_distance, charger_target = self._plan_path_to_charger(hero_pos, npcs)
         charger_known       = bool(self.charger_regions)  # 是否已观测到充电桩
+        pre_first_arrival_guard_active = self._pre_first_arrival_guard_active(
+            charger_known=charger_known,
+            battery=battery,
+            charger_distance=charger_distance,
+            battery_ratio=battery_ratio,
+        )
+        multi_arrival_guard_active = self._multi_arrival_guard_active(
+            charger_known=charger_known,
+            battery=battery,
+            charger_distance=charger_distance,
+            battery_ratio=battery_ratio,
+        )
+        first_arrival_guard_active = self._first_arrival_guard_active(
+            charger_known=charger_known,
+            battery=battery,
+            charger_distance=charger_distance,
+            battery_ratio=battery_ratio,
+        )
+        if pre_first_arrival_guard_active:
+            dynamic_return_margin += 12.0
+            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.08, 0.0, 0.75))
+        if multi_arrival_guard_active:
+            dynamic_return_margin += 6.0
+            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.03, 0.0, 0.68))
+        if first_arrival_guard_active:
+            dynamic_return_margin += 10.0
+            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.06, 0.0, 0.65))
+            dynamic_exit_return_ratio = float(np.clip(dynamic_exit_return_ratio + 0.015, 0.0, 0.995))
         # 若充电路径途经 NPC 风险区（PATH_RISK_RADIUS），则额外加大安全余量
         extra_return_margin = self.NPC_RETURN_MARGIN if self._path_enters_npc_risk_zone(charger_path, npcs) else 0.0
 
@@ -517,7 +661,11 @@ class CoveragePlanner:
         else:
             # 覆盖模式：从全局地图中选出得分最高的 frontier cell 或 dirty tile
             target_mode, target_pos, target_distance, path = self._select_coverage_target(
-                hero_pos, battery, charger_distance, npcs
+                hero_pos, battery, charger_distance, npcs,
+                should_charge=should_charge,
+                battery_ratio=battery_ratio,
+                pre_first_arrival_guard_active=pre_first_arrival_guard_active,
+                first_arrival_guard_active=first_arrival_guard_active,
             )
 
         # ── 对 8 个合法动作评分 ─────────────────────────────────────────────
@@ -530,6 +678,8 @@ class CoveragePlanner:
             target_mode=target_mode,
             path=path,
             should_charge=should_charge,
+            pre_first_arrival_guard_active=pre_first_arrival_guard_active,
+            first_arrival_guard_active=first_arrival_guard_active,
         )
 
         # 若所有动作均被 NPC 封锁（safe_mask 全为 0），启用逃脱评分兜底
@@ -580,6 +730,10 @@ class CoveragePlanner:
         battery:          float,
         charger_distance: float,
         npcs:             Sequence[Position],
+        should_charge:    bool = False,
+        battery_ratio:    float = 0.0,
+        pre_first_arrival_guard_active: bool = False,
+        first_arrival_guard_active: bool = False,
     ) -> Tuple[str, Optional[Position], float, List[Position]]:
         """
         从全局地图中选出最优的覆盖目标（frontier cell 或 dirty tile）。
@@ -630,6 +784,13 @@ class CoveragePlanner:
         charger_known   = bool(self.charger_regions)
         early_phase     = self.current_step <= 220
         charger_search_phase = self.current_step <= 180 and not charger_known
+        phase_c_enabled, step_ratio, charger_slack = self._phase_c_gate(
+            charger_known=charger_known,
+            should_charge=should_charge,
+            battery=battery,
+            charger_distance=charger_distance,
+            battery_ratio=battery_ratio,
+        )
         # 扩张阶段判定：前 500 步 / 已知比例 < 78% / 充电桩未知 → 仍处于扩张阶段
         expansion_phase = (
             self.current_step <= self.AGGRESSIVE_EDGE_STEPS
@@ -652,6 +813,8 @@ class CoveragePlanner:
                 pos         = (gx, gz)
                 cell        = int(self.global_map[gz, gx])
                 is_frontier = self._is_frontier_cell(pos)
+                edge_bonus  = self._exploration_edge_bonus(pos, known_bbox)  # 已知区域边缘奖励
+                map_edge_bonus = self._map_boundary_bonus(pos)               # 地图物理边界奖励
 
                 # 只考虑 frontier cell（已知区域边界）和 dirty tile（污渍地面）
                 if not is_frontier and cell != self.DIRT:
@@ -663,6 +826,10 @@ class CoveragePlanner:
                         continue
                     if edge_bonus < 0.30 and map_edge_bonus < 0.18:
                         continue
+                if pre_first_arrival_guard_active:
+                    if not charger_known:
+                        if not is_frontier:
+                            continue
 
                 # 电量安全门控：确保前往 pos 后还能回到充电桩
                 charger_need = self._heuristic_charger_distance(pos) if charger_known else 0.0
@@ -673,8 +840,6 @@ class CoveragePlanner:
                 info_gain         = self._count_unobserved_cells(pos, 2)   # 半径 2 内 UNKNOWN 格子数
                 dirt_gain         = self._count_dirty_cells(pos, 2)        # 半径 2 内 DIRT 格子数
                 visit_penalty     = float(min(8, int(self.visit_count[gz, gx])))  # 访问次数（上限 8）
-                edge_bonus        = self._exploration_edge_bonus(pos, known_bbox) # 已知区域边缘奖励
-                map_edge_bonus    = self._map_boundary_bonus(pos)                 # 地图物理边界奖励
                 npc_clean_penalty = 1.6 * float(self.npc_cleaned[gz, gx])  # NPC 清扫惩罚
                 diagonal_bonus    = 1.0 if abs(gx - hero_pos[0]) == abs(gz - hero_pos[1]) else 0.0
 
@@ -688,6 +853,8 @@ class CoveragePlanner:
                     - npc_clean_penalty
                     + 0.22 * diagonal_bonus
                 )
+                if pre_first_arrival_guard_active and charger_known and cell == self.DIRT and not is_frontier:
+                    score -= 0.8
 
                 # 阶段相关边缘奖励
                 if expansion_phase:
@@ -712,6 +879,32 @@ class CoveragePlanner:
                 else:
                     # 开采阶段：边缘奖励降低，优先清扫已知的 dirty tile
                     score += 0.7 * edge_bonus
+                    if pre_first_arrival_guard_active:
+                        if is_frontier:
+                            score += 1.2 + 0.8 * edge_bonus
+                        if cell == self.DIRT:
+                            score -= 1.1
+                            if dirt_gain >= info_gain + 4 and charger_slack >= reserve + 22.0:
+                                score += 0.35
+                    if first_arrival_guard_active:
+                        if is_frontier:
+                            score += 0.9 + 0.7 * edge_bonus
+                        if cell == self.DIRT:
+                            score -= 1.0
+                            if dirt_gain >= info_gain + 3 and charger_slack >= reserve + 18.0:
+                                score += 0.45
+                    if phase_c_enabled:
+                        dirt_focus = float(dirt_gain) / max(float(info_gain) + 1.0, 1.0)
+                        late_phase_bonus = np.clip((step_ratio - 0.55) / 0.35, 0.0, 1.0)
+                        slack_bonus = np.clip((charger_slack - reserve) / 40.0, 0.0, 1.0)
+                        if cell == self.DIRT and dirt_gain >= max(3, info_gain - 1):
+                            score += 1.0 * late_phase_bonus
+                            score += 0.9 * slack_bonus
+                            score += 0.8 * np.clip(dirt_focus, 0.0, 2.0)
+                        elif is_frontier and info_gain <= dirt_gain + 1:
+                            score -= 0.35 * late_phase_bonus
+                    elif cell == self.DIRT and charger_known and charger_slack < reserve + 6.0:
+                        score -= 0.4
 
                 if score > best_score:
                     best_score  = score
@@ -926,6 +1119,8 @@ class CoveragePlanner:
         target_mode:   str,
         path:          Sequence[Position],
         should_charge: bool,
+        pre_first_arrival_guard_active: bool = False,
+        first_arrival_guard_active: bool = False,
     ) -> np.ndarray:
         """
         对 8 个动作方向进行综合评分，输出评分向量。
@@ -965,6 +1160,11 @@ class CoveragePlanner:
         edge_mode   = target_mode in ("edge_frontier", "find_charger_edge")
         charger_search_mode = target_mode == "find_charger_edge"
         current_npc_distance = self._nearest_npc_dist(hero_pos, npcs)
+        phase_c_enabled = (
+            target_mode == "dirt"
+            and not should_charge
+            and self._phase_c_step_ratio() >= 0.55
+        )
 
         for action in range(8):
             if safe_mask[action] <= 0.5:
@@ -992,6 +1192,8 @@ class CoveragePlanner:
             # A* 路径首步对齐奖励：该动作与路径规划方向一致时大幅加分
             if path_action is not None and action == path_action:
                 score += 2.6 if should_charge else 2.2
+                if pre_first_arrival_guard_active and should_charge:
+                    score += 1.0
                 if charger_search_mode:
                     score += 1.6
             elif charger_search_mode:
@@ -1021,7 +1223,14 @@ class CoveragePlanner:
             # 探索 / 清扫模式：进入 frontier cell 额外加分
             if target_mode in ("frontier", "dirt", "edge_frontier", "find_charger_edge"):
                 if self._is_frontier_cell(nxt):
-                    score += 0.45
+                    frontier_bonus = 0.45
+                    if phase_c_enabled and target_mode == "dirt":
+                        frontier_bonus *= 0.55
+                    if pre_first_arrival_guard_active:
+                        frontier_bonus += 0.45
+                    if first_arrival_guard_active and not should_charge:
+                        frontier_bonus += 0.35
+                    score += frontier_bonus
                     if charger_search_mode:
                         score += 0.70
                 elif charger_search_mode:
@@ -1029,6 +1238,12 @@ class CoveragePlanner:
 
             if charger_search_mode and cell == self.DIRT:
                 score -= 0.8
+            elif pre_first_arrival_guard_active and cell == self.DIRT and not should_charge:
+                score -= 0.55
+            elif phase_c_enabled and cell == self.DIRT:
+                score += 0.35
+            elif first_arrival_guard_active and not should_charge and cell == self.DIRT:
+                score -= 0.45
 
             scores[action] = score
 

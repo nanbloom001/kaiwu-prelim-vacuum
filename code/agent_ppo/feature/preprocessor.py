@@ -358,10 +358,10 @@ class Preprocessor:
 
     def _arrival_base_reward(self, arrival_order: int) -> float:
         if arrival_order == 0:
-            return 0.16
+            return 0.18
         if arrival_order == 1:
-            return 0.10
-        return 0.05
+            return 0.15
+        return 0.11
 
     def _arrival_early_discount(self, arrival_step: int) -> float:
         if arrival_step <= 100:
@@ -403,7 +403,7 @@ class Preprocessor:
                 "final_left_coverage": 4,
                 "final_left_observed": 22,
                 "final_battery_gain": 0.08,
-                "candidate_scale": 0.30,
+                "candidate_scale": 0.34,
             }
         return {
             "candidate_min_delay": 26,
@@ -418,11 +418,17 @@ class Preprocessor:
             "final_left_coverage": 5,
             "final_left_observed": 28,
             "final_battery_gain": 0.10,
-            "candidate_scale": 0.18,
+            "candidate_scale": 0.24,
         }
 
     def _is_on_charger(self) -> bool:
         return self.cur_pos in self._charger_pos_set
+
+    def _latest_confirmed_arrival_age(self) -> int:
+        if not self.confirmed_charger_arrival_steps:
+            return 10**9
+        latest_confirm_step = max(int(step) for step in self.confirmed_charger_arrival_steps.values())
+        return max(0, self.step_no - latest_confirm_step)
 
     def _is_charge_loop_failure(
         self,
@@ -750,6 +756,35 @@ class Preprocessor:
         low_capacity_factor = np.clip((260.0 - float(self.battery_max)) / 160.0, 0.0, 1.0)
         target_low = np.clip(0.32 + 0.05 * charger_scarcity + 0.03 * low_capacity_factor, 0.30, 0.42)
         target_high = np.clip(0.58 + 0.04 * charger_scarcity + 0.03 * low_capacity_factor, 0.54, 0.68)
+        step_ratio = self.step_no / max(float(self.episode_max_step), 1.0)
+        arrival_steps = sorted(int(step) for step in self.charger_arrival_steps.values())
+        first_arrival_step = arrival_steps[0] if arrival_steps else -1
+        distinct_arrival_count = len(arrival_steps)
+        post_first_arrival_guard = (
+            len(arrival_steps) == 1
+            and first_arrival_step >= 0
+            and self.step_no <= min(self.episode_max_step - 80, first_arrival_step + 280)
+        )
+        charge_risk_zone = (
+            not charger_known
+            or self.should_charge
+            or charge_active
+            or is_starving
+            or cur_battery_ratio <= target_low + 0.04
+        )
+        safe_charge_window = (
+            charger_known
+            and not charge_risk_zone
+            and step_ratio >= 0.55
+            and cur_battery_ratio >= target_low + 0.12
+        )
+        transition_after_arrival = self._latest_confirmed_arrival_age() <= 45
+        phase_c_reward_enabled = (
+            safe_charge_window
+            and not transition_after_arrival
+            and not charger_search_phase
+            and not post_first_arrival_guard
+        )
         if prev_battery_ratio < target_low:
             charge_timing_factor = prev_battery_ratio / max(target_low, 1e-6)
         elif prev_battery_ratio <= target_high:
@@ -772,9 +807,9 @@ class Preprocessor:
                 else:
                     charge_event_reward += 0.32
             # Charging too early wastes exploration time and battery utilization.
-            elif prev_battery_ratio <= 0.60:
+            elif safe_charge_window and not post_first_arrival_guard and prev_battery_ratio <= 0.60:
                 charge_event_reward -= 0.08 * (prev_battery_ratio - 0.45) / 0.15
-            else:
+            elif safe_charge_window and not post_first_arrival_guard:
                 charge_event_reward -= 0.16 + 0.24 * (prev_battery_ratio - 0.60) / 0.40
         low_battery_penalty = -0.035 * max(0.0, target_low - cur_battery_ratio) / max(target_low, 1e-6)
         critical_battery_penalty = -0.090 * max(0.0, 0.22 - cur_battery_ratio) / 0.22
@@ -800,15 +835,40 @@ class Preprocessor:
                 unarrived_charger_progress_reward *= 1.35
             if charger_search_phase:
                 unarrived_charger_progress_reward *= 1.25
+            if post_first_arrival_guard:
+                unarrived_charger_progress_reward *= 1.45
+            if distinct_arrival_count == 1:
+                unarrived_charger_progress_reward *= 1.35
+            elif distinct_arrival_count >= 2:
+                unarrived_charger_progress_reward *= 1.18
         revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
+        single_charger_loop_penalty = 0.0
+        if (
+            distinct_arrival_count == 1
+            and self.step_no >= max(first_arrival_step + 140, 320)
+            and self.new_observed_cells == 0
+            and cleaned_this_step == 0
+            and self.cur_revisit_count >= 2
+            and self._nearest_unarrived_charger_dist < self.MAX_DIST
+        ):
+            single_charger_loop_penalty -= 0.010
+            if self._nearest_unarrived_charger_dist > 18.0:
+                single_charger_loop_penalty -= 0.004
         loop_penalty = 0.0
+        no_progress_penalty_scale = 1.0 if phase_c_reward_enabled else 0.35
+        if charge_risk_zone:
+            no_progress_penalty_scale = min(no_progress_penalty_scale, 0.18)
+        if transition_after_arrival:
+            no_progress_penalty_scale = min(no_progress_penalty_scale, 0.25)
+        if post_first_arrival_guard:
+            no_progress_penalty_scale = min(no_progress_penalty_scale, 0.20)
         if (
             not is_starving
             and self.cur_revisit_count >= 3
             and self.new_observed_cells == 0
             and cleaned_this_step == 0
         ):
-            loop_penalty = -0.012
+            loop_penalty = -0.012 * no_progress_penalty_scale
         charge_loop_penalty = 0.0
         if (
             charge_active
@@ -817,15 +877,19 @@ class Preprocessor:
             and cleaned_this_step == 0
             and charge_gain_ratio < 0.01
         ):
-            charge_loop_penalty -= 0.020
+            charge_loop_penalty -= 0.016
             self.charge_loop_frames += 1
             if unvisited_ratio < 0.18:
-                charge_loop_penalty -= 0.006
+                charge_loop_penalty -= 0.004
         else:
             self.charge_loop_frames = 0
         step_penalty = -(0.001 + 0.002 * cleaning_progress)
         if charge_active:
-            step_penalty -= 0.0025
+            step_penalty -= 0.0008
+        elif phase_c_reward_enabled:
+            step_penalty -= 0.0012
+        elif post_first_arrival_guard:
+            step_penalty -= 0.0004
         if is_starving:
             step_penalty *= 2.5
         charger_arrival_reward = self._resolve_pending_arrivals(
@@ -849,6 +913,7 @@ class Preprocessor:
             + low_battery_penalty
             + critical_battery_penalty
             + revisit_penalty
+            + single_charger_loop_penalty
             + loop_penalty
             + charge_loop_penalty
             + step_penalty
