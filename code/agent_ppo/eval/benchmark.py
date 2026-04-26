@@ -566,6 +566,10 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
         battery_max = max(float(getattr(fm, "battery_max", 1.0)), 1.0)
         battery_ratio = round(float(getattr(fm, "battery", 0.0)) / battery_max, 4)
         just_charged = 1.0 if bool(getattr(fm, "just_charged", False)) else 0.0
+        nearest_npc_dist = round(float(getattr(fm, "nearest_npc_dist", 999.0)), 1)
+        invalid_move_count = int(getattr(fm, "invalid_move_count", 0))
+        current_mode_raw = str(getattr(fm, "current_mode", ""))
+        charger_slack_log = float(getattr(fm, "charger_slack", charger_slack))
         reserve = max(8.0, 0.04 * max(float(getattr(fm, "battery_max", 1)), 1.0))
         min_margin_any_charger = 0.0
         if getattr(fm, "sorted_charger_candidates", None):
@@ -581,8 +585,9 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             and float(getattr(fm, "battery", 0.0)) <= 0.25 * max(float(getattr(fm, "battery_max", 1.0)), 1.0)
             and not bool(getattr(fm, "just_charged", False))
         )
+        current_mode = _mode_to_int(getattr(fm, "current_mode", -1))
         risk_worsening_while_cleaning = (
-            int(getattr(fm, "current_mode", -1)) in (0, 1, 2)
+            current_mode in (0, 1, 2)
             and charger_slack_delta < 0.0
             and charger_slack <= float(Config.PREPARE_RETURN_SLACK_THRESHOLD)
         )
@@ -625,7 +630,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             reward_clean=float(reward_payload["reward_clean"]),
             reward_explore=float(reward_payload["reward_explore"]),
             reward_frontier=float(reward_payload["reward_frontier"]),
-            current_mode=int(getattr(fm, "current_mode", -1)),
+            current_mode=current_mode,
             target_progress_delta=target_progress_delta,
             recoverability_delta=recoverability_delta,
             position_repeat_8=position_repeat_8,
@@ -662,7 +667,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             "battery_ratio": battery_ratio,
             "dirt_cleaned": int(fm.dirt_cleaned),
             "total_dirt": int(fm.total_dirt),
-            "mode": int(fm.current_mode),
+            "mode": current_mode,
             "route_anchor": decision_route_anchor,
             "target": decision_target,
             "charger_slack": charger_slack,
@@ -671,8 +676,8 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             "anchor_return_dist": anchor_return_dist,
             "just_charged": just_charged,
             "is_diag_action": 1.0 if selected_action in (1, 3, 5, 7) else 0.0,
-            "nearest_npc_dist": round(float(fm.nearest_npc_dist), 1),
-            "invalid_move_count": int(fm.invalid_move_count),
+            "nearest_npc_dist": nearest_npc_dist,
+            "invalid_move_count": invalid_move_count,
             "cur_visit_count": cur_visit_count,
             "revisit_pressure": round(revisit_pressure, 4),
             "cleaned_this_step": cleaned_this_step,
@@ -773,7 +778,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
                 "charge_need_zone": _charge_need_zone(battery_ratio=battery_ratio, charger_slack=charger_slack),
                 "future_recoverability_score": future_recoverability,
                 "anchor_return_dist": anchor_return_dist,
-                "nearest_npc_dist": round(float(fm.nearest_npc_dist), 1),
+                "nearest_npc_dist": nearest_npc_dist,
                 "cur_visit_count": cur_visit_count,
                 "dirty_adjacent": dirty_adjacent,
                 "cleaned_this_step": cleaned_this_step,
@@ -791,7 +796,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
                 "policy_mode": policy_mode,
                 "eval_override_active": eval_override_active,
                 "eval_override_reason": eval_override_reason or "",
-                "mode": int(fm.current_mode),
+                "mode": current_mode,
                 "route_anchor": decision_route_anchor,
                 "target": decision_target,
                 "selected_target_rank": selected_target_rank,
@@ -827,7 +832,7 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
             },
             "behavior": {
                 "is_diag_action": 1.0 if selected_action in (1, 3, 5, 7) else 0.0,
-                "invalid_move_count": int(fm.invalid_move_count),
+                "invalid_move_count": invalid_move_count,
                 "zero_progress_streak": int(zero_progress_streak),
                 "position_repeat_8": position_repeat_8,
                 "position_repeat_16": position_repeat_16,
@@ -858,8 +863,8 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
         if step % 100 == 0 or done:
             step_log.info(
                 f"{ep_label} step={step} bat={fm.battery}/{fm.battery_max} "
-                f"dirt={fm.dirt_cleaned}/{fm.total_dirt} mode={fm.current_mode} "
-                f"slack={fm.charger_slack:.1f} npc={fm.nearest_npc_dist:.0f} "
+                f"dirt={fm.dirt_cleaned}/{fm.total_dirt} mode={current_mode_raw} "
+                f"slack={charger_slack_log:.1f} npc={nearest_npc_dist:.0f} "
                 f"act={selected_action} reward={reward_scalar:.3f}"
             )
 
@@ -906,8 +911,8 @@ def _run_eval_episode(env, agent, usr_conf, round_name, map_id, round_def, logge
         "dirt_cleaned": int(fm.dirt_cleaned),
         "total_dirt": int(fm.total_dirt),
         "dirt_ratio": round(fm.dirt_cleaned / max(fm.total_dirt, 1), 4),
-        "invalid_move_count": int(fm.invalid_move_count),
-        "invalid_move_rate": round(fm.invalid_move_count / max(step, 1), 4),
+        "invalid_move_count": invalid_move_count,
+        "invalid_move_rate": round(invalid_move_count / max(step, 1), 4),
         "late_return_rate": round(diagnostics["late_return_rate"], 4),
         "late_contract_rate": round(diagnostics["late_contract_rate"], 4),
         "anchor_switch_rate": round(diagnostics["anchor_switch_rate"], 4),
@@ -1533,6 +1538,27 @@ def _path_source(signal):
     if np.isfinite(charger_dist):
         return "fallback_chebyshev"
     return "unreachable"
+
+
+def _mode_to_int(value) -> int:
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    text = str(value or "").strip().lower()
+    if not text:
+        return -1
+    if text.lstrip("-").isdigit():
+        return int(text)
+    mapping = {
+        "dirt": 0,
+        "frontier": 1,
+        "edge_frontier": 2,
+        "find_charger_edge": 2,
+        "explore": 1,
+        "charge": 4,
+        "return": 4,
+        "fallback": 5,
+    }
+    return mapping.get(text, -1)
 
 
 def _compute_step_anomalies(

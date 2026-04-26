@@ -12,6 +12,9 @@ Training workflow for Robot Vacuum PPO with planner-guided residual policy.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import re
+import socket
 import threading
 import time
 
@@ -40,6 +43,65 @@ try:
 except Exception:  # pragma: no cover - host import fallback for local tests
     def read_usr_conf(*args, **kwargs):
         return {}
+
+
+def _env_int(name, default):
+    value = os.getenv(name)
+    if value is None or value == "":
+        return int(default)
+    return int(value)
+
+
+def _resolve_local_ip(*names) -> str | None:
+    original_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(1.0)
+    try:
+        for name in names:
+            candidate = str(name or "").strip()
+            if not candidate:
+                continue
+            try:
+                _, _, addresses = socket.gethostbyname_ex(candidate)
+            except (OSError, socket.timeout):
+                continue
+            if addresses:
+                return addresses[0]
+        return None
+    finally:
+        socket.setdefaulttimeout(original_timeout)
+
+
+def _resolve_benchmark_aisrv_index() -> str:
+    aisrv_index = str(os.getenv("KAIWU_AISRV_INDEX", "") or "").strip()
+    if aisrv_index:
+        return aisrv_index
+
+    current_name = str(os.getenv("HOSTNAME", "") or "").strip()
+    if not current_name:
+        try:
+            current_name = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    match = re.search(r"(?:^|[-_])aisrv[-_](\d+)$", current_name)
+    if match:
+        return match.group(1)
+
+    current_ip = _resolve_local_ip(current_name)
+    if not current_ip:
+        return ""
+
+    project_name = str(os.getenv("COMPOSE_PROJECT_NAME", "kaiwu-train") or "kaiwu-train").strip() or "kaiwu-train"
+    service_count = max(_env_int("KAIWU_BENCHMARK_WORKER_COUNT", _env_int("KAIWU_AISRV_NUM", 16)), 1)
+    for index in range(1, service_count + 1):
+        service_ip = _resolve_local_ip(
+            f"{project_name}-aisrv-{index}",
+            f"{project_name}_aisrv_{index}",
+        )
+        if service_ip and service_ip == current_ip:
+            return str(index)
+
+    return ""
 
 
 class ResidualScheduler:
@@ -404,6 +466,57 @@ class EpisodeRunner:
 
 
 def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
+    env = envs[0]
+    agent = agents[0]
+
+    if os.getenv("KAIWU_BENCHMARK_PARALLEL_MODE", "").strip() in ("1", "true"):
+        from agent_ppo.eval.benchmark_parallel import run_parallel_benchmark
+
+        usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
+        run_parallel_benchmark(envs, agents, usr_conf, logger, process_index=kwargs.get("process_index"))
+        return
+
+    if os.getenv("KAIWU_BENCHMARK_MODE", "").strip() in ("1", "true"):
+        aisrv_index = _resolve_benchmark_aisrv_index()
+        benchmark_checkpoint = os.getenv("KAIWU_BENCHMARK_CHECKPOINT", "").strip()
+        benchmark_policy_mode = os.getenv("KAIWU_BENCHMARK_POLICY_MODE", "eval").strip().lower() or "eval"
+        benchmark_maps = os.getenv("KAIWU_BENCHMARK_MAPS", "").strip()
+        benchmark_rounds_json = os.getenv("KAIWU_BENCHMARK_ROUNDS_JSON", "").strip()
+        if logger is not None:
+            logger.info(
+                "[BENCHMARK] Entering serial benchmark branch "
+                f"active=True aisrv_index={aisrv_index or '<empty>'} "
+                f"hostname={os.getenv('HOSTNAME', '').strip() or '<empty>'} "
+                f"checkpoint={benchmark_checkpoint or '<default>'} "
+                f"policy_mode={benchmark_policy_mode} "
+                f"maps={benchmark_maps or '<default>'} "
+                f"rounds_override={'set' if benchmark_rounds_json else 'default'}"
+            )
+        if aisrv_index not in ("", "1"):
+            if logger is not None:
+                logger.info(f"[BENCHMARK] Skipping on aisrv-{aisrv_index}, only aisrv-1 runs benchmark")
+            marker = Path("/workspace/code/.benchmark_done")
+            while not marker.exists():
+                time.sleep(5)
+            if logger is not None:
+                logger.info("[BENCHMARK] aisrv-1 benchmark complete, exiting")
+            return
+
+        from agent_ppo.eval.benchmark import run_benchmark
+
+        try:
+            usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
+            run_benchmark(env, agent, usr_conf, logger)
+        except Exception:
+            if logger is not None:
+                logger.exception(
+                    "[BENCHMARK] Serial benchmark branch failed "
+                    f"aisrv_index={aisrv_index or '<empty>'} "
+                    f"checkpoint={benchmark_checkpoint or '<default>'}"
+                )
+            raise
+        return
+
     del args, kwargs
     usr_conf = read_usr_conf("agent_ppo/conf/train_env_conf.toml", logger)
     if usr_conf is None:

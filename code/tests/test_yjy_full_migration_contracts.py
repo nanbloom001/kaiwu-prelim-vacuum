@@ -18,6 +18,7 @@ def _install_runtime_stubs():
     config_control_mod = types.ModuleType("common_python.config.config_control")
     utils_mod = types.ModuleType("common_python.utils")
     common_func_mod = types.ModuleType("common_python.utils.common_func")
+    workflow_disaster_recovery_mod = types.ModuleType("common_python.utils.workflow_disaster_recovery")
     kaiwudrl_mod = types.ModuleType("kaiwudrl")
     kaiwudrl_interface_mod = types.ModuleType("kaiwudrl.interface")
     kaiwudrl_interface_agent_mod = types.ModuleType("kaiwudrl.interface.agent")
@@ -41,7 +42,9 @@ def _install_runtime_stubs():
     config_control_mod.CONFIG = _Config()
     config_mod.config_control = config_control_mod
     common_func_mod.create_cls = create_cls
+    workflow_disaster_recovery_mod.handle_disaster_recovery = lambda *args, **kwargs: False
     utils_mod.common_func = common_func_mod
+    utils_mod.workflow_disaster_recovery = workflow_disaster_recovery_mod
     common_python_mod.config = config_mod
     common_python_mod.utils = utils_mod
     kaiwudrl_interface_agent_mod.BaseAgent = _BaseAgent
@@ -53,6 +56,7 @@ def _install_runtime_stubs():
     sys.modules["common_python.config.config_control"] = config_control_mod
     sys.modules["common_python.utils"] = utils_mod
     sys.modules["common_python.utils.common_func"] = common_func_mod
+    sys.modules["common_python.utils.workflow_disaster_recovery"] = workflow_disaster_recovery_mod
     sys.modules["kaiwudrl"] = kaiwudrl_mod
     sys.modules["kaiwudrl.interface"] = kaiwudrl_interface_mod
     sys.modules["kaiwudrl.interface.agent"] = kaiwudrl_interface_agent_mod
@@ -61,6 +65,7 @@ def _install_runtime_stubs():
 _install_runtime_stubs()
 
 from agent_ppo.conf.conf import Config
+from agent_ppo.eval.benchmark import _mode_to_int
 from agent_ppo.model.model import Model
 
 
@@ -88,6 +93,8 @@ class YjyFullMigrationContractsTests(unittest.TestCase):
         self.assertEqual(Config.VALUE_NUM, 1)
         self.assertEqual(Config.HIDDEN_DIM_1, 256)
         self.assertEqual(Config.HIDDEN_DIM_2, 128)
+        self.assertEqual(Config.RESUME_CHECKPOINT, "/workspace/code/runtime_state/current/prepared_resume/model.pkl")
+        self.assertEqual(Config.PREPARE_RETURN_SLACK_THRESHOLD, 6.0)
 
     def test_model_is_simple_actor_critic_for_flat_obs(self):
         model = Model(device=torch.device("cpu"))
@@ -123,6 +130,14 @@ class YjyFullMigrationContractsTests(unittest.TestCase):
         self.assertEqual(assignments["charger_count"], "3")
         self.assertEqual(assignments["max_step"], "1000")
         self.assertEqual(assignments["battery_max"], "150")
+
+    def test_benchmark_mode_bridge_handles_string_current_mode(self):
+        self.assertEqual(_mode_to_int("dirt"), 0)
+        self.assertEqual(_mode_to_int("frontier"), 1)
+        self.assertEqual(_mode_to_int("find_charger_edge"), 2)
+        self.assertEqual(_mode_to_int("charge"), 4)
+        self.assertEqual(_mode_to_int("fallback"), 5)
+        self.assertEqual(_mode_to_int(""), -1)
 
 
 if __name__ == "__main__":

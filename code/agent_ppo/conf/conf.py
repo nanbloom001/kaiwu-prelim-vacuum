@@ -40,6 +40,10 @@ class Config:
 
     NUM_AGENTS = 10
 
+    # Linux runtime / benchmark bridge fields retained by infrastructure.
+    RESUME_CHECKPOINT = "/workspace/code/runtime_state/current/prepared_resume/model.pkl"
+    PREPARE_RETURN_SLACK_THRESHOLD = 6.0
+
     # Planner-guided residual PPO
     RESIDUAL_ALPHA_START = 0.10
     RESIDUAL_ALPHA_WARMUP_TARGET = 0.18

@@ -108,6 +108,7 @@ recreate_benchmark_stack() {
 
 # 4. Start stack in benchmark mode
 echo "[4/6] Starting evaluation stack..."
+BENCHMARK_START_EPOCH=$(date +%s)
 BENCHMARK_EXISTING_SESSIONS=$(python3 -c '
 from pathlib import Path
 import re
@@ -154,7 +155,7 @@ fi
 echo "        (episode count follows KAIWU_BENCHMARK_ROUNDS_JSON / selected wrapper profile)"
 
 benchmark_state_host_json() {
-    BENCHMARK_EXISTING_SESSIONS="$BENCHMARK_EXISTING_SESSIONS" BENCHMARK_STATE_BASE="./eval_logs" python3 -c '
+    BENCHMARK_EXISTING_SESSIONS="$BENCHMARK_EXISTING_SESSIONS" BENCHMARK_STATE_BASE="./eval_logs" BENCHMARK_START_EPOCH="$BENCHMARK_START_EPOCH" python3 -c '
 from pathlib import Path
 import json
 import os
@@ -173,10 +174,16 @@ state = {
 
 existing_sessions = {line.strip() for line in os.getenv("BENCHMARK_EXISTING_SESSIONS", "").splitlines() if line.strip()}
 base = Path(os.getenv("BENCHMARK_STATE_BASE", "./eval_logs"))
+start_epoch = int(os.getenv("BENCHMARK_START_EPOCH", "0") or 0)
 if base.exists():
     sessions = [
         p for p in base.iterdir()
-        if p.is_dir() and re.fullmatch(r"\d{8}-\d{6}", p.name) and p.name not in existing_sessions
+        if (
+            p.is_dir()
+            and re.fullmatch(r"\d{8}-\d{6}", p.name)
+            and p.name not in existing_sessions
+            and int(p.stat().st_mtime) >= start_epoch
+        )
     ]
     if sessions:
         latest = max(sessions, key=lambda p: p.name)
@@ -218,7 +225,7 @@ print(json.dumps(state, ensure_ascii=False))
 }
 
 benchmark_state_container_json() {
-    docker exec -e BENCHMARK_EXISTING_SESSIONS="$BENCHMARK_EXISTING_SESSIONS" -e BENCHMARK_STATE_BASE="/workspace/code/eval_logs" kaiwu-train-aisrv-1 python3 -c '
+    docker exec -e BENCHMARK_EXISTING_SESSIONS="$BENCHMARK_EXISTING_SESSIONS" -e BENCHMARK_STATE_BASE="/workspace/code/eval_logs" -e BENCHMARK_START_EPOCH="$BENCHMARK_START_EPOCH" kaiwu-train-aisrv-1 python3 -c '
 from pathlib import Path
 import json
 import os
@@ -237,10 +244,16 @@ state = {
 
 existing_sessions = {line.strip() for line in os.getenv("BENCHMARK_EXISTING_SESSIONS", "").splitlines() if line.strip()}
 base = Path(os.getenv("BENCHMARK_STATE_BASE", "/workspace/code/eval_logs"))
+start_epoch = int(os.getenv("BENCHMARK_START_EPOCH", "0") or 0)
 if base.exists():
     sessions = [
         p for p in base.iterdir()
-        if p.is_dir() and re.fullmatch(r"\d{8}-\d{6}", p.name) and p.name not in existing_sessions
+        if (
+            p.is_dir()
+            and re.fullmatch(r"\d{8}-\d{6}", p.name)
+            and p.name not in existing_sessions
+            and int(p.stat().st_mtime) >= start_epoch
+        )
     ]
     if sessions:
         latest = max(sessions, key=lambda p: p.name)
