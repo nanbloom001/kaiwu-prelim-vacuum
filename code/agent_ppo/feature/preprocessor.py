@@ -519,6 +519,9 @@ class Preprocessor:
         ):
             unarrived_charger_progress_reward = 0.012 * np.clip(unarrived_progress / 2.0, 0.0, 1.5)
         revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
+        no_clean_revisit_penalty = 0.0
+        if cleaned_this_step == 0 and self.cur_revisit_count > 0 and not is_starving:
+            no_clean_revisit_penalty = 0.20 * revisit_penalty
         step_penalty = -(0.001 + 0.002 * cleaning_progress)
         if is_starving:
             step_penalty *= 2.5
@@ -536,6 +539,7 @@ class Preprocessor:
             + low_battery_penalty
             + critical_battery_penalty
             + revisit_penalty
+            + no_clean_revisit_penalty
             + step_penalty
         )
 

@@ -83,3 +83,16 @@
 2026-04-26 00:03 | Implemented 2x4 dual-concurrency holdout benchmark path with AISRV env-count TOML patching, dynamic task queue execution, dry-run contract, and observed-worker validation.
 2026-04-26 00:10 | Validated real 2x4 dynamic holdout benchmark: 8/8 tasks completed, 8 logical workers observed across 2 AISRV x 4 process indexes, done marker reached at ~190s.
 2026-04-26 00:12 | Documented 2x4 dynamic holdout benchmark as the README standard and corrected benchmark overlay default episode comment.
+2026-04-26 02:12 | T3: Added planner hard emergency charge-follow scoring that preserves legal/NPC masks while suppressing exploration/frontier/repeat incentives under tight charger slack.
+2026-04-26 02:24 | T3 rollback: hard emergency charge-follow rejected by 2x4 benchmark due map4 regression and new collision.
+2026-04-26 02:48 | Retuned bounded yjy-derived charger arrival, fresh-path, and no-clean revisit rewards in PPO preprocessor.
+2026-04-26 03:58 | Rolled back rejected yjy-derived reward retune in preprocessor.py after 2x4 score regressed to 825.1/map4 767.0 versus baseline 838.9/map4 793.2.
+
+2026-04-26 10:46 | Added bounded energy-aware CoveragePlanner target gating using charger return path distance, preserving charge/NPC/legal-action behavior.
+2026-04-26 11:20 | Cached CoveragePlanner charger return-distance BFS for frontier energy gating to reduce dynamic 2x4 inference startup/completion overhead.
+2026-04-26 11:45 | Rolled back the rejected frontier energy-gating candidate after cached dynamic 2x4 failed overall 799.4 (map4 696.2, map7 902.5, completed_rate 0.875, collision_fail_rate 0.125).
+2026-04-26 11:35 | Added FE-lite local anti-churn tie-breaker inside CoveragePlanner action ranking for non-charge frontier coverage only.
+2026-04-26 11:52 | Narrowed FE-lite v2 activation to post-charger-arrival, post-early-expansion frontier coverage with comfortable charger slack and NPC distance guards.
+2026-04-26 12:05 | Rolled back FE-lite v1 after opposite map split: map4 improved to 818.0 but map7 regressed to 696.8 with map7_ep03 collision at step 111.
+2026-04-26 12:05 | Rolled back FE-lite v2 after opposite map split: map7 recovered to 905.5 but map4 collapsed to 528.8 with map4_ep04 collision at step 271.
+2026-04-26 12:12 | T9: Added one bounded non-starving no-clean revisit penalty in PPO preprocessor reward shaping.
