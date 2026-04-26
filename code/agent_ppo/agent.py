@@ -207,6 +207,12 @@ class Agent(BaseAgent):
             and np.isfinite(charger_distance)
             and charger_distance < 900.0
         ):
+            if (not on_charger) and battery <= charger_distance + 40.0:
+                return 0.0
+            if (not on_charger) and battery_ratio <= 0.90:
+                return 0.0
+            if (not on_charger) and battery_ratio <= 0.82:
+                return 0.0
             if (not on_charger) and (battery_ratio <= 0.72 or battery <= charger_distance + 28.0):
                 return 0.0
             if battery <= charger_distance + 16.0:

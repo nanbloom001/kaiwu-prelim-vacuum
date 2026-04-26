@@ -164,8 +164,6 @@ class EpisodeRunner:
                 charger_count=episode_charger_count,
                 battery_max=episode_battery_max,
             )
-            self.agent.load_model(id="latest")
-
             self.episode_cnt += 1
             collector = []
             done = False
@@ -292,6 +290,9 @@ class EpisodeRunner:
                         if charger_arrived_count == 1 and episode_score < 820:
                             quality_bonus -= 0.32
 
+                        if charger_arrived_count == 1 and episode_score < 760:
+                            quality_bonus -= 0.18
+
                         final_reward = 2.5 * cleaning_ratio + 1.5 * score_ratio + quality_bonus
                         result_str = "WIN"
                     else:
@@ -299,6 +300,11 @@ class EpisodeRunner:
                             quality_bonus += 0.08
                         elif charger_arrived_count == 2:
                             quality_bonus += 0.05
+
+                        if charger_arrived_count == 1:
+                            quality_bonus -= 0.08
+                            if step <= 450:
+                                quality_bonus -= 0.12
 
                         if last_mode == "charge":
                             quality_bonus -= 0.20

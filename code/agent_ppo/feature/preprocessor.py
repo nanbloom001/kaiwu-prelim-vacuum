@@ -839,8 +839,19 @@ class Preprocessor:
                 unarrived_charger_progress_reward *= 1.45
             if distinct_arrival_count == 1:
                 unarrived_charger_progress_reward *= 1.35
+                if step_ratio >= 0.55:
+                    unarrived_charger_progress_reward *= 1.28
+                elif step_ratio >= 0.42:
+                    unarrived_charger_progress_reward *= 1.12
             elif distinct_arrival_count >= 2:
                 unarrived_charger_progress_reward *= 1.18
+        late_multi_arrival_harvest = (
+            distinct_arrival_count >= 2
+            and step_ratio >= 0.62
+            and not charge_active
+            and not is_starving
+            and cur_battery_ratio >= target_low + 0.10
+        )
         revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
         single_charger_loop_penalty = 0.0
         if (
@@ -854,6 +865,36 @@ class Preprocessor:
             single_charger_loop_penalty -= 0.010
             if self._nearest_unarrived_charger_dist > 18.0:
                 single_charger_loop_penalty -= 0.004
+        single_charger_tail_penalty = 0.0
+        if (
+            distinct_arrival_count == 1
+            and step_ratio >= 0.72
+            and not charge_active
+            and not is_starving
+            and self.cur_revisit_count >= 1
+        ):
+            single_charger_tail_penalty -= 0.010
+            if self.new_observed_cells == 0 and cleaned_this_step == 0:
+                single_charger_tail_penalty -= 0.010
+        if (
+            distinct_arrival_count == 1
+            and step_ratio >= 0.52
+            and not charge_active
+            and self.new_observed_cells == 0
+            and cleaned_this_step == 0
+            and self._nearest_unarrived_charger_dist < self.MAX_DIST
+        ):
+            single_charger_tail_penalty -= 0.006
+        late_low_yield_penalty = 0.0
+        if (
+            late_multi_arrival_harvest
+            and self.new_observed_cells == 0
+            and cleaned_this_step == 0
+            and self.cur_revisit_count >= 2
+        ):
+            late_low_yield_penalty -= 0.012
+            if self.cur_revisit_count >= 4:
+                late_low_yield_penalty -= 0.006
         loop_penalty = 0.0
         no_progress_penalty_scale = 1.0 if phase_c_reward_enabled else 0.35
         if charge_risk_zone:
@@ -914,6 +955,8 @@ class Preprocessor:
             + critical_battery_penalty
             + revisit_penalty
             + single_charger_loop_penalty
+            + single_charger_tail_penalty
+            + late_low_yield_penalty
             + loop_penalty
             + charge_loop_penalty
             + step_penalty
