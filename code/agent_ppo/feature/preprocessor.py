@@ -90,7 +90,7 @@ class Preprocessor:
         long_horizon_bonus = 2.0 if self.episode_max_step >= 1500 else 0.0
         return 28.0 + 6.0 * charger_scarcity + 4.0 * low_capacity_factor + long_horizon_bonus
 
-    def pb2struct(self, env_obs: dict, last_action: int):
+    def pb2struct(self, env_obs: dict[str, Any], last_action: int):
         """Parse env observation and cache required state."""
         del last_action
 
@@ -519,9 +519,6 @@ class Preprocessor:
         ):
             unarrived_charger_progress_reward = 0.012 * np.clip(unarrived_progress / 2.0, 0.0, 1.5)
         revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
-        no_clean_revisit_penalty = 0.0
-        if cleaned_this_step == 0 and self.cur_revisit_count > 0 and not is_starving:
-            no_clean_revisit_penalty = 0.20 * revisit_penalty
         step_penalty = -(0.001 + 0.002 * cleaning_progress)
         if is_starving:
             step_penalty *= 2.5
@@ -539,14 +536,13 @@ class Preprocessor:
             + low_battery_penalty
             + critical_battery_penalty
             + revisit_penalty
-            + no_clean_revisit_penalty
             + step_penalty
         )
 
-    def get_legal_action(self) -> list:
+    def get_legal_action(self) -> list[int]:
         return list(self._legal_act)
 
-    def feature_process(self, env_obs: dict, last_action: int):
+    def feature_process(self, env_obs: dict[str, Any], last_action: int):
         self.pb2struct(env_obs, last_action)
 
         local_view = self._get_local_view_feature()

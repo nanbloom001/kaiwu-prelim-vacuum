@@ -61,7 +61,7 @@ class Config:
 
     # Behavior cloning regularization against planner, decayed as alpha rises
     BC_COEF_START = 1.10
-    BC_COEF_MIN = 0.28
+    BC_COEF_MIN = 0.30
 
     # Keep win training snapshot / resume strategy so the existing workflow infrastructure remains valid
     SAVE_MODEL_INTERVAL_EPISODES = 50

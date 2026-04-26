@@ -96,3 +96,5 @@
 2026-04-26 12:05 | Rolled back FE-lite v1 after opposite map split: map4 improved to 818.0 but map7 regressed to 696.8 with map7_ep03 collision at step 111.
 2026-04-26 12:05 | Rolled back FE-lite v2 after opposite map split: map7 recovered to 905.5 but map4 collapsed to 528.8 with map4_ep04 collision at step 271.
 2026-04-26 12:12 | T9: Added one bounded non-starving no-clean revisit penalty in PPO preprocessor reward shaping.
+2026-04-26 14:20 | T9 next iteration setup: rolled back no-clean revisit reward after 20m/50m 2x8 failures, slightly raised BC_COEF_MIN, and restored the preserved 20-minute resume checkpoint.
+2026-04-26 15:16 | T9 next iteration: reduced BC_COEF_MIN 0.32→0.30 and restored the active resume files from the preserved 20-minute checkpoint (clean_score 830, episode_cnt 5, saved_at 2026-04-26 12:32:14, trigger time).
