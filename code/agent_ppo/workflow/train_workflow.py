@@ -262,30 +262,42 @@ class EpisodeRunner:
                     score_ratio = episode_score / 2000.0
                     quality_bonus = 0.0
                     if truncated:
+                        score_harvest_bonus = 0.0
                         if last_mode == "charge":
                             quality_bonus += 0.05
 
                         if charger_arrived_count >= 3:
-                            quality_bonus += 0.36
+                            quality_bonus += 0.28
+                            if episode_score < 900:
+                                quality_bonus -= 0.10
+                            if episode_score < 860:
+                                quality_bonus -= 0.08
                         elif charger_arrived_count == 2:
-                            quality_bonus += 0.18
+                            quality_bonus += 0.12
+                            if episode_score < 840:
+                                quality_bonus -= 0.10
+                            if episode_score < 780:
+                                quality_bonus -= 0.08
 
                         if (
                             charger_arrived_count >= 2
                             and second_arrival_step > 0
                             and second_arrival_step <= 500
                         ):
-                            quality_bonus += 0.10
+                            quality_bonus += 0.08
 
                         if (
                             charger_arrived_count >= 3
                             and third_arrival_step > 0
                             and third_arrival_step <= 700
                         ):
-                            quality_bonus += 0.08
+                            quality_bonus += 0.06
 
                         if charger_arrived_count == 1 and episode_score < 900:
                             quality_bonus -= 0.22
+
+                        if charger_arrived_count == 1 and episode_score < 860:
+                            quality_bonus -= 0.14
 
                         if charger_arrived_count == 1 and episode_score < 820:
                             quality_bonus -= 0.32
@@ -293,7 +305,18 @@ class EpisodeRunner:
                         if charger_arrived_count == 1 and episode_score < 760:
                             quality_bonus -= 0.18
 
-                        final_reward = 2.5 * cleaning_ratio + 1.5 * score_ratio + quality_bonus
+                        if charger_arrived_count == 1 and episode_score < 700:
+                            quality_bonus -= 0.12
+
+                        if episode_score >= 900:
+                            score_harvest_bonus += 0.08
+                        if episode_score >= 930:
+                            score_harvest_bonus += 0.07
+                        if episode_score >= 950:
+                            score_harvest_bonus += 0.05
+
+                        quality_bonus += score_harvest_bonus
+                        final_reward = 2.4 * cleaning_ratio + 1.8 * score_ratio + quality_bonus
                         result_str = "WIN"
                     else:
                         if charger_arrived_count >= 3:

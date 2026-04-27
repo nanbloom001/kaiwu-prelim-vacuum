@@ -2,6 +2,19 @@
 
 当前这套 `CPU + ZMQ` 训练不是手工进容器启动，而是通过 `docker compose` 启动。
 
+推荐优先使用独立脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File train/start_cpu_zmq_training.ps1
+```
+
+这个脚本会先用独立模板恢复：
+
+- `train/.env.cpu-zmq -> train/.env`
+- `train/.docker-compose.cpu-zmq.yaml -> train/.docker-compose.yaml`
+
+然后再执行 `docker compose --force-recreate`。这样即使主 `train/.env` 或 `train/.docker-compose.yaml` 被官方入口覆盖，脚本也会先把 `CPU + ZMQ` 配置回写回来。
+
 ## 正确启动方式
 
 在仓库根目录执行：

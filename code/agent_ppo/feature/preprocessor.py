@@ -779,6 +779,22 @@ class Preprocessor:
             and cur_battery_ratio >= target_low + 0.12
         )
         transition_after_arrival = self._latest_confirmed_arrival_age() <= 45
+        single_arrival_push_safe = (
+            distinct_arrival_count != 1
+            or (
+                cur_battery_ratio >= target_low + 0.06
+                and step_ratio >= 0.36
+                and self._latest_confirmed_arrival_age() >= 44
+            )
+        )
+        multi_arrival_push_safe = (
+            distinct_arrival_count < 2
+            or (
+                cur_battery_ratio >= target_low + 0.12
+                and step_ratio >= 0.64
+                and self._latest_confirmed_arrival_age() >= 60
+            )
+        )
         phase_c_reward_enabled = (
             safe_charge_window
             and not transition_after_arrival
@@ -823,6 +839,7 @@ class Preprocessor:
             and self._nearest_unarrived_charger_dist < self.MAX_DIST
             and cur_battery_ratio >= target_low + 0.05
             and unarrived_progress > 0.0
+            and single_arrival_push_safe
         ):
             unarrived_charger_progress_reward = 0.012 * np.clip(unarrived_progress / 2.0, 0.0, 1.5)
             if self._nearest_unarrived_charger_dist < 20.0:
@@ -836,22 +853,33 @@ class Preprocessor:
             if charger_search_phase:
                 unarrived_charger_progress_reward *= 1.25
             if post_first_arrival_guard:
-                unarrived_charger_progress_reward *= 1.45
+                unarrived_charger_progress_reward *= 1.36
             if distinct_arrival_count == 1:
-                unarrived_charger_progress_reward *= 1.35
+                unarrived_charger_progress_reward *= 1.28
                 if step_ratio >= 0.55:
-                    unarrived_charger_progress_reward *= 1.28
+                    unarrived_charger_progress_reward *= 1.20
                 elif step_ratio >= 0.42:
                     unarrived_charger_progress_reward *= 1.12
             elif distinct_arrival_count >= 2:
                 unarrived_charger_progress_reward *= 1.18
         late_multi_arrival_harvest = (
             distinct_arrival_count >= 2
-            and step_ratio >= 0.62
+            and step_ratio >= 0.64
             and not charge_active
             and not is_starving
-            and cur_battery_ratio >= target_low + 0.10
+            and cur_battery_ratio >= target_low + 0.12
+            and multi_arrival_push_safe
         )
+        late_multi_arrival_progress_reward = 0.0
+        if late_multi_arrival_harvest:
+            if cleaned_this_step > 0:
+                late_multi_arrival_progress_reward += 0.030 * min(cleaned_this_step, 2)
+                if self.cur_revisit_count == 0:
+                    late_multi_arrival_progress_reward += 0.008
+            if self.new_observed_cells > 0:
+                late_multi_arrival_progress_reward += 0.003 * min(self.new_observed_cells, 8)
+            if phase_c_reward_enabled:
+                late_multi_arrival_progress_reward *= 1.15
         revisit_penalty = -0.0040 * min(4, self.cur_revisit_count) * (0.40 + cleaning_progress)
         single_charger_loop_penalty = 0.0
         if (
@@ -862,9 +890,11 @@ class Preprocessor:
             and self.cur_revisit_count >= 2
             and self._nearest_unarrived_charger_dist < self.MAX_DIST
         ):
-            single_charger_loop_penalty -= 0.010
+            single_charger_loop_penalty -= 0.012
             if self._nearest_unarrived_charger_dist > 18.0:
-                single_charger_loop_penalty -= 0.004
+                single_charger_loop_penalty -= 0.006
+            if step_ratio >= 0.60:
+                single_charger_loop_penalty -= 0.006
         single_charger_tail_penalty = 0.0
         if (
             distinct_arrival_count == 1
@@ -873,9 +903,9 @@ class Preprocessor:
             and not is_starving
             and self.cur_revisit_count >= 1
         ):
-            single_charger_tail_penalty -= 0.010
+            single_charger_tail_penalty -= 0.014
             if self.new_observed_cells == 0 and cleaned_this_step == 0:
-                single_charger_tail_penalty -= 0.010
+                single_charger_tail_penalty -= 0.012
         if (
             distinct_arrival_count == 1
             and step_ratio >= 0.52
@@ -884,7 +914,19 @@ class Preprocessor:
             and cleaned_this_step == 0
             and self._nearest_unarrived_charger_dist < self.MAX_DIST
         ):
-            single_charger_tail_penalty -= 0.006
+            single_charger_tail_penalty -= 0.008
+        single_arrival_late_low_yield_penalty = 0.0
+        if (
+            distinct_arrival_count == 1
+            and step_ratio >= 0.62
+            and not charge_active
+            and not is_starving
+            and self.new_observed_cells == 0
+            and cleaned_this_step == 0
+        ):
+            single_arrival_late_low_yield_penalty -= 0.012
+            if self.cur_revisit_count >= 3:
+                single_arrival_late_low_yield_penalty -= 0.008
         late_low_yield_penalty = 0.0
         if (
             late_multi_arrival_harvest
@@ -892,9 +934,9 @@ class Preprocessor:
             and cleaned_this_step == 0
             and self.cur_revisit_count >= 2
         ):
-            late_low_yield_penalty -= 0.012
+            late_low_yield_penalty -= 0.014
             if self.cur_revisit_count >= 4:
-                late_low_yield_penalty -= 0.006
+                late_low_yield_penalty -= 0.008
         loop_penalty = 0.0
         no_progress_penalty_scale = 1.0 if phase_c_reward_enabled else 0.35
         if charge_risk_zone:
@@ -951,11 +993,13 @@ class Preprocessor:
             + charge_efficiency_reward
             + charge_event_reward
             + charger_arrival_reward
+            + late_multi_arrival_progress_reward
             + low_battery_penalty
             + critical_battery_penalty
             + revisit_penalty
             + single_charger_loop_penalty
             + single_charger_tail_penalty
+            + single_arrival_late_low_yield_penalty
             + late_low_yield_penalty
             + loop_penalty
             + charge_loop_penalty

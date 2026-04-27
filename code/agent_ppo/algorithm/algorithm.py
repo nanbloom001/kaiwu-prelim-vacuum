@@ -284,6 +284,7 @@ class PolicyInfo:
     new_known_cells:      int
     on_charger:           bool
     should_charge:        bool
+    charge_phase:         str
 
 
 class CoveragePlanner:
@@ -381,6 +382,7 @@ class CoveragePlanner:
         self.charger_arrival_count = 0
         self.first_arrival_step = -1
         self.last_arrival_step = -1
+        self.charge_phase = "seek_first"
 
     def set_episode_config(self, max_step=None, robot_count=None, charger_count=None, battery_max=None):
         if max_step is not None:
@@ -452,10 +454,10 @@ class CoveragePlanner:
     ) -> bool:
         if self.charger_arrival_count != 1 or self.first_arrival_step < 0:
             return False
-        if self.current_step > min(self.episode_max_step - 60, self.first_arrival_step + 360):
+        if self.current_step > min(self.episode_max_step - 60, self.first_arrival_step + 340):
             return False
         charger_slack = battery - charger_distance if charger_known and np.isfinite(charger_distance) else battery
-        if battery_ratio >= 0.97 and charger_slack >= self._dynamic_return_margin() + 36.0:
+        if battery_ratio >= 0.970 and charger_slack >= self._dynamic_return_margin() + 34.0:
             return False
         return True
 
@@ -469,12 +471,12 @@ class CoveragePlanner:
     ) -> bool:
         if self.charger_arrival_count < 2:
             return False
-        if self.current_step < max(320, int(0.32 * self.episode_max_step)):
+        if self.current_step < max(260, int(0.26 * self.episode_max_step)):
             return False
         charger_slack = battery - charger_distance if charger_known and np.isfinite(charger_distance) else battery
         return (
-            battery_ratio <= 0.66
-            or charger_slack <= self._dynamic_return_margin() + 22.0
+            battery_ratio <= 0.72
+            or charger_slack <= self._dynamic_return_margin() + 28.0
         )
 
     def _pre_first_arrival_guard_active(
@@ -543,8 +545,8 @@ class CoveragePlanner:
             charger_known
             and not should_charge
             and self.charger_arrival_count >= 2
-            and step_ratio >= 0.62
-            and charger_slack >= self._dynamic_return_margin() + 12.0
+            and step_ratio >= 0.68
+            and charger_slack >= self._dynamic_return_margin() + 20.0
         )
         return enabled, float(step_ratio), float(charger_slack)
 
@@ -562,8 +564,8 @@ class CoveragePlanner:
             charger_known
             and not should_charge
             and self.charger_arrival_count == 1
-            and step_ratio >= 0.48
-            and charger_slack >= self._dynamic_return_margin() + 8.0
+            and step_ratio >= 0.52
+            and charger_slack >= self._dynamic_return_margin() + 12.0
         )
         return enabled, float(step_ratio), float(charger_slack)
 
@@ -581,8 +583,8 @@ class CoveragePlanner:
             charger_known
             and not should_charge
             and self.charger_arrival_count == 1
-            and step_ratio >= 0.42
-            and charger_slack >= self._dynamic_return_margin() + 6.0
+            and step_ratio >= 0.46
+            and charger_slack >= self._dynamic_return_margin() + 10.0
         )
         return enabled, float(step_ratio), float(charger_slack)
 
@@ -601,9 +603,27 @@ class CoveragePlanner:
             return False
         charger_slack = battery - charger_distance if charger_known and np.isfinite(charger_distance) else battery
         return (
-            battery_ratio <= 0.90
-            or charger_slack <= self._dynamic_return_margin() + 32.0
+            battery_ratio <= 0.88
+            or charger_slack <= self._dynamic_return_margin() + 28.0
         )
+
+    def _charge_phase_label(
+        self,
+        *,
+        pre_first_arrival_guard_active: bool,
+        single_arrival_charge_lock_active: bool,
+        multi_arrival_guard_active: bool,
+        first_arrival_guard_active: bool,
+    ) -> str:
+        if self.charger_arrival_count <= 0:
+            return "seek_first_safe" if pre_first_arrival_guard_active else "seek_first"
+        if self.charger_arrival_count == 1:
+            if single_arrival_charge_lock_active or first_arrival_guard_active:
+                return "stabilize_first"
+            return "push_second"
+        if multi_arrival_guard_active:
+            return "stabilize_multi"
+        return "harvest_multi"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Main update — called once per frame（每帧主调用）
@@ -712,18 +732,26 @@ class CoveragePlanner:
             dynamic_return_margin += 18.0
             dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.12, 0.0, 0.82))
         if single_arrival_charge_lock_active:
-            dynamic_return_margin += 16.0
-            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.10, 0.0, 0.82))
-            dynamic_exit_return_ratio = float(np.clip(dynamic_exit_return_ratio + 0.03, 0.0, 0.998))
-        if multi_arrival_guard_active:
-            dynamic_return_margin += 10.0
-            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.05, 0.0, 0.72))
-        if first_arrival_guard_active:
-            dynamic_return_margin += 14.0
-            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.08, 0.0, 0.72))
+            dynamic_return_margin += 12.0
+            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.07, 0.0, 0.80))
             dynamic_exit_return_ratio = float(np.clip(dynamic_exit_return_ratio + 0.02, 0.0, 0.997))
+        if multi_arrival_guard_active:
+            dynamic_return_margin += 14.0
+            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.08, 0.0, 0.76))
+            dynamic_exit_return_ratio = float(np.clip(dynamic_exit_return_ratio + 0.02, 0.0, 0.996))
+        if first_arrival_guard_active:
+            dynamic_return_margin += 12.0
+            dynamic_low_battery_ratio = float(np.clip(dynamic_low_battery_ratio + 0.06, 0.0, 0.72))
+            dynamic_exit_return_ratio = float(np.clip(dynamic_exit_return_ratio + 0.01, 0.0, 0.996))
         # 若充电路径途经 NPC 风险区（PATH_RISK_RADIUS），则额外加大安全余量
         extra_return_margin = self.NPC_RETURN_MARGIN if self._path_enters_npc_risk_zone(charger_path, npcs) else 0.0
+        charge_phase = self._charge_phase_label(
+            pre_first_arrival_guard_active=pre_first_arrival_guard_active,
+            single_arrival_charge_lock_active=single_arrival_charge_lock_active,
+            multi_arrival_guard_active=multi_arrival_guard_active,
+            first_arrival_guard_active=first_arrival_guard_active,
+        )
+        self.charge_phase = charge_phase
 
         # 充电决策：满足以下任一条件则触发返回充电
         #   1. 已处于返回模式（return_mode 一旦触发，持续到充满电）
@@ -752,6 +780,7 @@ class CoveragePlanner:
                 battery_ratio=battery_ratio,
                 pre_first_arrival_guard_active=pre_first_arrival_guard_active,
                 first_arrival_guard_active=first_arrival_guard_active,
+                charge_phase=charge_phase,
             )
 
         # ── 对 8 个合法动作评分 ─────────────────────────────────────────────
@@ -766,6 +795,7 @@ class CoveragePlanner:
             should_charge=should_charge,
             pre_first_arrival_guard_active=pre_first_arrival_guard_active,
             first_arrival_guard_active=first_arrival_guard_active,
+            charge_phase=charge_phase,
         )
 
         # 若所有动作均被 NPC 封锁（safe_mask 全为 0），启用逃脱评分兜底
@@ -799,6 +829,7 @@ class CoveragePlanner:
             new_known_cells      = int(new_known_cells),
             on_charger           = bool(on_charger),
             should_charge        = bool(should_charge),
+            charge_phase         = charge_phase,
         )
 
         self.last_policy_info = policy_info
@@ -820,6 +851,7 @@ class CoveragePlanner:
         battery_ratio:    float = 0.0,
         pre_first_arrival_guard_active: bool = False,
         first_arrival_guard_active: bool = False,
+        charge_phase: str = "",
     ) -> Tuple[str, Optional[Position], float, List[Position]]:
         """
         从全局地图中选出最优的覆盖目标（frontier cell 或 dirty tile）。
@@ -895,6 +927,13 @@ class CoveragePlanner:
             battery=battery,
             charger_distance=charger_distance,
         )
+        stabilize_first_phase = charge_phase == "stabilize_first"
+        push_second_phase = charge_phase == "push_second"
+        stabilize_multi_phase = charge_phase == "stabilize_multi"
+        harvest_multi_phase = charge_phase == "harvest_multi"
+        go26_single_charger_recovery_enabled = go26_single_charger_recovery_enabled and push_second_phase
+        go27_single_to_multi_push_enabled = go27_single_to_multi_push_enabled and push_second_phase
+        go26_harvest_enabled = go26_harvest_enabled and harvest_multi_phase
         # 扩张阶段判定：前 500 步 / 已知比例 < 78% / 充电桩未知 → 仍处于扩张阶段
         expansion_phase = (
             self.current_step <= self.AGGRESSIVE_EDGE_STEPS
@@ -997,6 +1036,16 @@ class CoveragePlanner:
                             score -= 1.0
                             if dirt_gain >= info_gain + 3 and charger_slack >= reserve + 18.0:
                                 score += 0.45
+                    if stabilize_first_phase:
+                        if is_frontier:
+                            score += 0.65 + 0.45 * edge_bonus
+                        elif cell == self.DIRT:
+                            score -= 0.95
+                    if stabilize_multi_phase:
+                        if is_frontier:
+                            score += 0.40 + 0.20 * edge_bonus
+                        elif cell == self.DIRT:
+                            score -= 0.55
                     if phase_c_enabled:
                         dirt_focus = float(dirt_gain) / max(float(info_gain) + 1.0, 1.0)
                         late_phase_bonus = np.clip((step_ratio - 0.55) / 0.35, 0.0, 1.0)
@@ -1253,6 +1302,7 @@ class CoveragePlanner:
         should_charge: bool,
         pre_first_arrival_guard_active: bool = False,
         first_arrival_guard_active: bool = False,
+        charge_phase: str = "",
     ) -> np.ndarray:
         """
         对 8 个动作方向进行综合评分，输出评分向量。
@@ -1315,6 +1365,13 @@ class CoveragePlanner:
             and self._phase_c_step_ratio() >= 0.62
             and target_mode in ("dirt", "edge_frontier")
         )
+        stabilize_first_phase = charge_phase == "stabilize_first"
+        push_second_phase = charge_phase == "push_second"
+        stabilize_multi_phase = charge_phase == "stabilize_multi"
+        harvest_multi_phase = charge_phase == "harvest_multi"
+        go26_single_charger_recovery_enabled = go26_single_charger_recovery_enabled and push_second_phase
+        go27_single_to_multi_push_enabled = go27_single_to_multi_push_enabled and push_second_phase
+        go26_harvest_enabled = go26_harvest_enabled and harvest_multi_phase
 
         for action in range(8):
             if safe_mask[action] <= 0.5:
@@ -1390,12 +1447,16 @@ class CoveragePlanner:
                 score -= 0.8
             elif pre_first_arrival_guard_active and cell == self.DIRT and not should_charge:
                 score -= 0.55
+            elif stabilize_first_phase and cell == self.DIRT:
+                score -= 0.42
             elif go26_single_charger_recovery_enabled and cell == self.DIRT:
                 score -= 0.40
                 if target_mode == "dirt":
                     score -= 0.18
             elif go27_single_to_multi_push_enabled and cell == self.DIRT:
                 score -= 0.18
+            elif stabilize_multi_phase and cell == self.DIRT:
+                score -= 0.28
             elif phase_c_enabled and cell == self.DIRT:
                 score += 0.35
             elif first_arrival_guard_active and not should_charge and cell == self.DIRT:
@@ -1404,6 +1465,8 @@ class CoveragePlanner:
                 score += 0.40
                 if target_mode == "dirt":
                     score += 0.30
+            elif stabilize_multi_phase and self._is_frontier_cell(nxt):
+                score += 0.22
             elif go26_single_charger_recovery_enabled and self._is_frontier_cell(nxt):
                 score += 0.32
             elif go27_single_to_multi_push_enabled and self._is_frontier_cell(nxt):
