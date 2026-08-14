@@ -14,7 +14,8 @@ import sys
 import zipfile
 from pathlib import Path
 
-BASE = Path(r"D:/TcKaiwuFinal")
+# 仓库根目录（train/ 的上一级），不再依赖硬编码盘符
+BASE = Path(__file__).resolve().parent.parent
 BACKUP_DIR = BASE / "train" / "backup_model"
 CODE_DIR = BASE / "code"
 RESUME_PKL = CODE_DIR / "model.ckpt-resume.pkl"

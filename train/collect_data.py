@@ -3,7 +3,8 @@ import json, re, math, subprocess
 from datetime import datetime
 from pathlib import Path
 
-BASE = Path(r"D:/TcKaiwuFinal")
+# 仓库根目录（train/ 的上一级），不再依赖硬编码盘符
+BASE = Path(__file__).resolve().parent.parent
 AISRV_LOG_DIR = BASE / "train" / "log" / "aisrv"
 
 def parse_gameover_records():
