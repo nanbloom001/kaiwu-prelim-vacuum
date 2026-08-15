@@ -9,11 +9,9 @@
 
 ## 项目展示
 
-游戏地图与自研监控面板的实机演示（完整 65 秒，自动循环）：
+清扫对战与自研监控面板实机演示：
 
-![清扫对战演示](assets/demo.gif)
-
-[▶ 高清 mp4 版本（GitHub 播放器）](assets/demo.mp4)
+<p align="center"><img src="assets/demo.webp" alt="清扫对战实机演示" /></p>
 
 <!-- TODO：补充更多真机图片 -->
 
