@@ -28,6 +28,9 @@ jobs:
         run: |
           bad=""
           while IFS= read -r -d '' f; do
+            case "$f" in
+              code/robot_vacuum-ppo-577.zip) continue ;; # 唯一允许入库的模型产物
+            esac
             size=$(stat -c %s "$f" 2>/dev/null || echo 0)
             if [ "$size" -gt 5242880 ]; then
               bad="$bad|large-file: $f ($size bytes)"

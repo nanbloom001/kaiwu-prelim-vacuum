@@ -34,7 +34,8 @@ kaiwuFinal/
 │   ├── agent_diy/                 # DIY 智能体模板骨架（平台要求的起始脚手架）
 │   ├── conf/                      # 框架级配置（configure_app / algo / app）
 │   ├── kaiwu.json                 # 开悟版本与项目代码（robot_vacuum）
-│   └── train_test.py              # 训练入口（修改 algorithm_name 后运行）
+│   ├── train_test.py              # 训练入口（修改 algorithm_name 后运行）
+│   └── robot_vacuum-ppo-577.zip   # 最终提交模型包（唯一入库的模型产物，见模型策略）
 ├── train/                         # 训练运维侧（编排、工具脚本、交接文档）
 │   ├── .docker-compose.yaml       # 训练栈编排（learner/aisrv/gamecore/监控等）
 │   ├── collect_data.py            # 训练数据采集（GAMEOVER/训练指标 → TRAINING_DATA.json）
@@ -83,13 +84,14 @@ python train/local_monitor_dashboard.py   # 从 GreptimeDB 读取指标，自托
 
 ## 模型文件策略 / Model Policy（重要）
 
-模型文件（`.pkl` / `.meta.json`）是体积大、高频变化的训练产物，**不入库**：
+**唯一入库的模型产物**：`code/robot_vacuum-ppo-577.zip` — 最终提交平台的模型包
+（含平台签名 `.kaiwu.sign` 与最终 checkpoint `ckpt/model.ckpt-5777.pkl`）。
 
-- `code/best_model.pkl`、`code/latest_model.pkl` — 当前最佳 / 最新模型
-- `code/model.ckpt-resume.pkl` + `.meta.json` — 断点续训模型
-
-跨机器交接请使用 `scp` / `rsync`、共享存储或 GitHub Releases 分发（详见
-`train/context/SERVER_SYNC_AND_MONITOR.md`）。`.gitignore` 已全局忽略这些文件。
+除此之外的模型文件（`.pkl` / `.meta.json`）是体积大、高频变化的训练产物，
+**不入库**：`code/best_model.pkl`、`code/latest_model.pkl`、
+`code/model.ckpt-resume.pkl` + `.meta.json` 等请通过 `scp` / `rsync`、共享存储
+或 GitHub Releases 分发（详见 `train/context/SERVER_SYNC_AND_MONITOR.md`）。
+`.gitignore` 已全局忽略这些文件。
 
 ---
 

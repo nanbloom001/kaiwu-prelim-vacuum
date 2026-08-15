@@ -29,6 +29,9 @@ code/manual_checkpoints/
 *.bak
 *.log
 
+# 最终提交模型包（平台签名 zip，仓库中唯一保留的模型产物）
+!code/robot_vacuum-ppo-577.zip
+
 # 平台相关
 license.dat
 deploy/
