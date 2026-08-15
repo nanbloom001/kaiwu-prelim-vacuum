@@ -12,7 +12,7 @@ Thanks for your interest in contributing to kaiwuFinal!
    python -m py_compile $(git ls-files '*.py')
    ```
 4. Commit with a clear message (prefix: `feat:`, `fix:`, `docs:`, `refactor:`,
-   `chore:`), then open a pull request against `main`.
+   `chore:`), then open a pull request against `master`.
 
 ## What Not To Commit
 
@@ -32,7 +32,7 @@ Thanks for your interest in contributing to kaiwuFinal!
 
 ## Branching
 
-- `main` is the default branch and must always stay releasable.
+- `master` is the default branch and must always stay releasable.
 - Work in `feat/*` or `fix/*` branches and merge via pull request.
 
 ## Licensing
