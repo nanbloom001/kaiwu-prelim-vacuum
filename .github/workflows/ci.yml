@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  syntax-check:
+    name: Python syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Compile all tracked Python files
+        run: |
+          git ls-files '*.py' | xargs python -m py_compile
+          echo "syntax check passed"
+
+  repo-hygiene:
+    name: Repository hygiene guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject large files and forbidden artifact types
+        run: |
+          bad=""
+          while IFS= read -r -d '' f; do
+            size=$(stat -c %s "$f" 2>/dev/null || echo 0)
+            if [ "$size" -gt 5242880 ]; then bad="$bad
+large-file ($size bytes): $f"; fi
+            case "$f" in
+              *.pkl|*.meta.json|*.log|*.bak|*.zip|*.tar|*.tar.gz|*.gz|*.so|*.bin)
+                bad="$bad
+forbidden-type: $f" ;;
+            esac
+          done < <(git ls-files -z)
+          if [ -n "$bad" ]; then
+            echo "Repository hygiene violations:$bad"
+            exit 1
+          fi
+          echo "repo hygiene check passed"
