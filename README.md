@@ -1,7 +1,7 @@
 # kaiwuFinal — 腾讯开悟「清扫大作战」强化学习项目
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/nanbloom001/kaiwuFinal/ci.yml?branch=master&label=CI)](https://github.com/nanbloom001/kaiwuFinal/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/nanbloom001/kaiwuFinal/ci.yml?branch=main&label=CI)](https://github.com/nanbloom001/kaiwuFinal/actions)
 
 Reinforcement learning agent for the **Robot Vacuum** ("清扫大作战") competition
 on the Tencent Kaiwu platform (KaiwuDRL). The **PPO agent** (`code/agent_ppo/`)
@@ -110,7 +110,7 @@ python train/local_monitor_dashboard.py   # 从 GreptimeDB 读取指标，自托
 
 ## 分支与贡献 / Branches & Contributing
 
-- `master` 为默认分支，始终保持可发布状态；开发请走 `feat/*` / `fix/*` 分支并提交
+- `main` 为默认分支，始终保持可发布状态；开发请走 `feat/*` / `fix/*` 分支并提交
   Pull Request。
 - 贡献指引见 [CONTRIBUTING.md](CONTRIBUTING.md)，行为准则见
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)，安全问题上报见 [SECURITY.md](SECURITY.md)。
