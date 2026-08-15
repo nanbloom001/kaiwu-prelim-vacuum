@@ -9,11 +9,13 @@
 
 ## 项目展示
 
-游戏地图与自研监控面板的实机演示（65 秒）：
+游戏地图与自研监控面板的实机演示（8 秒预览）：
 
-<video controls width="100%" src="https://raw.githubusercontent.com/nanbloom001/kaiwuFinal/master/assets/demo.mp4"></video>
+![清扫对战演示](assets/demo.gif)
 
-<!-- TODO：补充更多 GIF / 真机图片 -->
+[![▶ 观看完整演示视频（65 秒）](assets/demo-poster.jpg)](assets/demo.mp4)
+
+<!-- TODO：补充更多真机图片 -->
 
 ## 已完成功能
 
