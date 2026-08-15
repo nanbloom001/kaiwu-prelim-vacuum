@@ -9,11 +9,11 @@
 
 ## 项目展示
 
-游戏地图与自研监控面板的实机演示（8 秒预览）：
+游戏地图与自研监控面板的实机演示（完整 65 秒，自动循环）：
 
 ![清扫对战演示](assets/demo.gif)
 
-[![▶ 观看完整演示视频（65 秒）](assets/demo-poster.jpg)](assets/demo.mp4)
+[▶ 高清 mp4 版本（GitHub 播放器）](assets/demo.mp4)
 
 <!-- TODO：补充更多真机图片 -->
 
