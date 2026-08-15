@@ -29,16 +29,17 @@ jobs:
           bad=""
           while IFS= read -r -d '' f; do
             size=$(stat -c %s "$f" 2>/dev/null || echo 0)
-            if [ "$size" -gt 5242880 ]; then bad="$bad
-large-file ($size bytes): $f"; fi
+            if [ "$size" -gt 5242880 ]; then
+              bad="$bad|large-file: $f ($size bytes)"
+            fi
             case "$f" in
               *.pkl|*.meta.json|*.log|*.bak|*.zip|*.tar|*.tar.gz|*.gz|*.so|*.bin)
-                bad="$bad
-forbidden-type: $f" ;;
+                bad="$bad|forbidden-type: $f" ;;
             esac
           done < <(git ls-files -z)
           if [ -n "$bad" ]; then
-            echo "Repository hygiene violations:$bad"
+            echo "Repository hygiene violations:"
+            echo "$bad" | tr '|' '\n'
             exit 1
           fi
           echo "repo hygiene check passed"
