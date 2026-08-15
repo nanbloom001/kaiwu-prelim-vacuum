@@ -13,11 +13,9 @@ monitor page. Preserve compatibility with final Kaiwu platform submission.
 1. Do not default to de-Kaiwu refactors.
 2. Prefer static inspection before starting or changing training.
 3. Treat `license.dat` as an out-of-band local secret, not a Git artifact.
-4. Use Git for code, config, context docs, and the four core handoff model files:
-   - `code/best_model.pkl`
-   - `code/latest_model.pkl`
-   - `code/model.ckpt-resume.pkl`
-   - `code/model.ckpt-resume.meta.json`
+4. Use Git for code, config and context docs only. Model checkpoints
+   (`code/*.pkl`) are **never** committed; transfer them with `scp`/`rsync`
+   or fetch release assets.
 5. Keep bulky runtime artifacts out of Git:
    - `train/log/`
    - `train/archive/`
@@ -67,13 +65,7 @@ Open:
 http://127.0.0.1:18080
 ```
 
-## If Training State Must Be Handed Off Through Git
+## If Training State Must Be Handed Off
 
-Commit and push only the core handoff files:
-
-- `code/best_model.pkl`
-- `code/latest_model.pkl`
-- `code/model.ckpt-resume.pkl`
-- `code/model.ckpt-resume.meta.json`
-
-Do not commit large snapshot directories.
+Transfer checkpoints out-of-band (`scp`/`rsync`, release assets, or a shared
+storage mount). Never commit snapshot directories or model files.

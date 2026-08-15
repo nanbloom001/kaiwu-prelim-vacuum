@@ -10,17 +10,28 @@ train/*.zip
 train/*.gz
 code-robot_vacuum-public-*.zip
 
+# 模型文件不入库（体积大且为训练产物，请通过训练产物目录/GitHub Releases 分发）
 code/*.pkl
 code/*.meta.json
-!code/best_model.pkl
-!code/latest_model.pkl
-!code/model.ckpt-resume.pkl
-!code/model.ckpt-resume.meta.json
 code/resume_snapshots/
 code/manual_checkpoints/
+*.pkl
+*.meta.json
 
+# 通用二进制与备份文件
+*.so
+*.bin
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.bak
+*.log
+
+# 平台相关
 license.dat
-dev/
+deploy/
 
 # 环境变量（可能包含敏感信息）
 .env

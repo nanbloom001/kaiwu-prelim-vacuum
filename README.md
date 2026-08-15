@@ -1,11 +1,24 @@
 # kaiwuFinal — 腾讯开悟「清扫大作战」强化学习项目
 
-> 基于腾讯开悟平台（KaiwuDRL）的机器人清扫对战（Robot Vacuum）强化学习比赛项目。
-> 当前以 **PPO 智能体**（`code/agent_ppo/`）为主力实现，仓库同时沉淀了训练运维编排、比赛官方文档存档与每日分支工作摘要自动化。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/nanbloom001/kaiwuFinal/ci.yml?branch=master&label=CI)](https://github.com/nanbloom001/kaiwuFinal/actions)
+
+Reinforcement learning agent for the **Robot Vacuum** ("清扫大作战") competition
+on the Tencent Kaiwu platform (KaiwuDRL). The **PPO agent** (`code/agent_ppo/`)
+is the primary implementation; the repository also contains the training
+orchestration stack used for local Linux training.
+
+> **平台依赖声明**：本项目运行于腾讯开悟平台（KaiwuDRL）。训练需要平台提供的
+> `kaiwudrl` SDK、容器镜像与 `license.dat` 授权文件，**本仓库不包含平台代码**，
+> 单独 clone 本仓库无法直接训练。官方文档见 <https://tencentarena.com>。
+>
+> **Platform dependency**: this project runs on the Tencent Kaiwu platform.
+> Training requires the platform SDK (`kaiwudrl`), container images and a
+> `license.dat` license — none of which are distributed in this repository.
 
 ---
 
-## 目录结构
+## 目录结构 / Layout
 
 ```
 kaiwuFinal/
@@ -18,31 +31,27 @@ kaiwuFinal/
 │   │   ├── conf/                  # 超参数（Config）、监控面板、环境配置
 │   │   ├── workflow/              # 训练工作流
 │   │   └── utils/                 # 实验归档、checkpoint 分析、归档代理
-│   ├── agent_diy/                 # DIY 智能体模板骨架（新算法从这份脚手架开始）
-│   ├── conf/                      # 框架级配置
-│   │   ├── configure_app.toml     # 训练框架主配置（样本池/批大小/模型同步等）
-│   │   ├── algo_conf_robot_vacuum.toml  # 算法注册（ppo / diy）
-│   │   └── app_conf_robot_vacuum.toml   # 应用注册（rl_helper 等）
+│   ├── agent_diy/                 # DIY 智能体模板骨架（平台要求的起始脚手架）
+│   ├── conf/                      # 框架级配置（configure_app / algo / app）
 │   ├── kaiwu.json                 # 开悟版本与项目代码（robot_vacuum）
-│   ├── train_test.py              # 训练入口（修改 algorithm_name 后运行）
-│   └── best_model.pkl 等          # 跨分支交接的核心模型文件（见下方约定）
+│   └── train_test.py              # 训练入口（修改 algorithm_name 后运行）
 ├── train/                         # 训练运维侧（编排、工具脚本、交接文档）
 │   ├── .docker-compose.yaml       # 训练栈编排（learner/aisrv/gamecore/监控等）
 │   ├── collect_data.py            # 训练数据采集（GAMEOVER/训练指标 → TRAINING_DATA.json）
 │   ├── resume_best.py             # checkpoint 管理（list/best/latest/prepare/clean）
 │   ├── local_monitor_dashboard.py # 自托管轻量监控面板（GreptimeDB 指标）
 │   ├── benchmark_report.py        # 归档 checkpoint 鲁棒性评估报告
-│   └── context/                   # 高价值交接文档（服务器 AI 提示词、同步与监控说明等）
-├── tencentarena-docs/             # 比赛官方文档存档（开发指南 + 框架文档 + 智能体文档）
-├── branch_summaries/              # 每日分支工作摘要（由 GitHub Actions 自动生成）
-└── .github/                       # 每日摘要自动化工作流与脚本
+│   └── context/                   # 运维交接文档（服务器 AI 提示词、同步与监控说明）
+├── .github/workflows/ci.yml       # 开源 CI（语法检查 + 文件守卫）
+├── LICENSE / NOTICE.md            # 许可证与第三方声明
+└── CONTRIBUTING.md / CODE_OF_CONDUCT.md / SECURITY.md
 ```
 
 ---
 
-## 快速开始
+## 快速开始 / Quick Start
 
-### 1. 训练入口
+### 1. 训练入口（需开悟平台环境）
 
 ```bash
 # 修改 code/train_test.py 中的 algorithm_name（"ppo" 或 "diy"）后运行：
@@ -72,18 +81,19 @@ python train/local_monitor_dashboard.py   # 从 GreptimeDB 读取指标，自托
 
 ---
 
-## 模型文件约定（重要）
+## 模型文件策略 / Model Policy（重要）
 
-以下文件是跨分支交接的核心交付物，**随 Git 跟踪、请勿删除或改名**（`.gitignore`
-已显式放行，运维规范见 `train/context/SERVER_AI_PROMPT.md`）：
+模型文件（`.pkl` / `.meta.json`）是体积大、高频变化的训练产物，**不入库**：
 
-- `code/best_model.pkl` — 当前最佳模型
-- `code/latest_model.pkl` — 最新模型
-- `code/model.ckpt-resume.pkl` + `code/model.ckpt-resume.meta.json` — 断点续训模型
+- `code/best_model.pkl`、`code/latest_model.pkl` — 当前最佳 / 最新模型
+- `code/model.ckpt-resume.pkl` + `.meta.json` — 断点续训模型
+
+跨机器交接请使用 `scp` / `rsync`、共享存储或 GitHub Releases 分发（详见
+`train/context/SERVER_SYNC_AND_MONITOR.md`）。`.gitignore` 已全局忽略这些文件。
 
 ---
 
-## 配置一览
+## 配置一览 / Configuration
 
 | 文件 | 作用 |
 | --- | --- |
@@ -96,25 +106,24 @@ python train/local_monitor_dashboard.py   # 从 GreptimeDB 读取指标，自托
 
 ---
 
-## 每日分支摘要自动化
+## 分支与贡献 / Branches & Contributing
 
-- 工作流：`.github/workflows/daily-summary.yml`（每日 00:00 UTC 定时 + 手动 `workflow_dispatch`）
-- 脚本：`.github/scripts/daily_summary.py`（调用 LLM API 汇总各分支 24h 提交）
-- 产物：`branch_summaries/<yyyy-mm-dd>/`（每分支一个 md + OVERALL_SUMMARY.md，无提交时为 no_updates.md）
-- 密钥：需在仓库 Secrets 中配置 `OPENCLAW_API_KEY`
-
----
-
-## 分支约定
-
-- `master`：集成主线（每日摘要自动提交到 master）
-- 开发分支：`cyy` `hjc` `hjc-ppo` `linux` `linux-LTSPPO` `linux-yjy` 等，
-  命名大体遵循 `<平台>-<负责人>[-<主题>]` 的约定
+- `master` 为默认分支，始终保持可发布状态；开发请走 `feat/*` / `fix/*` 分支并提交
+  Pull Request。
+- 贡献指引见 [CONTRIBUTING.md](CONTRIBUTING.md)，行为准则见
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)，安全问题上报见 [SECURITY.md](SECURITY.md)。
 
 ---
 
-## 相关文档
+## 文档 / Documentation
 
-- `tencentarena-docs/README.md` — 比赛官方文档索引（开发指南 / 框架 / 智能体）
-- `train/context/` — 训练运维交接文档（服务器 AI 提示词、同步与监控 SOP、会话记录）
 - `train/README.md` — train/ 目录工具脚本使用说明
+- `train/context/` — 训练运维交接文档（服务器操作提示词、同步与监控 SOP）
+- 比赛官方文档（开发指南 / 框架 / 智能体）：<https://tencentarena.com>
+
+---
+
+## 许可证 / License
+
+MIT License — 见 [LICENSE](LICENSE)。本仓库基于腾讯开悟平台模板开发，
+第三方来源与依赖声明见 [NOTICE.md](NOTICE.md)。

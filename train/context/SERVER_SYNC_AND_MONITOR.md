@@ -1,30 +1,23 @@
 # Linux Server Sync And Monitor
 
-This project is intended to use Git for code and a small set of core model files,
-while keeping bulky training artifacts out of the repository.
+This project uses Git for code, configs and docs. Model checkpoints are **not**
+stored in Git (they are large training artifacts); they are transferred between
+machines with explicit file transfer (scp/rsync) or distributed through
+GitHub Releases.
 
 ## What Git Should Sync
-
-Git is suitable for:
 
 - code changes under `code/`
 - compose and env templates under `train/`
 - monitoring and resume helper scripts
-- key run context docs such as session notes
-- a small set of core model handoff files:
-  - `code/best_model.pkl`
-  - `code/latest_model.pkl`
-  - `code/model.ckpt-resume.pkl`
-  - `code/model.ckpt-resume.meta.json`
-
-These four files are intentionally not ignored. They allow a lightweight
-"developer machine -> server" model handoff through Git when needed.
+- run context docs such as session notes
 
 ## What Git Should Not Sync
 
 The following are intentionally ignored because they are large, fast-changing,
 or purely local runtime artifacts:
 
+- `code/*.pkl`, `code/*.meta.json` (model checkpoints)
 - `train/log/`
 - `train/archive/`
 - `train/backup_model/`
@@ -32,34 +25,25 @@ or purely local runtime artifacts:
 - exported image archives such as `train/*.tar.zst`
 - `code/resume_snapshots/`
 - `code/manual_checkpoints/`
-- `license.dat`
-- `dev/`
+- `license.dat` (out-of-band platform license, copied to servers manually)
+- `.env`
 
 ## Recommended Sync Strategy
 
-Use a hybrid approach:
-
-1. GitHub for code, config, docs, and the 4 core model handoff files.
-2. `scp` or `rsync` for large one-off transfers:
+1. GitHub for code, config and docs.
+2. `scp` / `rsync` for large one-off transfers:
    - docker image exports
    - `train/backup_model/`
    - `code/manual_checkpoints/`
    - `code/resume_snapshots/`
-3. Keep `license.dat` off Git. Copy it to the server manually.
+3. Model checkpoints for resume (`code/model.ckpt-resume.pkl` etc.) are copied
+   to the server manually or published as release assets; never committed.
 
 ## Typical Local To Server Flow
 
-From the Windows development machine:
-
 1. Commit and push code changes.
-2. If the server needs a fresh resume point, also commit:
-   - `code/best_model.pkl`
-   - `code/latest_model.pkl`
-   - `code/model.ckpt-resume.pkl`
-   - `code/model.ckpt-resume.meta.json`
+2. Transfer any needed checkpoint to the server with `scp`/`rsync`.
 3. On the server, run `git pull`.
-
-For large artifacts, transfer them outside Git.
 
 ## Server Pull Flow
 
@@ -70,8 +54,8 @@ cd ~/kaiwuFinal
 git pull --ff-only
 ```
 
-If a resume file was synced through Git, the training workflow will be able to
-pick up `code/model.ckpt-resume.pkl` from the shared code directory.
+Place a resume checkpoint at `code/model.ckpt-resume.pkl` (outside Git) and the
+training workflow will pick it up from the shared code directory.
 
 ## Custom Monitor Instead Of Official Panel
 

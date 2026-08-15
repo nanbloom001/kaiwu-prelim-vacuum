@@ -30,7 +30,6 @@
 | README.md | context 目录的收纳规范 |
 | SERVER_AI_PROMPT.md | 交给 Linux 服务器运维 AI 的完整提示词与工作规则 |
 | SERVER_SYNC_AND_MONITOR.md | 服务器同步与监控 SOP |
-| SESSION_LOG_20260409.md | 历史会话记录（供回溯决策） |
 
 ## 模型归档（archive 机制）
 
