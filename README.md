@@ -5,7 +5,7 @@
 **平台：** 腾讯开悟平台 · Robot Vacuum 清扫环境 · Linux 容器化训练栈（learner / aisrv / gamecore）· GreptimeDB 监控
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/nanbloom001/kaiwuFinal/ci.yml?branch=master&label=CI)](https://github.com/nanbloom001/kaiwuFinal/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/nanbloom001/kaiwu-prelim-vacuum/ci.yml?branch=master&label=CI)](https://github.com/nanbloom001/kaiwu-prelim-vacuum/actions)
 
 ## 项目展示
 
