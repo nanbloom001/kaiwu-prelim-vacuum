@@ -9,7 +9,7 @@
 
 ## 项目展示
 
-清扫对战与自研监控面板实机演示：
+运行演示：
 
 <p align="center"><img src="assets/demo.webp" alt="清扫对战实机演示" /></p>
 
